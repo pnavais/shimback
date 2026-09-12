@@ -193,6 +193,11 @@ int cmd_doctor(int argc, char **argv) {
                          "policy is heuristic but no --error-pattern is configured -- this shim "
                          "will never fall back");
         }
+        if (e->policy == POLICY_EXIT_CODE_MATCH && e->exit_code_count == 0) {
+            report_fail(&issues,
+                         "policy is exit-code-match but no --exit-code is configured -- this "
+                         "shim will never fall back");
+        }
     }
     printf("\n");
 

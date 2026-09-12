@@ -4,9 +4,14 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+/* POLICY_EXIT_CODE: fall back on any non-zero exit (the default).
+ * POLICY_HEURISTIC: fall back only when stderr matches an error_pattern.
+ * POLICY_EXIT_CODE_MATCH: fall back only when the exit code is one of
+ * exit_codes -- unlike POLICY_EXIT_CODE, other non-zero exits surface as-is. */
 typedef enum {
     POLICY_EXIT_CODE,
     POLICY_HEURISTIC,
+    POLICY_EXIT_CODE_MATCH,
 } Policy;
 
 typedef struct {
@@ -16,6 +21,8 @@ typedef struct {
     Policy policy;
     char **error_patterns;      /* owned array of owned strings; NULL if none */
     size_t error_pattern_count;
+    int *exit_codes;            /* owned array; only meaningful for POLICY_EXIT_CODE_MATCH */
+    size_t exit_code_count;
     bool diagnostic;
 } ShimEntry;
 

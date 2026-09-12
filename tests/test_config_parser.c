@@ -54,6 +54,14 @@ static void test_round_trip(void) {
     cfg.shims[awk_idx].error_patterns[2] = xstrdup("unrecognized option");
     cfg.shims[awk_idx].error_pattern_count = 3;
 
+    size_t grep_idx = config_upsert(&cfg, "grep");
+    cfg.shims[grep_idx].fallback = xstrdup("/usr/bin/grep");
+    cfg.shims[grep_idx].policy = POLICY_EXIT_CODE_MATCH;
+    cfg.shims[grep_idx].exit_codes = xmalloc(2 * sizeof(int));
+    cfg.shims[grep_idx].exit_codes[0] = 2;
+    cfg.shims[grep_idx].exit_codes[1] = 64;
+    cfg.shims[grep_idx].exit_code_count = 2;
+
     char *path = make_temp_path("roundtrip");
     char errbuf[256];
 
@@ -64,7 +72,7 @@ static void test_round_trip(void) {
     st = config_load(path, &reloaded, errbuf, sizeof(errbuf));
     check(st == CONFIG_OK, "round-trip: config_load succeeds");
     check(reloaded.version == 1, "round-trip: version is 1");
-    check(reloaded.count == 2, "round-trip: shim count is 2");
+    check(reloaded.count == 3, "round-trip: shim count is 3");
 
     ShimEntry *sed = config_find(&reloaded, "sed");
     check(sed != NULL, "round-trip: sed entry found");
@@ -89,6 +97,17 @@ static void test_round_trip(void) {
             check_str_eq("awk.error_patterns[2]", "unrecognized option", awk->error_patterns[2]);
         }
         check(awk->diagnostic == true, "awk.diagnostic == true");
+    }
+
+    ShimEntry *grep = config_find(&reloaded, "grep");
+    check(grep != NULL, "round-trip: grep entry found");
+    if (grep) {
+        check(grep->policy == POLICY_EXIT_CODE_MATCH, "grep.policy == exit-code-match");
+        check(grep->exit_code_count == 2, "grep.exit_code_count == 2");
+        if (grep->exit_code_count == 2) {
+            check(grep->exit_codes[0] == 2, "grep.exit_codes[0] == 2");
+            check(grep->exit_codes[1] == 64, "grep.exit_codes[1] == 64");
+        }
     }
 
     config_free(&cfg);
@@ -136,6 +155,8 @@ static void test_validation_errors(void) {
     const char *missing_fallback = "version = 1\n\n[shims.sed]\npolicy = \"exit-code\"\n";
     const char *missing_patterns =
         "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"heuristic\"\n";
+    const char *missing_exit_codes =
+        "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"exit-code-match\"\n";
 
     char *path = make_temp_path("invalid");
     Config cfg;
@@ -155,6 +176,15 @@ static void test_validation_errors(void) {
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
     check(st == CONFIG_ERR_VALIDATION, "heuristic without error_patterns is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(missing_exit_codes, 1, strlen(missing_exit_codes), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_VALIDATION, "exit-code-match without exit_codes is rejected");
     if (st == CONFIG_OK) {
         config_free(&cfg);
     }

@@ -39,6 +39,34 @@ assert_eq "heuristic no-match: source's real stdout surfaces" "partial-out" "$ou
 assert_eq "heuristic no-match: source's real stderr surfaces" "totally different error" "$(cat "$SANDBOX/err")"
 assert_not_contains "heuristic no-match: fallback did not run" "$out" "FALLBACK_RAN"
 
+# --- exit-code-match policy ---
+"$SHIMBACK" add xtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy exit-code-match --exit-code 42 --exit-code 43 >/dev/null
+
+XTOOL="$(shim_path xtool)"
+
+out="$(FAKE_EXIT_CODE=42 FAKE_STDOUT="secret-out" FAKE_STDERR="secret-err" "$XTOOL" y 2>"$SANDBOX/err")"
+code=$?
+assert_eq "exit-code-match match: falls back to exit 0" "0" "$code"
+assert_contains "exit-code-match match: fallback ran" "$out" "FALLBACK_RAN:y"
+assert_not_contains "exit-code-match match: source stdout is invisible" "$out" "secret-out"
+
+out="$(FAKE_EXIT_CODE=7 FAKE_STDOUT="partial-out" FAKE_STDERR="totally different error" "$XTOOL" 2>"$SANDBOX/err")"
+code=$?
+assert_eq "exit-code-match no-match: source's real exit code surfaces" "7" "$code"
+assert_eq "exit-code-match no-match: source's real stdout surfaces" "partial-out" "$out"
+assert_not_contains "exit-code-match no-match: fallback did not run" "$out" "FALLBACK_RAN"
+
+# --- exit-code-match without --exit-code is rejected at add time ---
+"$SHIMBACK" add badxtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --policy exit-code-match \
+    >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add with policy exit-code-match and no --exit-code should have failed"
+fi
+assert_not_contains "exit-code-match without codes: nothing written to config" \
+    "$("$SHIMBACK" list)" "badxtool"
+
 # --- diagnostic opt-in ---
 "$SHIMBACK" add dtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --diagnostic >/dev/null
 DTOOL="$(shim_path dtool)"

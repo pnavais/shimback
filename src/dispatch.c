@@ -210,6 +210,15 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     bool should_fallback;
     if (entry->policy == POLICY_EXIT_CODE) {
         should_fallback = true;
+    } else if (entry->policy == POLICY_EXIT_CODE_MATCH) {
+        should_fallback = false;
+        int source_exit_code = decode_exit_code(status);
+        for (size_t i = 0; i < entry->exit_code_count; i++) {
+            if (entry->exit_codes[i] == source_exit_code) {
+                should_fallback = true;
+                break;
+            }
+        }
     } else {
         should_fallback = false;
         const char *stderr_text = dynbuf_cstr(&err);

@@ -19,7 +19,12 @@ void config_init(Config *cfg) {
 }
 
 const char *policy_to_string(Policy p) {
-    return p == POLICY_HEURISTIC ? "heuristic" : "exit-code";
+    switch (p) {
+        case POLICY_HEURISTIC: return "heuristic";
+        case POLICY_EXIT_CODE_MATCH: return "exit-code-match";
+        case POLICY_EXIT_CODE:
+        default: return "exit-code";
+    }
 }
 
 bool policy_from_string(const char *s, Policy *out) {
@@ -29,6 +34,10 @@ bool policy_from_string(const char *s, Policy *out) {
     }
     if (strcmp(s, "heuristic") == 0) {
         *out = POLICY_HEURISTIC;
+        return true;
+    }
+    if (strcmp(s, "exit-code-match") == 0) {
+        *out = POLICY_EXIT_CODE_MATCH;
         return true;
     }
     return false;
@@ -83,6 +92,7 @@ void shim_entry_free(ShimEntry *entry) {
         free(entry->error_patterns[i]);
     }
     free(entry->error_patterns);
+    free(entry->exit_codes);
     memset(entry, 0, sizeof(*entry));
 }
 
@@ -216,6 +226,67 @@ static bool parse_string_array(const char **cursor, StrVec *out) {
     return true;
 }
 
+/* Parses a `[75, 77]` integer array starting at *cursor (at the opening
+ * '['). On success, out and out_count receive a newly allocated array
+ * (NULL/0 if empty); the caller owns it. Returns false (leaving *out
+ * untouched) on malformed input or a value outside 0-255. */
+static bool parse_int_array(const char **cursor, int **out, size_t *out_count) {
+    const char *p = *cursor;
+    if (*p != '[') {
+        return false;
+    }
+    p++;
+    skip_ws(&p);
+
+    int *items = NULL;
+    size_t count = 0;
+    size_t cap = 0;
+
+    if (*p == ']') {
+        p++;
+        *cursor = p;
+        *out = items;
+        *out_count = count;
+        return true;
+    }
+
+    for (;;) {
+        skip_ws(&p);
+        char *end;
+        long v = strtol(p, &end, 10);
+        if (end == p || v < 0 || v > 255) {
+            free(items);
+            return false;
+        }
+        if (count == cap) {
+            cap = cap == 0 ? 4 : cap * 2;
+            items = xrealloc(items, cap * sizeof(int));
+        }
+        items[count++] = (int)v;
+        p = end;
+        skip_ws(&p);
+        if (*p == ',') {
+            p++;
+            skip_ws(&p);
+            if (*p == ']') {
+                p++;
+                break;
+            }
+            continue;
+        }
+        if (*p == ']') {
+            p++;
+            break;
+        }
+        free(items);
+        return false;
+    }
+    *cursor = p;
+    *out = items;
+    *out_count = count;
+    return true;
+}
+
 ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t errbuf_size) {
     config_init(cfg);
 
@@ -332,12 +403,27 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             char *v = parse_quoted_string(&cursor);
             if (!v || !policy_from_string(v, &entry->policy)) {
                 snprintf(errbuf, errbuf_size,
-                         "line %d: 'policy' must be \"exit-code\" or \"heuristic\"", line_no);
+                         "line %d: 'policy' must be \"exit-code\", \"heuristic\", or "
+                         "\"exit-code-match\"",
+                         line_no);
                 free(v);
                 status = CONFIG_ERR_PARSE;
                 break;
             }
             free(v);
+        } else if (strcmp(key, "exit_codes") == 0) {
+            int *items = NULL;
+            size_t count = 0;
+            if (!parse_int_array(&cursor, &items, &count)) {
+                snprintf(errbuf, errbuf_size, "line %d: malformed 'exit_codes' array (values "
+                                               "must be integers 0-255)",
+                         line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+            free(entry->exit_codes);
+            entry->exit_codes = items;
+            entry->exit_code_count = count;
         } else if (strcmp(key, "error_patterns") == 0) {
             StrVec vec;
             strvec_init(&vec);
@@ -385,6 +471,12 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
         if (entry->policy == POLICY_HEURISTIC && entry->error_pattern_count == 0) {
             snprintf(errbuf, errbuf_size,
                      "shim '%s' uses policy \"heuristic\" but has no error_patterns", entry->name);
+            return CONFIG_ERR_VALIDATION;
+        }
+        if (entry->policy == POLICY_EXIT_CODE_MATCH && entry->exit_code_count == 0) {
+            snprintf(errbuf, errbuf_size,
+                     "shim '%s' uses policy \"exit-code-match\" but has no exit_codes",
+                     entry->name);
             return CONFIG_ERR_VALIDATION;
         }
     }
@@ -441,6 +533,19 @@ static void render_config(const Config *cfg, DynBuf *out) {
                     dynbuf_append_str(out, ", ");
                 }
                 append_escaped_string(out, entry->error_patterns[j]);
+            }
+            dynbuf_append_str(out, "]\n");
+        }
+
+        if (entry->exit_code_count > 0) {
+            dynbuf_append_str(out, "exit_codes = [");
+            for (size_t j = 0; j < entry->exit_code_count; j++) {
+                if (j > 0) {
+                    dynbuf_append_str(out, ", ");
+                }
+                char numbuf[16];
+                snprintf(numbuf, sizeof(numbuf), "%d", entry->exit_codes[j]);
+                dynbuf_append_str(out, numbuf);
             }
             dynbuf_append_str(out, "]\n");
         }
