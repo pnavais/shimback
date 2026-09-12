@@ -347,9 +347,83 @@ static bool remove_block(const char *rc_path, const char *tag) {
     return ok;
 }
 
-static bool ensure_zsh(const char *dir, const char *tag) {
+/* Most zsh setups (oh-my-zsh, prezto, plain hand-rolled ones) source a
+ * ~/.zshrc.local from ~/.zshrc for machine-local overrides, kept out of a
+ * dotfiles repo. When present, that's the more appropriate place for our
+ * PATH block than ~/.zshrc itself -- same reasoning both when adding it and
+ * when removing it, so the two never disagree about where to look. */
+static char *zsh_rc_path(const char *home) {
+    char *local = path_join(home, ".zshrc.local");
+    if (access(local, F_OK) == 0) {
+        return local;
+    }
+    free(local);
+    return path_join(home, ".zshrc");
+}
+
+bool shell_zsh_block_needs_migration(const char *tag) {
+    char *home = home_dir();
+    char *local = path_join(home, ".zshrc.local");
+    char *rc = path_join(home, ".zshrc");
+
+    bool needs = false;
+    if (access(local, F_OK) == 0) {
+        char *local_content = read_file_or_empty(local);
+        char *rc_content = read_file_or_empty(rc);
+        const char *bs, *be, *bods, *bode;
+        bool local_has = find_block(local_content, tag, local, &bs, &be, &bods, &bode);
+        bool rc_has = find_block(rc_content, tag, rc, &bs, &be, &bods, &bode);
+        needs = rc_has && !local_has;
+        free(local_content);
+        free(rc_content);
+    }
+
+    free(local);
+    free(rc);
+    free(home);
+    return needs;
+}
+
+bool shell_zsh_migrate_block_to_local(const char *tag) {
     char *home = home_dir();
     char *rc = path_join(home, ".zshrc");
+    char *local = path_join(home, ".zshrc.local");
+
+    char *rc_content = read_file_or_empty(rc);
+    const char *block_start, *block_end, *body_start, *body_end;
+    bool found = find_block(rc_content, tag, rc, &block_start, &block_end, &body_start, &body_end);
+    if (!found) {
+        free(rc_content);
+        free(rc);
+        free(local);
+        free(home);
+        return false;
+    }
+
+    StrVec dirs;
+    strvec_init(&dirs);
+    parse_existing_dirs(body_start, (size_t)(body_end - body_start), &dirs);
+    free(rc_content);
+
+    bool ok = true;
+    for (size_t i = 0; i < dirs.count && ok; i++) {
+        ok = ensure_dir_in_block(local, tag, dirs.items[i], true);
+    }
+    strvec_free(&dirs);
+
+    if (ok) {
+        ok = remove_block(rc, tag);
+    }
+
+    free(rc);
+    free(local);
+    free(home);
+    return ok;
+}
+
+static bool ensure_zsh(const char *dir, const char *tag) {
+    char *home = home_dir();
+    char *rc = zsh_rc_path(home);
     bool ok = ensure_dir_in_block(rc, tag, dir, true);
     if (ok) {
         printf("zsh: PATH updated in %s\n", rc);
@@ -398,10 +472,17 @@ static bool ensure_bash(const char *dir, const char *tag) {
     return all_ok;
 }
 
+/* Removes our block from both ~/.zshrc.local and ~/.zshrc, not just
+ * whichever zsh_rc_path() would currently pick -- ensure_zsh only ever
+ * writes to one of them, but which one can change across the shim's
+ * lifetime if ~/.zshrc.local is created or deleted later, and removing a
+ * block that isn't there is already a harmless no-op. */
 static bool remove_zsh(const char *tag) {
     char *home = home_dir();
+    char *local = path_join(home, ".zshrc.local");
     char *rc = path_join(home, ".zshrc");
-    bool ok = remove_block(rc, tag);
+    bool ok = remove_block(local, tag) && remove_block(rc, tag);
+    free(local);
     free(rc);
     free(home);
     return ok;

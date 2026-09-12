@@ -51,4 +51,18 @@ bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag);
  * failure while writing. */
 bool shell_remove_path_tagged(ShellKind kind, const char *tag);
 
+/* True if ~/.zshrc.local exists but has no `tag`-marked block while
+ * ~/.zshrc does -- i.e. a block written back when ~/.zshrc.local either
+ * didn't exist yet or shimback didn't yet prefer it. `shimback doctor`
+ * surfaces this as a suggestion (not a failure), and `doctor fix` acts on
+ * it via shell_zsh_migrate_block_to_local. */
+bool shell_zsh_block_needs_migration(const char *tag);
+
+/* Moves the `tag`-marked block from ~/.zshrc into ~/.zshrc.local, preserving
+ * its directory list (each directory is re-unioned in via the same path
+ * ensure_dir_in_block would take from a fresh add/init/install call).
+ * Only meaningful when shell_zsh_block_needs_migration() is true; returns
+ * false if there was no block in ~/.zshrc to move, or on an I/O failure. */
+bool shell_zsh_migrate_block_to_local(const char *tag);
+
 #endif /* SHIMBACK_SHELL_H */
