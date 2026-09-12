@@ -152,15 +152,17 @@ shimback install [--prefix <dir>]
 ```
 
 Copies the running `shimback` binary to `<prefix>/bin/shimback` (default
-prefix: `~/.local`) and ensures `<prefix>/bin` is on `PATH`, via the same
-kind of idempotent, marker-block injection `add`/`init` use for the shim
-directory (under its own tag, so the two blocks coexist). This is the
-easiest way to get `shimback` itself onto a **stable** location: `add`
-freezes the path of whatever binary is currently running into each shim's
-symlink (see below), so running it straight out of a build directory means
-every shim breaks the next time that directory is cleaned or rebuilt.
-Re-running `install` (e.g. after building a newer version) simply refreshes
-the installed copy.
+prefix: `~/.local`) and ensures both `<prefix>/bin` **and** the shim
+directory are on `PATH` — the same idempotent, marker-block injection
+`add`/`init` use for the shim directory (under its own tag for
+`<prefix>/bin`, so the two blocks coexist), run here too so a completely
+fresh `install`, before ever running `add`, still leaves you with a working
+`PATH`. This is the easiest way to get `shimback` itself onto a **stable**
+location: `add` freezes the path of whatever binary is currently running
+into each shim's symlink (see below), so running it straight out of a build
+directory means every shim breaks the next time that directory is cleaned
+or rebuilt. Re-running `install` (e.g. after building a newer version)
+simply refreshes the installed copy.
 
 `install` also installs this man page to `<prefix>/share/man/man1/shimback.1`.
 It first looks for a `shimback.1` bundled next to the running binary — how

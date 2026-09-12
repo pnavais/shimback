@@ -96,6 +96,7 @@ static void print_usage(void) {
         "  \001install\001   Copy the running shimback binary to a stable, PATH-ed location\n"
         "            (default: ~/.local/bin) so shim symlinks (which point at wherever\n"
         "            the binary was running from at `add` time) survive a rebuild. Also\n"
+        "            puts the shim directory on PATH (usually add/init's job) and\n"
         "            installs this man page (bundled, or downloaded if missing).\n"
         "              \004e.g. shimback install --prefix ~/.local\004\n"
         "\n"
