@@ -34,7 +34,8 @@ diagnostic (see `diagnostic` below).
 
 ```
 shimback add <name> [-s <source>] -f <fallback>
-                     [--policy exit-code|heuristic] [--error-pattern <p>]...
+                     [--policy exit-code|heuristic|exit-code-match]
+                     [--error-pattern <p>]... [--exit-code <code>]...
                      [--diagnostic]
 shimback remove <name>
 shimback init
@@ -158,6 +159,30 @@ the installed copy.
   If the source fails and its stderr doesn't match any pattern, that's
   treated as a genuine failure: the real stdout/stderr and exit code are
   surfaced normally, and the fallback is **not** run.
+- **`exit-code-match`**: like `heuristic`, but keyed on the source's exact
+  exit code instead of its stderr text — only fall back when it exits with
+  one of the shim's configured `--exit-code` values (repeatable, each
+  `0`-`255`):
+
+  ```sh
+  shimback add grep -f /usr/bin/grep \
+      --policy exit-code-match \
+      --exit-code 2
+  ```
+
+  Any other non-zero exit (e.g. grep's own "no match" exit `1`) surfaces
+  as-is, with the fallback **not** run.
+
+> **Note:** `exit-code` is deliberately the least precise policy (any
+> failure triggers a retry) and needs no extra configuration. `heuristic`
+> and `exit-code-match` are more targeted — each requires at least one
+> `--error-pattern` / `--exit-code` respectively, enforced both at `add`
+> time and on every config load, so a shim can never silently end up in a
+> state where it's configured to be selective but has nothing to select on
+> (`shimback doctor` also flags this if the config is hand-edited into that
+> state). All three policies only ever affect *failed* runs — a source that
+> exits `0` always has its output passed through untouched, regardless of
+> policy.
 
 ### Diagnostics
 
@@ -190,6 +215,11 @@ fallback = "/usr/bin/awk"
 policy = "heuristic"
 error_patterns = ["invalid option", "illegal option", "unrecognized option"]
 diagnostic = true
+
+[shims.grep]
+fallback = "/usr/bin/grep"
+policy = "exit-code-match"
+exit_codes = [2]
 ```
 
 The file is managed by `add`/`remove`, but is plain, hand-editable TOML (a
