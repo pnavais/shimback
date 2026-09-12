@@ -19,7 +19,11 @@ chmod +x "$BUNDLE_DIR/shimback"
 cp "$TEST_DIR/../man/shimback.1" "$BUNDLE_DIR/shimback.1"
 BUNDLED_SHIMBACK="$BUNDLE_DIR/shimback"
 
-# --- install copies the binary, the bundled man page, and injects a PATH block ---
+SHIM_DIR="$XDG_DATA_HOME/shimback/bin"
+BIN_DIR="$PREFIX/bin"
+
+# --- install copies the binary, the bundled man page, and merges both its
+# own bin dir and the shim dir into a single PATH block ---
 out="$("$BUNDLED_SHIMBACK" install --prefix "$PREFIX")"
 code=$?
 assert_eq "install: exits 0" "0" "$code"
@@ -28,9 +32,10 @@ if [ ! -x "$DEST" ]; then
     fail "install: expected an executable at $DEST"
 fi
 assert_contains "install: reports installed" "$out" "installed to $DEST"
-assert_contains "install: bin PATH block injected" "$(cat "$ZSHRC")" "# >>> shimback-bin >>>"
-assert_contains "install: shim-dir PATH block injected too, before any add" "$(cat "$ZSHRC")" \
-    "# >>> shimback >>>"
+assert_contains "install: PATH block injected" "$(cat "$ZSHRC")" "# >>> shimback >>>"
+assert_contains "install: block includes its own bin dir" "$(cat "$ZSHRC")" "$BIN_DIR"
+assert_contains "install: block includes the shim dir too, before any add" "$(cat "$ZSHRC")" \
+    "$SHIM_DIR"
 
 if [ ! -f "$MAN_DEST" ]; then
     fail "install: expected a man page at $MAN_DEST"
@@ -38,8 +43,9 @@ fi
 assert_contains "install: reports man page installed" "$out" "man page installed to $MAN_DEST"
 assert_not_contains "install: man page came from the bundle, not a download" "$out" "downloaded"
 
-marker_count="$(count_occurrences '# >>> shimback-bin >>>' "$ZSHRC")"
-assert_eq "install: exactly one shimback-bin marker block" "1" "$marker_count"
+marker_count="$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
+assert_eq "install: exactly one marker block (no separate shimback-bin block)" "1" "$marker_count"
+assert_not_contains "install: no legacy shimback-bin block" "$(cat "$ZSHRC")" "shimback-bin"
 
 # --- re-running install is idempotent: refreshes the copy, no duplicate marker ---
 out2="$("$BUNDLED_SHIMBACK" install --prefix "$PREFIX")"
@@ -50,15 +56,16 @@ if [ ! -x "$DEST" ]; then
     fail "install: expected an executable at $DEST after re-install"
 fi
 
-marker_count2="$(count_occurrences '# >>> shimback-bin >>>' "$ZSHRC")"
+marker_count2="$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
 assert_eq "install: still exactly one marker block after re-install" "1" "$marker_count2"
 
-# --- the shim-dir block (managed by add/init) stays separate from the bin block ---
+# --- add merges the shim dir into the same block install already wrote,
+# rather than creating a second one ---
 "$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
-assert_contains "install: shim-dir block still present alongside the bin block" \
-    "$(cat "$ZSHRC")" "# >>> shimback >>>"
-assert_contains "install: bin block still present alongside the shim-dir block" \
-    "$(cat "$ZSHRC")" "# >>> shimback-bin >>>"
+assert_contains "add: bin dir still present after add merges in" "$(cat "$ZSHRC")" "$BIN_DIR"
+assert_contains "add: shim dir still present" "$(cat "$ZSHRC")" "$SHIM_DIR"
+marker_count3="$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
+assert_eq "add: still exactly one marker block after merging in" "1" "$marker_count3"
 
 # --- default install only touches the current shell (zsh, per test_common.sh) ---
 BASHRC="$HOME/.bashrc"
@@ -71,10 +78,8 @@ fi
 if [ ! -e "$BASHRC" ]; then
     fail "install --shell zsh,bash: expected $BASHRC to be created"
 fi
-assert_contains "install --shell: bashrc got the bin block" "$(cat "$BASHRC")" \
-    "# >>> shimback-bin >>>"
-assert_contains "install --shell: bashrc got the shim-dir block" "$(cat "$BASHRC")" \
-    "# >>> shimback >>>"
+assert_contains "install --shell: bashrc got the bin dir" "$(cat "$BASHRC")" "$BIN_DIR"
+assert_contains "install --shell: bashrc got the shim dir" "$(cat "$BASHRC")" "$SHIM_DIR"
 
 # --- --shell and --all are mutually exclusive ---
 "$BUNDLED_SHIMBACK" install --prefix "$PREFIX" --shell zsh --all >/dev/null 2>"$SANDBOX/err"

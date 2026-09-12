@@ -209,16 +209,20 @@ shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]
 
 Copies the running `shimback` binary to `<prefix>/bin/shimback` (default
 prefix: `~/.local`) and ensures both `<prefix>/bin` **and** the shim
-directory are on `PATH` — the same idempotent, marker-block injection
-`add`/`init` use for the shim directory (under its own tag for
-`<prefix>/bin`, so the two blocks coexist), run here too so a completely
+directory are on `PATH`, using the same idempotent marker-block injection
+`add`/`init` use for the shim directory — and merged into that *same*
+block, not a second one: whichever of `add`/`init`/`install` runs unions
+its own directory into whatever's already there, in any order, so you end
+up with one `# >>> shimback >>>` block listing every directory shimback
+needs, however many of these commands you've run. This means a completely
 fresh `install`, before ever running `add`, still leaves you with a working
 `PATH`. This is the easiest way to get `shimback` itself onto a **stable**
 location: `add` freezes the path of whatever binary is currently running
 into each shim's symlink (see below), so running it straight out of a build
 directory means every shim breaks the next time that directory is cleaned
 or rebuilt. Re-running `install` (e.g. after building a newer version)
-simply refreshes the installed copy.
+simply refreshes the installed copy, and migrates away an old separate
+`shimback-bin` block if v0.1.0 ever left you with one.
 
 By default, `install` only sets up `PATH` for your **current** shell (like
 `add` does), not every shell you have. Pass `--shell` with a comma-separated

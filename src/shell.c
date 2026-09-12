@@ -104,56 +104,202 @@ static bool write_file_atomic(const char *path, const char *content, size_t len)
     return true;
 }
 
-/* Idempotently ensures the marker block tagged `tag` (e.g. "shimback" for
- * the shim dir, a distinct tag for any other directory shimback also needs
- * on PATH), wrapping `body` (the PATH-mutating shell snippet, already
- * newline-terminated), is present (and up to date) in `rc_path`. Distinct
- * tags get distinct markers, so multiple independently-managed blocks can
- * coexist in the same rc file without colliding. See shell.h. */
-static bool inject_block(const char *rc_path, const char *body, const char *tag) {
+/* Finds the tag-marked block in `content`: [*block_start, *block_end) covers
+ * the whole block including both marker lines and the trailing newline;
+ * [*body_start, *body_end) covers just the interior, between them. Returns
+ * false if no such block is present (or it's malformed -- a start marker
+ * with no matching end, which just warns and is treated as "not found" so
+ * it's left alone rather than risk mangling it). */
+static bool find_block(const char *content, const char *tag, const char *rc_path,
+                        const char **block_start, const char **block_end,
+                        const char **body_start, const char **body_end) {
     char mark_start[128];
     char mark_end[128];
     snprintf(mark_start, sizeof(mark_start), "# >>> %s >>>", tag);
     snprintf(mark_end, sizeof(mark_end), "# <<< %s <<<", tag);
 
+    const char *s = strstr(content, mark_start);
+    if (!s) {
+        return false;
+    }
+    const char *e = strstr(s, mark_end);
+    if (!e) {
+        warn("found a %s start marker without a matching end marker in %s; leaving it alone", tag,
+             rc_path);
+        return false;
+    }
+    const char *after = e + strlen(mark_end);
+    if (*after == '\n') {
+        after++;
+    }
+    *block_start = s;
+    *block_end = after;
+    *body_start = s + strlen(mark_start) + 1; /* skip the marker line and its newline */
+    *body_end = e;
+    return true;
+}
+
+/* Extracts the directory list from a block body shaped like
+ * build_zsh_body's/build_bash_body's output (an `export PATH=` line listing
+ * colon-separated directories ahead of a literal trailing $PATH), appending
+ * each into `out`. Best-effort: a body with no such line just yields no
+ * directories, so callers can safely union a new one in regardless. */
+static void parse_existing_dirs(const char *body, size_t body_len, StrVec *out) {
+    char *copy = xmalloc(body_len + 1);
+    memcpy(copy, body, body_len);
+    copy[body_len] = '\0';
+
+    const char *marker = "export PATH=\"";
+    char *p = strstr(copy, marker);
+    if (p) {
+        p += strlen(marker);
+        char *end = strchr(p, '"');
+        if (end) {
+            *end = '\0';
+            char *saveptr = NULL;
+            char *tok = strtok_r(p, ":", &saveptr);
+            while (tok) {
+                if (strcmp(tok, "$PATH") != 0) {
+                    strvec_push(out, xstrdup(tok));
+                }
+                tok = strtok_r(NULL, ":", &saveptr);
+            }
+        }
+    }
+    free(copy);
+}
+
+/* zsh-defer (https://github.com/romkatv/zsh-defer) lets plugin managers and
+ * tools like mise queue their PATH-mutating activation to run asynchronously
+ * after the whole rc file has sourced, which would otherwise let them clobber
+ * our position on PATH regardless of where our block sits in the file. When
+ * zsh-defer is available, queue our export through it too: since our block
+ * runs later in a normally-ordered rc file than most such tools' own
+ * activation lines, our deferred call is enqueued after theirs and so runs
+ * after them, putting our directories back in front once the queue drains. */
+static void build_zsh_body(DynBuf *body, const StrVec *dirs) {
+    dynbuf_append_str(body, "if command -v zsh-defer >/dev/null 2>&1; then\n");
+    dynbuf_append_str(body, "    zsh-defer export PATH=\"");
+    for (size_t i = 0; i < dirs->count; i++) {
+        dynbuf_append_str(body, dirs->items[i]);
+        dynbuf_append_char(body, ':');
+    }
+    dynbuf_append_str(body, "$PATH\"\n");
+    dynbuf_append_str(body, "else\n");
+    dynbuf_append_str(body, "    export PATH=\"");
+    for (size_t i = 0; i < dirs->count; i++) {
+        dynbuf_append_str(body, dirs->items[i]);
+        dynbuf_append_char(body, ':');
+    }
+    dynbuf_append_str(body, "$PATH\"\n");
+    dynbuf_append_str(body, "fi\n");
+}
+
+static void build_bash_body(DynBuf *body, const StrVec *dirs) {
+    dynbuf_append_str(body, "export PATH=\"");
+    for (size_t i = 0; i < dirs->count; i++) {
+        dynbuf_append_str(body, dirs->items[i]);
+        dynbuf_append_char(body, ':');
+    }
+    dynbuf_append_str(body, "$PATH\"\n");
+}
+
+static bool ends_with(const char *s, const char *suffix) {
+    size_t slen = strlen(s);
+    size_t suflen = strlen(suffix);
+    return slen >= suflen && strcmp(s + slen - suflen, suffix) == 0;
+}
+
+/* Idempotently ensures `dir` is included in the marker block tagged `tag`
+ * in `rc_path` -- unioning it with whatever directories are already there
+ * (from an earlier add/init/install) rather than overwriting them, so those
+ * commands can run in any order, each contributing its own directory,
+ * without any of them clobbering what another already wrote. `zsh_style`
+ * picks the zsh-defer-aware body vs. the plain bash one. */
+static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char *dir,
+                                 bool zsh_style) {
     char *content = read_file_or_empty(rc_path);
+
+    const char *block_start = NULL;
+    const char *block_end = NULL;
+    const char *body_start = NULL;
+    const char *body_end = NULL;
+    bool found =
+        find_block(content, tag, rc_path, &block_start, &block_end, &body_start, &body_end);
+
+    StrVec dirs;
+    strvec_init(&dirs);
+    if (found) {
+        parse_existing_dirs(body_start, (size_t)(body_end - body_start), &dirs);
+    }
+
+    /* shim_bin_dir() (see paths.c) is always "<data dir>/shimback/bin", and
+     * can change between invocations if $XDG_DATA_HOME/$HOME changes; when
+     * `dir` is one, replace any existing entry that's also one (there
+     * should be at most one) instead of just unioning it in, so a changed
+     * shim directory doesn't leave a stale, dead entry behind in PATH
+     * forever. Anything else already ensured into this block (e.g.
+     * install's own bin dir) doesn't match this shape and is left alone --
+     * a plain union, same as any other directory. */
+    if (ends_with(dir, "/shimback/bin")) {
+        for (size_t i = 0; i < dirs.count;) {
+            if (ends_with(dirs.items[i], "/shimback/bin") && strcmp(dirs.items[i], dir) != 0) {
+                free(dirs.items[i]);
+                dirs.items[i] = dirs.items[dirs.count - 1];
+                dirs.count--;
+            } else {
+                i++;
+            }
+        }
+    }
+
+    bool already_present = false;
+    for (size_t i = 0; i < dirs.count; i++) {
+        if (strcmp(dirs.items[i], dir) == 0) {
+            already_present = true;
+            break;
+        }
+    }
+    if (!already_present) {
+        strvec_push(&dirs, xstrdup(dir));
+    }
+
+    DynBuf new_body;
+    dynbuf_init(&new_body);
+    if (zsh_style) {
+        build_zsh_body(&new_body, &dirs);
+    } else {
+        build_bash_body(&new_body, &dirs);
+    }
+    strvec_free(&dirs);
+
+    char mark_start[128];
+    char mark_end[128];
+    snprintf(mark_start, sizeof(mark_start), "# >>> %s >>>", tag);
+    snprintf(mark_end, sizeof(mark_end), "# <<< %s <<<", tag);
 
     DynBuf desired;
     dynbuf_init(&desired);
     dynbuf_append_str(&desired, mark_start);
     dynbuf_append_char(&desired, '\n');
-    dynbuf_append_str(&desired, body);
+    dynbuf_append(&desired, new_body.data, new_body.len);
     dynbuf_append_str(&desired, mark_end);
     dynbuf_append_char(&desired, '\n');
+    dynbuf_free(&new_body);
 
-    char *start = strstr(content, mark_start);
     bool ok;
-    if (start) {
-        char *end = strstr(start, mark_end);
-        if (!end) {
-            warn("found a %s start marker without a matching end marker in %s; leaving it alone",
-                 tag, rc_path);
-            free(content);
+    if (found) {
+        size_t existing_len = (size_t)(block_end - block_start);
+        if (existing_len == desired.len && memcmp(block_start, desired.data, desired.len) == 0) {
             dynbuf_free(&desired);
-            return true;
-        }
-        char *after_end = end + strlen(mark_end);
-        if (*after_end == '\n') {
-            after_end++;
-        }
-
-        size_t existing_len = (size_t)(after_end - start);
-        if (existing_len == desired.len && memcmp(start, desired.data, desired.len) == 0) {
             free(content);
-            dynbuf_free(&desired);
             return true; /* already correct */
         }
-
         DynBuf out;
         dynbuf_init(&out);
-        dynbuf_append(&out, content, (size_t)(start - content));
+        dynbuf_append(&out, content, (size_t)(block_start - content));
         dynbuf_append(&out, desired.data, desired.len);
-        dynbuf_append_str(&out, after_end);
+        dynbuf_append_str(&out, block_end);
         ok = write_file_atomic(rc_path, out.data, out.len);
         dynbuf_free(&out);
     } else {
@@ -171,46 +317,85 @@ static bool inject_block(const char *rc_path, const char *body, const char *tag)
         dynbuf_free(&out);
     }
 
-    free(content);
     dynbuf_free(&desired);
+    free(content);
     return ok;
 }
 
 /* Removes the marker block tagged `tag` from `rc_path`, if present. A no-op
- * (returns true) if the file doesn't exist or has no such block -- the
- * inverse of inject_block, used by `uninstall --full`. */
+ * (returns true) if the file doesn't exist or has no such block. */
 static bool remove_block(const char *rc_path, const char *tag) {
-    char mark_start[128];
-    char mark_end[128];
-    snprintf(mark_start, sizeof(mark_start), "# >>> %s >>>", tag);
-    snprintf(mark_end, sizeof(mark_end), "# <<< %s <<<", tag);
-
     char *content = read_file_or_empty(rc_path);
-    char *start = strstr(content, mark_start);
-    if (!start) {
+    const char *block_start = NULL;
+    const char *block_end = NULL;
+    const char *body_start = NULL;
+    const char *body_end = NULL;
+    if (!find_block(content, tag, rc_path, &block_start, &block_end, &body_start, &body_end)) {
         free(content);
         return true;
     }
-    char *end = strstr(start, mark_end);
-    if (!end) {
-        warn("found a %s start marker without a matching end marker in %s; leaving it alone", tag,
-             rc_path);
-        free(content);
-        return true;
-    }
-    char *after_end = end + strlen(mark_end);
-    if (*after_end == '\n') {
-        after_end++;
-    }
+    (void)body_start;
+    (void)body_end;
 
     DynBuf out;
     dynbuf_init(&out);
-    dynbuf_append(&out, content, (size_t)(start - content));
-    dynbuf_append_str(&out, after_end);
+    dynbuf_append(&out, content, (size_t)(block_start - content));
+    dynbuf_append_str(&out, block_end);
     bool ok = write_file_atomic(rc_path, out.data, out.len);
     dynbuf_free(&out);
     free(content);
     return ok;
+}
+
+static bool ensure_zsh(const char *dir, const char *tag) {
+    char *home = home_dir();
+    char *rc = path_join(home, ".zshrc");
+    bool ok = ensure_dir_in_block(rc, tag, dir, true);
+    if (ok) {
+        printf("zsh: PATH updated in %s\n", rc);
+    } else {
+        warn("failed to update %s", rc);
+    }
+    free(rc);
+    free(home);
+    return ok;
+}
+
+static bool ensure_bash(const char *dir, const char *tag) {
+    static const char *candidates[] = {".bashrc", ".bash_profile", ".profile"};
+    char *home = home_dir();
+    bool any_exists = false;
+    bool all_ok = true;
+
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        char *path = path_join(home, candidates[i]);
+        if (access(path, F_OK) == 0) {
+            any_exists = true;
+            bool ok = ensure_dir_in_block(path, tag, dir, false);
+            if (ok) {
+                printf("bash: PATH updated in %s\n", path);
+            } else {
+                warn("failed to update %s", path);
+            }
+            all_ok = all_ok && ok;
+        }
+        free(path);
+    }
+
+    if (!any_exists) {
+        char *path = path_join(home, ".bashrc");
+        bool ok = ensure_dir_in_block(path, tag, dir, false);
+        if (ok) {
+            printf("bash: created %s with PATH update\n", path);
+        } else {
+            warn("failed to create %s", path);
+        }
+        all_ok = ok;
+        free(path);
+    }
+
+    free(home);
+    return all_ok;
 }
 
 static bool remove_zsh(const char *tag) {
@@ -239,110 +424,6 @@ static bool remove_bash(const char *tag) {
     return all_ok;
 }
 
-bool shell_remove_path_tagged(ShellKind kind, const char *tag) {
-    switch (kind) {
-        case SHELL_ZSH:
-            return remove_zsh(tag);
-        case SHELL_BASH:
-            return remove_bash(tag);
-        case SHELL_FISH:
-        case SHELL_UNKNOWN:
-        default:
-            /* shimback never wrote a block for these (see shell_ensure_path_tagged),
-             * so there's nothing to remove. */
-            return true;
-    }
-}
-
-/* zsh-defer (https://github.com/romkatv/zsh-defer) lets plugin managers and
- * tools like mise queue their PATH-mutating activation to run asynchronously
- * after the whole rc file has sourced, which would otherwise let them clobber
- * our position on PATH regardless of where our block sits in the file. When
- * zsh-defer is available, queue our export through it too: since our block
- * runs later in a normally-ordered rc file than most such tools' own
- * activation lines, our deferred call is enqueued after theirs and so runs
- * after them, putting the shim dir back in front once the queue drains. */
-static void build_zsh_body(DynBuf *body, const char *shim_dir) {
-    dynbuf_append_str(body, "if command -v zsh-defer >/dev/null 2>&1; then\n");
-    dynbuf_append_str(body, "    zsh-defer export PATH=\"");
-    dynbuf_append_str(body, shim_dir);
-    dynbuf_append_str(body, ":$PATH\"\n");
-    dynbuf_append_str(body, "else\n");
-    dynbuf_append_str(body, "    export PATH=\"");
-    dynbuf_append_str(body, shim_dir);
-    dynbuf_append_str(body, ":$PATH\"\n");
-    dynbuf_append_str(body, "fi\n");
-}
-
-static bool ensure_zsh(const char *shim_dir, const char *tag) {
-    char *home = home_dir();
-    char *rc = path_join(home, ".zshrc");
-
-    DynBuf body;
-    dynbuf_init(&body);
-    build_zsh_body(&body, shim_dir);
-
-    bool ok = inject_block(rc, dynbuf_cstr(&body), tag);
-    if (ok) {
-        printf("zsh: PATH updated in %s\n", rc);
-    } else {
-        warn("failed to update %s", rc);
-    }
-    dynbuf_free(&body);
-    free(rc);
-    free(home);
-    return ok;
-}
-
-static void build_bash_body(DynBuf *body, const char *shim_dir) {
-    dynbuf_append_str(body, "export PATH=\"");
-    dynbuf_append_str(body, shim_dir);
-    dynbuf_append_str(body, ":$PATH\"\n");
-}
-
-static bool ensure_bash(const char *shim_dir, const char *tag) {
-    static const char *candidates[] = {".bashrc", ".bash_profile", ".profile"};
-    char *home = home_dir();
-    bool any_exists = false;
-    bool all_ok = true;
-
-    DynBuf body;
-    dynbuf_init(&body);
-    build_bash_body(&body, shim_dir);
-    const char *body_str = dynbuf_cstr(&body);
-
-    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
-        char *path = path_join(home, candidates[i]);
-        if (access(path, F_OK) == 0) {
-            any_exists = true;
-            bool ok = inject_block(path, body_str, tag);
-            if (ok) {
-                printf("bash: PATH updated in %s\n", path);
-            } else {
-                warn("failed to update %s", path);
-            }
-            all_ok = all_ok && ok;
-        }
-        free(path);
-    }
-
-    if (!any_exists) {
-        char *path = path_join(home, ".bashrc");
-        bool ok = inject_block(path, body_str, tag);
-        if (ok) {
-            printf("bash: created %s with PATH update\n", path);
-        } else {
-            warn("failed to create %s", path);
-        }
-        all_ok = ok;
-        free(path);
-    }
-
-    dynbuf_free(&body);
-    free(home);
-    return all_ok;
-}
-
 bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag) {
     switch (kind) {
         case SHELL_ZSH:
@@ -363,6 +444,21 @@ bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag) 
     }
 }
 
-bool shell_ensure_path(ShellKind kind, const char *shim_dir) {
-    return shell_ensure_path_tagged(kind, shim_dir, DEFAULT_TAG);
+bool shell_ensure_path(ShellKind kind, const char *dir) {
+    return shell_ensure_path_tagged(kind, dir, DEFAULT_TAG);
+}
+
+bool shell_remove_path_tagged(ShellKind kind, const char *tag) {
+    switch (kind) {
+        case SHELL_ZSH:
+            return remove_zsh(tag);
+        case SHELL_BASH:
+            return remove_bash(tag);
+        case SHELL_FISH:
+        case SHELL_UNKNOWN:
+        default:
+            /* shimback never wrote a block for these (see shell_ensure_path_tagged),
+             * so there's nothing to remove. */
+            return true;
+    }
 }

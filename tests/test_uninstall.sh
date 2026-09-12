@@ -55,10 +55,8 @@ assert_contains "uninstall: reports removed symlink(s)" "$out" "removed 1 shim s
 if [ ! -f "$CFG" ]; then
     fail "uninstall (default): config file should NOT be removed"
 fi
-assert_contains "uninstall (default): shim-dir PATH block left alone" "$(cat "$ZSHRC")" \
+assert_contains "uninstall (default): PATH block left alone" "$(cat "$ZSHRC")" \
     "# >>> shimback >>>"
-assert_contains "uninstall (default): bin PATH block left alone" "$(cat "$ZSHRC")" \
-    "# >>> shimback-bin >>>"
 
 # --- --full also clears config and PATH blocks ---
 "$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
@@ -71,10 +69,8 @@ assert_eq "uninstall --full: exits 0" "0" "$code2"
 if [ -f "$CFG" ]; then
     fail "uninstall --full: config file should be removed"
 fi
-assert_not_contains "uninstall --full: shim-dir PATH block removed" "$(cat "$ZSHRC")" \
+assert_not_contains "uninstall --full: PATH block removed" "$(cat "$ZSHRC")" \
     "# >>> shimback >>>"
-assert_not_contains "uninstall --full: bin PATH block removed" "$(cat "$ZSHRC")" \
-    "# >>> shimback-bin >>>"
 
 # --- uninstalling again (nothing left) is a harmless no-op ---
 "$SHIMBACK" uninstall --prefix "$PREFIX" --full >/dev/null
