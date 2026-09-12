@@ -1,0 +1,205 @@
+# shimback
+
+`shimback` is a small, dependency-free command-line shim: it wraps a command
+name (e.g. `sed`) with a **source** binary to run and a **fallback** binary
+to transparently retry with if the source doesn't work out. It was born out
+of a very concrete annoyance: on a Nix-managed macOS system, GNU `sed` often
+ends up ahead of BSD `/usr/bin/sed` on `PATH`, and scripts written for one
+dialect's argument style (`sed -i ''` vs `sed -i`) break under the other.
+`shimback` generalizes that "try one, fall back to the other" idea to any
+pair of commands.
+
+## How it works
+
+1. `shimback add <name> ...` creates a symlink named `<name>` pointing at the
+   `shimback` binary itself, inside a dedicated shim directory that's
+   prepended to your `PATH`.
+2. When you run `<name>`, the OS finds that symlink first. `shimback`
+   inspects `argv[0]`, sees it was invoked as `<name>` rather than
+   `shimback`, looks up `<name>`'s configuration, and runs the **source**
+   command with your arguments.
+3. If the source command fails (exact condition depends on the shim's
+   **policy** — see below), `shimback` transparently re-runs the same
+   arguments against the **fallback** command instead. If the source
+   succeeds, its output is passed through as if `shimback` weren't there at
+   all.
+
+A failed trial run of the source command is designed to be **invisible**:
+its stdout and stderr are captured, not streamed live, and are discarded
+entirely if a fallback is triggered — nothing about the failed attempt
+reaches your terminal unless the shim explicitly opts into a one-line
+diagnostic (see `diagnostic` below).
+
+## Usage
+
+```
+shimback add <name> [-s <source>] -f <fallback>
+                     [--policy exit-code|heuristic] [--error-pattern <p>]...
+                     [--diagnostic]
+shimback remove <name>
+shimback init
+shimback list
+shimback --help | --version
+```
+
+### `add`
+
+```sh
+shimback add sed -f /usr/bin/sed
+```
+
+- `<name>` is the command name to shim (e.g. `sed`). It can't contain `/`
+  and can't be `shimback` itself.
+- `-s`/`--source` is optional. If given, it's the exact path to the primary
+  binary, resolved once and frozen in the config — re-run `add` if that
+  binary moves. If omitted, the source is resolved fresh from `PATH` on
+  **every invocation**, skipping shimback's own shim directory (and
+  anything that resolves back to the `shimback` binary itself), so it
+  naturally follows whatever the "real" `<name>` on your system currently
+  is.
+- `-f`/`--fallback` is required: the path to the fallback binary.
+- `add` refuses to create a shim where source and fallback resolve to the
+  same binary (nothing would ever change), and never writes anything if
+  validation fails.
+- `add` also ensures the shim directory is on `PATH`, by injecting an
+  idempotent, clearly marked block into your current shell's startup file
+  (detected from `$SHELL`). Re-running `add` never duplicates this block.
+  On zsh, if [`zsh-defer`](https://github.com/romkatv/zsh-defer) is
+  available, the injected block routes its `export PATH=` through it too —
+  otherwise tools like `mise` or `direnv` that defer their own PATH-mutating
+  activation (for faster prompt startup) would clobber the shim dir's
+  position on `PATH` after the rc file finishes sourcing, regardless of
+  where the shimback block sits in the file.
+
+### `remove`
+
+```sh
+shimback remove sed
+```
+
+Removes the symlink and the config entry for `<name>`. It does **not**
+touch the PATH injection in your shell's startup file, since other shims
+(or a future `add`) may still need it.
+
+### `init`
+
+```sh
+shimback init
+```
+
+Detects installed shells (zsh, bash, and fish) and injects the PATH block
+into each one's startup file(s) — useful for setting things up across every
+shell you have installed, rather than just your current one. As of v0.1.0,
+**fish is detected but not automatically configured** (its PATH mechanism,
+`fish_add_path`/`config.fish`, is different enough from an `export PATH=`
+line that it's out of scope for now); `init` will print the manual command
+to run instead.
+
+### `list`
+
+```sh
+shimback list
+```
+
+Prints every configured shim's name, source (or `auto`), fallback, policy,
+and diagnostic flag.
+
+## Fallback policies
+
+- **`exit-code`** (the default): fall back whenever the source command
+  exits non-zero.
+- **`heuristic`**: only fall back when the source's stderr matches one of
+  the shim's configured `--error-pattern` values (case-insensitive
+  substring match) — useful when a non-zero exit can mean several different
+  things and you only want to retry on a specific kind of failure (e.g. an
+  argument-style mismatch between GNU and BSD tools):
+
+  ```sh
+  shimback add sed -f /usr/bin/sed \
+      --policy heuristic \
+      --error-pattern "invalid option" \
+      --error-pattern "illegal option"
+  ```
+
+  If the source fails and its stderr doesn't match any pattern, that's
+  treated as a genuine failure: the real stdout/stderr and exit code are
+  surfaced normally, and the fallback is **not** run.
+
+### Diagnostics
+
+By default, falling back leaves no trace. Pass `--diagnostic` at `add` time
+(or set `diagnostic = true` in the config) to print a single line to stderr
+whenever that shim falls back:
+
+```
+shimback: 'sed' failed; falling back to /usr/bin/sed
+```
+
+## Configuration
+
+Config lives at `$XDG_CONFIG_HOME/shimback/config.toml`, falling back to
+`$HOME/.config/shimback/config.toml` if `XDG_CONFIG_HOME` is unset — this is
+honored even on macOS, not overridden by platform-native paths. The shim
+symlinks themselves live at `$XDG_DATA_HOME/shimback/bin` (fallback
+`$HOME/.local/share/shimback/bin`).
+
+```toml
+version = 1
+
+[shims.sed]
+fallback = "/usr/bin/sed"
+policy = "exit-code"
+
+[shims.awk]
+source = "/opt/homebrew/bin/gawk"
+fallback = "/usr/bin/awk"
+policy = "heuristic"
+error_patterns = ["invalid option", "illegal option", "unrecognized option"]
+diagnostic = true
+```
+
+The file is managed by `add`/`remove`, but is plain, hand-editable TOML (a
+small subset — no arrays of tables, inline tables, or multi-line strings).
+
+## Exit codes
+
+- `127` — the shim, source, or fallback couldn't be found or isn't
+  executable.
+- `1` — a CLI or config validation error.
+- Anything else is passed straight through from whichever of source/
+  fallback actually ran (or `128 + signal` if it was killed by a signal).
+
+## Building
+
+Requires a C11 compiler and CMake ≥ 3.16. No external dependencies.
+
+With [`just`](https://github.com/casey/just) installed, `just build`
+autodetects your OS/arch and builds into `build-<os>-<arch>/`:
+
+```sh
+just build
+just test               # optional
+just install ~/.local   # optional; defaults to /usr/local
+```
+
+Or drive CMake directly:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure   # optional
+```
+
+The resulting `shimback` binary is self-contained — `add` creates symlinks
+pointing at wherever you place it, so install it anywhere on `PATH` (or run
+`cmake --install build`).
+
+## Platform support
+
+macOS and Linux (x86_64 and arm64) for v0.1.0. Windows is a long-term goal
+but isn't supported yet — the current implementation relies on POSIX
+symlinks, `fork`/`exec`, and Unix-style shell startup files throughout.
+
+## License
+
+MIT OR Apache-2.0.
