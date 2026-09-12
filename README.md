@@ -43,7 +43,7 @@ shimback add <name> [-s <source>] -f <fallback>
                      [--rewrite <from>=<to>]... [--diagnostic]
 shimback remove <name>
 shimback init
-shimback list
+shimback list [--full]
 shimback doctor [fix]
 shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]
 shimback uninstall [--prefix <dir>] [--full]
@@ -202,9 +202,25 @@ When stdout is a terminal (and [`NO_COLOR`](https://no-color.org/) isn't
 set): shim names are bold cyan; an explicit source is green and `auto` is
 dimmed; the fallback path is blue; the policy column is colored by kind
 (`heuristic` yellow, `exit-code-match` magenta, `route-args` cyan,
-`exit-code` uncolored as the baseline); `false` diagnostics are dimmed and
-`true` ones are green; column headers are bold yellow. Piping the output
-(e.g. to a file or another command) disables color automatically.
+`rewrite` green, `exit-code` uncolored as the baseline); `false`
+diagnostics are dimmed and `true` ones are green; column headers are bold
+yellow. Piping the output (e.g. to a file or another command) disables
+color automatically.
+
+`shimback list --full` (or `ls --full`) additionally prints whatever the
+table's columns leave out: the policy-specific configuration that actually
+drives each shim's behavior, as extra indented lines right under its row —
+`error_patterns` for `heuristic`, the configured codes for
+`exit-code-match`, `route_args` and `strip_matched_args` for `route-args`,
+and each `<from> -> <to>` pair for `rewrite`. A shim on the plain
+`exit-code` policy has nothing extra to show and gets no additional lines:
+
+```
+NAME   SOURCE     FALLBACK      POLICY           DIAGNOSTIC
+sed    auto       /usr/bin/sed  exit-code        false
+awk    /opt/.../gawk   /usr/bin/awk  heuristic   true
+        error patterns: invalid option, illegal option
+```
 
 ### `doctor`
 

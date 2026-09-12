@@ -83,3 +83,5 @@ add_test(NAME test_uninstall
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_uninstall.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_add_wizard
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_add_wizard.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_list
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_list.sh $<TARGET_FILE:shimback>)
