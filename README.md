@@ -41,7 +41,7 @@ shimback add <name> [-s <source>] -f <fallback>
                      [--error-pattern <p>]... [--exit-code <code>]...
                      [--route-arg <arg>]... [--strip-matched-args]
                      [--rewrite <from>=<to>]... [--diagnostic]
-shimback remove <name>
+shimback remove [-y] <name>
 shimback init
 shimback list [--full]
 shimback doctor [fix]
@@ -132,12 +132,6 @@ reachable and editable.
   pages — you just re-enter them.
 - **Esc** or **Ctrl-C** aborts at any point; nothing is written (no
   symlink, no config entry) unless the wizard runs all the way through.
-- If [`fzf`](https://github.com/junegunn/fzf) is on `PATH`, pressing **Tab**
-  on the policy page opens it for fuzzy-picking a policy by name, and on
-  the source/fallback pages opens it populated with every executable found
-  on `$PATH`, for fuzzy-picking a binary instead of typing its full path.
-  With no `fzf` on `PATH`, Tab does nothing — this is opportunistic, not a
-  dependency.
 
 ### `remove` (alias: `rm`)
 
@@ -163,6 +157,16 @@ any single-character typo shape — a dropped, inserted, or substituted
 letter (`shed` → `sed`, not just `doctr` → `doctor`) — unlike a
 subsequence-only fuzzy match (e.g. `fzf --filter`), which can only catch a
 typo that's literally containable, in order, within the real name.
+
+Pass `-y`/`--yes` to skip the hint and act on it automatically — but only
+when it's *unambiguous*: if exactly one configured name is the closest
+match, that one gets removed instead (with a line saying so); if two or
+more configured names tie for closest, `-y` doesn't guess between them —
+it falls back to the plain error and hint, exactly as without the flag.
+
+```sh
+shimback remove -y shed   # -> "'shed' not found -- removing closest match 'sed' instead"
+```
 
 ### `init`
 

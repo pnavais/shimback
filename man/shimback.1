@@ -11,6 +11,7 @@ shimback \- run a primary command, transparently fall back to another
 [\fB\-\-rewrite\fR \fIfrom\fR=\fIto\fR]\|.\|.\|. [\fB\-\-diagnostic\fR]
 .br
 .B shimback remove
+[\fB\-y\fR]
 .I name
 (alias:
 .BR rm )
@@ -136,13 +137,7 @@ in instead of failing: one page per field, Enter to confirm and continue
 and edit earlier pages (Right only as far as a page already reached),
 Esc or Ctrl\-C to abort without writing anything. Whatever was already
 given on the command line is skipped straight to the first missing page,
-but stays reachable via Left. If
-.B fzf
-is on
-.BR PATH ,
-Tab on the policy page fuzzy\-picks a policy, and on the source/fallback
-pages fuzzy\-picks from every executable on
-.BR PATH .
+but stays reachable via Left.
 .RS
 .PP
 Example:
@@ -153,7 +148,7 @@ shimback add sed \-f /usr/bin/sed
 .RE
 .RE
 .TP
-.BI "remove " name
+.BI "remove [\-y] " name
 Remove
 .IR name 's
 symlink and config entry. Also available as
@@ -172,6 +167,14 @@ distance, scaled to that name's length so an unrelated one is never
 suggested \(em no external tool involved, and any single\-character typo
 (dropped, inserted, or substituted) is caught, not just a dropped one.
 The same hint appears for an unrecognized top\-level command.
+.IP
+.B \-y
+(or
+.BR \-\-yes )
+skips the hint and acts on it automatically, but only when unambiguous:
+if exactly one configured name is the closest match, that one is removed
+instead; if two or more tie for closest, it falls back to the plain
+error and hint, same as without the flag.
 .RS
 .PP
 Example:

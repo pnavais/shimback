@@ -16,6 +16,14 @@
  * "no hint to show", never as an error. No external dependency. */
 char *fuzzy_suggest(const char *query, const char *const *candidates, size_t count);
 
+/* Same search as fuzzy_suggest, but returns a match only if it's the
+ * unique closest candidate -- NULL if another candidate ties it for the
+ * same distance, even if that distance would otherwise be close enough.
+ * For a hint that's just displayed, an arbitrary tie-break winner is fine;
+ * for one acted on automatically (e.g. `remove -y`), picking one of
+ * several equally-plausible candidates without asking would be too risky. */
+char *fuzzy_suggest_unique(const char *query, const char *const *candidates, size_t count);
+
 /* Prints "shimback: did you mean '<suggestion>'?" to stderr, colored (a
  * warm yellow/gold) when stderr is a real terminal and NO_COLOR isn't set.
  * Shared by every "did you mean" call site so the wording and styling can't

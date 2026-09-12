@@ -13,7 +13,6 @@ typedef enum {
     TUI_KEY_CHAR,      /* a printable character, value in .ch */
     TUI_KEY_ENTER,
     TUI_KEY_BACKSPACE,
-    TUI_KEY_TAB,
     TUI_KEY_ABORT,     /* a bare Esc, or Ctrl-C -- both mean "abort" */
     TUI_KEY_UP,
     TUI_KEY_DOWN,
@@ -47,9 +46,9 @@ void tui_raw_mode_exit(void);
 /* Blocking read of the next logical keypress. Decodes "ESC [ A/B/C/D" as
  * arrow keys; a bare Esc (nothing else follows within ~50ms) and Ctrl-C
  * both yield TUI_KEY_ABORT; 0x7f/0x08 yield TUI_KEY_BACKSPACE; '\r'/'\n'
- * yield TUI_KEY_ENTER; '\t' yields TUI_KEY_TAB; any other unrecognized
- * escape sequence is swallowed and yields TUI_KEY_NONE (caller should just
- * redraw and keep reading). */
+ * yield TUI_KEY_ENTER; any other unrecognized byte or escape sequence
+ * (including a literal Tab) is swallowed and yields TUI_KEY_NONE (caller
+ * should just redraw and keep reading). */
 TuiKey tui_read_key(void);
 
 /* Clears the screen and homes the cursor, ready for a fresh frame. */
