@@ -50,9 +50,9 @@ shimback uninstall [--prefix <dir>] [--full]
 shimback --help | --version
 ```
 
-`--help` (and the usage printed on a missing/unknown command) is colored
-like clap-rs's styled help when stdout is a terminal and `NO_COLOR` isn't
-set: section headers bold yellow, commands and flags bold green,
+`--help` (and the usage printed on a missing/unknown command) uses styled,
+colored help when stdout is a terminal and `NO_COLOR` isn't set: section
+headers bold yellow, commands and flags bold green,
 placeholders (`<name>`, `<fallback>`, …) cyan.
 
 ### `add`
