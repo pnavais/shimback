@@ -1,5 +1,6 @@
 #include "commands.h"
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +43,55 @@ static void report_fail(int *issues, const char *fmt, ...) {
     va_end(ap);
     printf("\n");
     (*issues)++;
+}
+
+static void report_fixed(const char *fmt, ...) {
+    va_list ap;
+    if (g_colorize) {
+        printf("  [%s%sfixed%s] ", ANSI_BOLD, ANSI_CYAN, ANSI_RESET);
+    } else {
+        printf("  [fixed] ");
+    }
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("\n");
+}
+
+/* If <shim_dir>/<name> is missing entirely, or is a symlink whose target no
+ * longer exists (dangling), recreates it pointing at `self_exe` -- the same
+ * thing `add` does when it first creates a shim's symlink. Never touches a
+ * path occupied by anything else (a plain file, a directory, or a symlink
+ * that still resolves, even to a different-but-valid shimback binary
+ * elsewhere) -- only genuinely dead or missing entries are "needed" fixes. */
+static void fix_symlink_if_needed(const char *shim_dir, const char *name, const char *self_exe) {
+    char *link_path = path_join(shim_dir, name);
+
+    struct stat lst;
+    int lst_rc = lstat(link_path, &lst);
+    bool is_link = lst_rc == 0 && S_ISLNK(lst.st_mode);
+
+    bool dangling = false;
+    if (is_link) {
+        struct stat st;
+        dangling = stat(link_path, &st) != 0;
+    }
+    bool missing = lst_rc != 0;
+
+    if (!missing && !dangling) {
+        free(link_path);
+        return;
+    }
+
+    if (is_link) {
+        unlink(link_path); /* drop the dangling symlink before recreating it */
+    }
+    if (symlink(self_exe, link_path) == 0) {
+        report_fixed("recreated %s symlink -> %s", missing ? "missing" : "dangling", self_exe);
+    } else {
+        warn("doctor fix: failed to recreate symlink for '%s': %s", name, strerror(errno));
+    }
+    free(link_path);
 }
 
 static bool dir_on_path(const char *dir) {
@@ -146,8 +196,17 @@ static void check_source(int *issues, const ShimEntry *e, const char *name, cons
 }
 
 int cmd_doctor(int argc, char **argv) {
+    bool fix_mode = false;
     if (argc > 1) {
-        die("doctor: unexpected argument '%s'", argv[1]);
+        if (strcmp(argv[1], "fix") == 0) {
+            fix_mode = true;
+        } else {
+            die("doctor: unexpected argument '%s' (did you mean `shimback doctor fix`?)",
+                argv[1]);
+        }
+        if (argc > 2) {
+            die("doctor: unexpected argument '%s'", argv[2]);
+        }
     }
 
     int issues = 0;
@@ -202,6 +261,9 @@ int cmd_doctor(int argc, char **argv) {
         ShimEntry *e = &cfg.shims[i];
         printf("\n%s%s%s\n", name_color, e->name, reset);
 
+        if (fix_mode) {
+            fix_symlink_if_needed(shim_dir, e->name, self_exe);
+        }
         check_symlink(&issues, shim_dir, e->name);
         char *resolved_fallback = check_fallback(&issues, e->fallback);
         check_source(&issues, e, e->name, shim_dir, self_exe, resolved_fallback);

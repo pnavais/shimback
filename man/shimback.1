@@ -19,9 +19,11 @@ shimback \- run a primary command, transparently fall back to another
 .BR ls )
 .br
 .B shimback doctor
+[\fBfix\fR]
 .br
 .B shimback install
 [\fB\-\-prefix\fR \fIdir\fR]
+[\fB\-\-shell\fR \fIshell\fR[,\fIshell\fR]\|.\|.\|. | \fB\-\-all\fR]
 .br
 .B shimback uninstall
 [\fB\-\-prefix\fR \fIdir\fR] [\fB\-\-full\fR]
@@ -158,7 +160,7 @@ shimback list
 .RE
 .RE
 .TP
-.B doctor
+.BI "doctor [" fix "]"
 Check the health of the whole shimback setup: whether the shim directory
 exists and is on
 .BR PATH ,
@@ -169,17 +171,28 @@ whether its policy has everything it needs to ever trigger. Exits
 if everything checks out,
 .B 1
 otherwise.
+.IP
+.B fix
+repairs what it safely can before reporting: a shim whose symlink is
+missing entirely, or is dangling (its target no longer exists, e.g. because
+the binary it pointed at has since moved or been cleaned up), gets its
+symlink recreated pointing at the currently running
+.B shimback
+binary \(em the same thing
+.B add
+does when it first creates one. Never touches a symlink that still
+resolves, or a path occupied by anything other than a symlink.
 .RS
 .PP
 Example:
 .RS
 .nf
-shimback doctor
+shimback doctor fix
 .fi
 .RE
 .RE
 .TP
-.BI "install [\-\-prefix " dir "]"
+.BI "install [\-\-prefix " dir "] [\-\-shell " shell "[," shell "]\|.\|.\|. | \-\-all]"
 Copy the running
 .B shimback
 binary to
@@ -201,12 +214,30 @@ version if no local copy is found (requires
 .BR curl ;
 skipped with a warning, non\-fatally, if unavailable). Safe to re\-run after
 building a newer version to refresh the installed copy.
+.IP
+By default only the
+.B current
+shell gets a
+.B PATH
+entry, like
+.BR add .
+.B \-\-shell
+takes a comma\-separated list to target specific shells regardless of which
+one is running;
+.B \-\-all
+means every shell
+.B init
+would detect as installed.
+.B fish
+is accepted by either but, as with
+.BR add / init ,
+isn't automatically configured yet.
 .RS
 .PP
 Example:
 .RS
 .nf
-shimback install \-\-prefix ~/.local
+shimback install \-\-prefix ~/.local \-\-shell zsh,bash
 .fi
 .RE
 .RE

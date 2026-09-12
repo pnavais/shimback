@@ -28,7 +28,9 @@ if [ ! -x "$DEST" ]; then
     fail "install: expected an executable at $DEST"
 fi
 assert_contains "install: reports installed" "$out" "installed to $DEST"
-assert_contains "install: PATH block injected" "$(cat "$ZSHRC")" "# >>> shimback-bin >>>"
+assert_contains "install: bin PATH block injected" "$(cat "$ZSHRC")" "# >>> shimback-bin >>>"
+assert_contains "install: shim-dir PATH block injected too, before any add" "$(cat "$ZSHRC")" \
+    "# >>> shimback >>>"
 
 if [ ! -f "$MAN_DEST" ]; then
     fail "install: expected a man page at $MAN_DEST"
@@ -57,5 +59,42 @@ assert_contains "install: shim-dir block still present alongside the bin block" 
     "$(cat "$ZSHRC")" "# >>> shimback >>>"
 assert_contains "install: bin block still present alongside the shim-dir block" \
     "$(cat "$ZSHRC")" "# >>> shimback-bin >>>"
+
+# --- default install only touches the current shell (zsh, per test_common.sh) ---
+BASHRC="$HOME/.bashrc"
+if [ -e "$BASHRC" ]; then
+    fail "install (default): should not have touched $BASHRC"
+fi
+
+# --- --shell zsh,bash touches both, even though $SHELL is zsh ---
+"$BUNDLED_SHIMBACK" install --prefix "$PREFIX" --shell zsh,bash >/dev/null
+if [ ! -e "$BASHRC" ]; then
+    fail "install --shell zsh,bash: expected $BASHRC to be created"
+fi
+assert_contains "install --shell: bashrc got the bin block" "$(cat "$BASHRC")" \
+    "# >>> shimback-bin >>>"
+assert_contains "install --shell: bashrc got the shim-dir block" "$(cat "$BASHRC")" \
+    "# >>> shimback >>>"
+
+# --- --shell and --all are mutually exclusive ---
+"$BUNDLED_SHIMBACK" install --prefix "$PREFIX" --shell zsh --all >/dev/null 2>"$SANDBOX/err"
+code3=$?
+if [ "$code3" -eq 0 ]; then
+    fail "install --shell --all: should have failed (mutually exclusive)"
+fi
+assert_contains "install --shell --all: clear error" "$(cat "$SANDBOX/err")" \
+    "mutually exclusive"
+
+# --- an unknown --shell name fails before touching anything ---
+FRESH_PREFIX="$SANDBOX/opt2"
+"$BUNDLED_SHIMBACK" install --prefix "$FRESH_PREFIX" --shell tcsh >/dev/null 2>"$SANDBOX/err"
+code4=$?
+if [ "$code4" -eq 0 ]; then
+    fail "install --shell tcsh: should have failed (unknown shell)"
+fi
+assert_contains "install --shell tcsh: clear error" "$(cat "$SANDBOX/err")" "unknown shell"
+if [ -e "$FRESH_PREFIX/bin/shimback" ]; then
+    fail "install --shell tcsh: should not have installed anything before failing"
+fi
 
 finish

@@ -41,8 +41,8 @@ shimback add <name> [-s <source>] -f <fallback>
 shimback remove <name>
 shimback init
 shimback list
-shimback doctor
-shimback install [--prefix <dir>]
+shimback doctor [fix]
+shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]
 shimback uninstall [--prefix <dir>] [--full]
 shimback --help | --version
 ```
@@ -131,7 +131,7 @@ dimmed; the fallback path is blue; the policy column is colored by kind
 ### `doctor`
 
 ```sh
-shimback doctor
+shimback doctor [fix]
 ```
 
 Checks the health of your whole shimback setup and reports any problems:
@@ -145,10 +145,19 @@ still exist and are executable, and whether its policy is fully configured
 and shim names are bold yellow/cyan, `[ok]`/`[fail]` are green/red, and the
 closing summary line is green or red, when stdout is a terminal.
 
+`shimback doctor fix` repairs what it safely can before reporting: any shim
+whose symlink is missing entirely, or is a *dangling* symlink (its target no
+longer exists — e.g. because the binary it pointed at, back when `add` ran,
+has since moved or been cleaned up), gets its symlink recreated pointing at
+the currently running `shimback` binary, the same way `add` creates it in
+the first place. It never touches a symlink that still resolves (even to a
+different-but-valid `shimback` binary elsewhere) or a path occupied by
+anything other than a symlink — only genuinely dead or missing entries.
+
 ### `install`
 
 ```sh
-shimback install [--prefix <dir>]
+shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]
 ```
 
 Copies the running `shimback` binary to `<prefix>/bin/shimback` (default
@@ -163,6 +172,14 @@ into each shim's symlink (see below), so running it straight out of a build
 directory means every shim breaks the next time that directory is cleaned
 or rebuilt. Re-running `install` (e.g. after building a newer version)
 simply refreshes the installed copy.
+
+By default, `install` only sets up `PATH` for your **current** shell (like
+`add` does), not every shell you have. Pass `--shell` with a comma-separated
+list (`--shell zsh,bash`) to target specific shells regardless of which
+you're running, or `--all` for every shell `init` would detect as installed.
+`fish` is accepted by `--shell`/`--all` but, as with `add`/`init`, isn't
+automatically configured yet — a manual `fish_add_path` command is printed
+instead.
 
 `install` also installs this man page to `<prefix>/share/man/man1/shimback.1`.
 It first looks for a `shimback.1` bundled next to the running binary — how
