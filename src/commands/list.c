@@ -1,25 +1,11 @@
 #include "commands.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "../config.h"
 #include "../paths.h"
 #include "../util.h"
-
-#define ANSI_RESET "\033[0m"
-#define ANSI_BOLD "\033[1m"
-#define ANSI_DIM "\033[2m"
-#define ANSI_GREEN "\033[32m"
-#define ANSI_YELLOW "\033[33m"
-#define ANSI_MAGENTA "\033[35m"
-#define ANSI_CYAN "\033[36m"
-
-static bool use_color(void) {
-    return !getenv("NO_COLOR") && isatty(STDOUT_FILENO);
-}
 
 /* Prints `text`, optionally wrapped in `color`, then pads with spaces up to
  * `width` -- padding is based on the plain text length, since padding to
@@ -63,7 +49,7 @@ int cmd_list(int argc, char **argv) {
         return 0;
     }
 
-    bool colorize = use_color();
+    bool colorize = stdout_is_color();
 
     size_t name_w = strlen("NAME");
     size_t source_w = strlen("SOURCE");
