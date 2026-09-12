@@ -477,6 +477,58 @@ static void print_list_page(const char *label, const StrVec *list, const char *i
     printf("> %s\n", input);
 }
 
+/* Every frame is a full clear+redraw (see tui_clear_screen), which always
+ * leaves the terminal's own cursor wherever the last printf happened to end
+ * up -- typically down in the footer, nowhere near the actual input. Since
+ * the exact shape of everything printed above the input line is fully
+ * determined by (hist_pos, page, and -- for the list pages -- how many
+ * items are already accumulated), the input line's row can be computed
+ * analytically instead of tracking output as it's printed. Returns 0 for
+ * PAGE_POLICY, which has no text input at all (its own "> " marker already
+ * shows focus; the caller hides the terminal cursor for it instead). */
+static size_t input_row(const WizardState *st, size_t hist_pos, PageId page) {
+    size_t row = 2; /* header line + the blank line under it */
+    row += hist_pos;
+    if (hist_pos > 0) {
+        row += 1; /* blank line under the breadcrumb */
+    }
+    switch (page) {
+        case PAGE_NAME:
+        case PAGE_SOURCE:
+        case PAGE_FALLBACK:
+        case PAGE_STRIP_MATCHED:
+        case PAGE_DIAGNOSTIC:
+            return row + 2; /* one header line, then the input line */
+        case PAGE_PATTERNS:
+            return row + 2 + st->patterns.count;
+        case PAGE_ROUTE_ARGS:
+            return row + 2 + st->route_args.count;
+        case PAGE_EXIT_CODES:
+            return row + 2 + st->exit_code_count;
+        case PAGE_REWRITE:
+            return row + 2 + st->rewrite_from.count;
+        case PAGE_POLICY:
+        default:
+            return 0;
+    }
+}
+
+/* Moves the real terminal cursor onto the input line, right after whatever
+ * has been typed so far -- without this, it's left wherever the frame's
+ * last printf ended up (down in the footer), and never blinks in the
+ * place the user is actually typing. PAGE_POLICY has no text input, so its
+ * cursor is hidden instead of parked somewhere meaningless. */
+static void position_cursor(const WizardState *st, size_t hist_pos, PageId page,
+                             const char *input) {
+    if (page == PAGE_POLICY) {
+        fputs("\x1b[?25l", stdout);
+        return;
+    }
+    size_t row = input_row(st, hist_pos, page);
+    size_t col = 3 + strlen(input); /* 1-indexed, right after "> " + input */
+    printf("\x1b[?25h\x1b[%zu;%zuH", row, col);
+}
+
 static void render_page(const WizardState *st, const History *hist, size_t hist_pos, PageId page,
                          const char *input, int policy_highlight, const char *error_msg) {
     bool colorize = stdout_is_color();
@@ -561,6 +613,7 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
         printf("   [Tab] fzf");
     }
     printf("   [Esc/^C] abort\n");
+    position_cursor(st, hist_pos, page, input);
     fflush(stdout);
 }
 
@@ -939,6 +992,11 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
 
     tui_raw_mode_exit();
     tui_clear_screen();
+    /* The last-rendered page may have been PAGE_POLICY, which hides the
+     * cursor (see position_cursor) since it has no text input of its own --
+     * make sure it's left visible for the shell prompt that follows. */
+    fputs("\x1b[?25h", stdout);
+    fflush(stdout);
     free(hist.items);
 
     if (aborted) {
