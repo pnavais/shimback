@@ -11,6 +11,10 @@ bool stdout_is_color(void) {
     return !getenv("NO_COLOR") && isatty(STDOUT_FILENO);
 }
 
+bool stderr_is_color(void) {
+    return !getenv("NO_COLOR") && isatty(STDERR_FILENO);
+}
+
 void die(const char *fmt, ...) {
     va_list ap;
     fprintf(stderr, "shimback: ");

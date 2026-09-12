@@ -18,6 +18,14 @@
  * (https://no-color.org/) is set. */
 bool stdout_is_color(void);
 
+/* Same, but for stderr -- checked separately since either stream can be
+ * redirected independently of the other (e.g. `cmd >file.txt` still has a
+ * terminal on stderr, and `cmd 2>file.txt` doesn't even though stdout
+ * still does). Used for the handful of stderr messages (e.g. a "did you
+ * mean" hint) that are colored at all -- die()/warn() themselves stay
+ * plain. */
+bool stderr_is_color(void);
+
 /* Prints "shimback: <msg>" to stderr and exits with status 1. Never returns.
  * Reserved for unrecoverable CLI/validation errors -- never call this from
  * dispatch's success/fallback paths, which have their own precise exit codes. */

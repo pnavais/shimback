@@ -1,5 +1,6 @@
 #include "suggest.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -68,4 +69,10 @@ char *fuzzy_suggest(const char *query, const char *const *candidates, size_t cou
         return NULL;
     }
     return xstrdup(best);
+}
+
+void print_suggestion_hint(const char *suggestion) {
+    bool colorize = stderr_is_color();
+    fprintf(stderr, "%sshimback: did you mean '%s'?%s\n", colorize ? ANSI_YELLOW : "",
+            suggestion, colorize ? ANSI_RESET : "");
 }

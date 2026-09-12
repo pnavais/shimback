@@ -16,4 +16,10 @@
  * "no hint to show", never as an error. No external dependency. */
 char *fuzzy_suggest(const char *query, const char *const *candidates, size_t count);
 
+/* Prints "shimback: did you mean '<suggestion>'?" to stderr, colored (a
+ * warm yellow/gold) when stderr is a real terminal and NO_COLOR isn't set.
+ * Shared by every "did you mean" call site so the wording and styling can't
+ * drift apart between them. */
+void print_suggestion_hint(const char *suggestion);
+
 #endif /* SHIMBACK_SUGGEST_H */

@@ -122,6 +122,25 @@ if [ "$code4" -eq 0 ]; then
     fail "remove: removing a nonexistent shim should still fail"
 fi
 
+# --- the "did you mean" hint comes after the error, not before it. Uses
+# head/tail rather than sed for the line extraction below -- this sandbox's
+# config now has a shim literally named "sed", and if the real shimback
+# shim directory also happens to be on this test-running shell's own
+# ambient $PATH, a bare `sed` invocation here would be dispatched through
+# that shim instead of the real sed(1). ---
+"$SHIMBACK" add sed -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+out5="$("$SHIMBACK" remove shed 2>&1)"
+error_line="$(printf '%s\n' "$out5" | head -n1)"
+hint_line="$(printf '%s\n' "$out5" | tail -n1)"
+assert_contains "did-you-mean: error line comes first" "$error_line" "no shim configured"
+assert_contains "did-you-mean: hint line comes second" "$hint_line" "did you mean 'sed'?"
+"$SHIMBACK" remove sed >/dev/null
+
+# --- rm is an alias for remove ---
+"$SHIMBACK" add rmtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+"$SHIMBACK" rm rmtool >/dev/null
+assert_not_contains "rm: removed like remove would" "$("$SHIMBACK" list)" "rmtool"
+
 # --- when ~/.zshrc.local exists, the PATH block goes there instead of
 # ~/.zshrc (most zsh setups source .zshrc.local from .zshrc for
 # machine-local overrides kept out of a dotfiles repo) ---

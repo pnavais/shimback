@@ -10,7 +10,7 @@
 #include "version.h"
 
 static const char *const KNOWN_COMMANDS[] = {
-    "add", "remove", "init", "list", "ls", "doctor", "install", "uninstall",
+    "add", "remove", "rm", "init", "list", "ls", "doctor", "install", "uninstall",
 };
 
 /* Renders `markup`: a span opened and closed with octal '\001' is a literal
@@ -70,7 +70,7 @@ static void print_usage(void) {
         "[\001--strip-matched-args\001]\n"
         "                      [\001--rewrite\001 \002<from>\002=\002<to>\002]... "
         "[\001--diagnostic\001]\n"
-        "  \001shimback remove\001 \002<name>\002\n"
+        "  \001shimback remove\001 \002<name>\002 (alias: \001rm\001)\n"
         "  \001shimback init\001\n"
         "  \001shimback list\001 [\001--full\001] (alias: \001ls\001)\n"
         "  \001shimback doctor\001 [\001fix\001]\n"
@@ -91,7 +91,8 @@ static void print_usage(void) {
         "              \004e.g. shimback add sed -f /usr/bin/sed\004\n"
         "\n"
         "  \001remove\001    Remove a shim's symlink and its config entry. Leaves the PATH\n"
-        "            injection in your shell startup file alone.\n"
+        "            injection in your shell startup file alone. Also available as\n"
+        "            \001rm\001.\n"
         "              \004e.g. shimback remove sed\004\n"
         "\n"
         "  \001init\001      Detect every installed shell (zsh, bash, fish) and add the shim\n"
@@ -140,7 +141,7 @@ int cli_run(int argc, char **argv) {
     if (strcmp(argv[1], "add") == 0) {
         return cmd_add(argc - 1, argv + 1);
     }
-    if (strcmp(argv[1], "remove") == 0) {
+    if (strcmp(argv[1], "remove") == 0 || strcmp(argv[1], "rm") == 0) {
         return cmd_remove(argc - 1, argv + 1);
     }
     if (strcmp(argv[1], "init") == 0) {
@@ -163,7 +164,7 @@ int cli_run(int argc, char **argv) {
     char *suggestion = fuzzy_suggest(argv[1], KNOWN_COMMANDS,
                                       sizeof(KNOWN_COMMANDS) / sizeof(KNOWN_COMMANDS[0]));
     if (suggestion) {
-        fprintf(stderr, "shimback: did you mean '%s'?\n", suggestion);
+        print_suggestion_hint(suggestion);
         free(suggestion);
     }
     print_usage();
