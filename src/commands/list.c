@@ -15,6 +15,7 @@
 #define ANSI_GREEN "\033[32m"
 #define ANSI_YELLOW "\033[33m"
 #define ANSI_MAGENTA "\033[35m"
+#define ANSI_CYAN "\033[36m"
 
 static bool use_color(void) {
     return !getenv("NO_COLOR") && isatty(STDOUT_FILENO);
@@ -38,6 +39,7 @@ static const char *policy_color(Policy p) {
     switch (p) {
         case POLICY_HEURISTIC: return ANSI_YELLOW;
         case POLICY_EXIT_CODE_MATCH: return ANSI_MAGENTA;
+        case POLICY_ROUTE_ARGS: return ANSI_CYAN;
         case POLICY_EXIT_CODE:
         default: return NULL;
     }

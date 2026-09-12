@@ -7,11 +7,16 @@
 /* POLICY_EXIT_CODE: fall back on any non-zero exit (the default).
  * POLICY_HEURISTIC: fall back only when stderr matches an error_pattern.
  * POLICY_EXIT_CODE_MATCH: fall back only when the exit code is one of
- * exit_codes -- unlike POLICY_EXIT_CODE, other non-zero exits surface as-is. */
+ * exit_codes -- unlike POLICY_EXIT_CODE, other non-zero exits surface as-is.
+ * POLICY_ROUTE_ARGS: not a fallback-on-failure policy at all -- picks source
+ * or fallback up front, before running either, based on whether any of the
+ * invocation's arguments match one of route_args (fallback if so, source if
+ * not), then runs only that one with live/inherited stdio. */
 typedef enum {
     POLICY_EXIT_CODE,
     POLICY_HEURISTIC,
     POLICY_EXIT_CODE_MATCH,
+    POLICY_ROUTE_ARGS,
 } Policy;
 
 typedef struct {
@@ -23,6 +28,11 @@ typedef struct {
     size_t error_pattern_count;
     int *exit_codes;            /* owned array; only meaningful for POLICY_EXIT_CODE_MATCH */
     size_t exit_code_count;
+    char **route_args;           /* owned array of owned strings; only meaningful for
+                                   * POLICY_ROUTE_ARGS */
+    size_t route_arg_count;
+    bool strip_matched_args;     /* only meaningful for POLICY_ROUTE_ARGS: remove a matched
+                                   * route arg before forwarding it to source/fallback */
     bool diagnostic;
 } ShimEntry;
 

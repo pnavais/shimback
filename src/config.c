@@ -22,6 +22,7 @@ const char *policy_to_string(Policy p) {
     switch (p) {
         case POLICY_HEURISTIC: return "heuristic";
         case POLICY_EXIT_CODE_MATCH: return "exit-code-match";
+        case POLICY_ROUTE_ARGS: return "route-args";
         case POLICY_EXIT_CODE:
         default: return "exit-code";
     }
@@ -38,6 +39,10 @@ bool policy_from_string(const char *s, Policy *out) {
     }
     if (strcmp(s, "exit-code-match") == 0) {
         *out = POLICY_EXIT_CODE_MATCH;
+        return true;
+    }
+    if (strcmp(s, "route-args") == 0) {
+        *out = POLICY_ROUTE_ARGS;
         return true;
     }
     return false;
@@ -93,6 +98,10 @@ void shim_entry_free(ShimEntry *entry) {
     }
     free(entry->error_patterns);
     free(entry->exit_codes);
+    for (size_t i = 0; i < entry->route_arg_count; i++) {
+        free(entry->route_args[i]);
+    }
+    free(entry->route_args);
     memset(entry, 0, sizeof(*entry));
 }
 
@@ -403,8 +412,8 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             char *v = parse_quoted_string(&cursor);
             if (!v || !policy_from_string(v, &entry->policy)) {
                 snprintf(errbuf, errbuf_size,
-                         "line %d: 'policy' must be \"exit-code\", \"heuristic\", or "
-                         "\"exit-code-match\"",
+                         "line %d: 'policy' must be \"exit-code\", \"heuristic\", "
+                         "\"exit-code-match\", or \"route-args\"",
                          line_no);
                 free(v);
                 status = CONFIG_ERR_PARSE;
@@ -439,6 +448,21 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             free(entry->error_patterns);
             entry->error_patterns = vec.items;
             entry->error_pattern_count = vec.count;
+        } else if (strcmp(key, "route_args") == 0) {
+            StrVec vec;
+            strvec_init(&vec);
+            if (!parse_string_array(&cursor, &vec)) {
+                strvec_free(&vec);
+                snprintf(errbuf, errbuf_size, "line %d: malformed 'route_args' array", line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+            for (size_t i = 0; i < entry->route_arg_count; i++) {
+                free(entry->route_args[i]);
+            }
+            free(entry->route_args);
+            entry->route_args = vec.items;
+            entry->route_arg_count = vec.count;
         } else if (strcmp(key, "diagnostic") == 0) {
             if (strcmp(value_str, "true") == 0) {
                 entry->diagnostic = true;
@@ -446,6 +470,17 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                 entry->diagnostic = false;
             } else {
                 snprintf(errbuf, errbuf_size, "line %d: 'diagnostic' must be true or false", line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+        } else if (strcmp(key, "strip_matched_args") == 0) {
+            if (strcmp(value_str, "true") == 0) {
+                entry->strip_matched_args = true;
+            } else if (strcmp(value_str, "false") == 0) {
+                entry->strip_matched_args = false;
+            } else {
+                snprintf(errbuf, errbuf_size,
+                         "line %d: 'strip_matched_args' must be true or false", line_no);
                 status = CONFIG_ERR_PARSE;
                 break;
             }
@@ -477,6 +512,11 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             snprintf(errbuf, errbuf_size,
                      "shim '%s' uses policy \"exit-code-match\" but has no exit_codes",
                      entry->name);
+            return CONFIG_ERR_VALIDATION;
+        }
+        if (entry->policy == POLICY_ROUTE_ARGS && entry->route_arg_count == 0) {
+            snprintf(errbuf, errbuf_size,
+                     "shim '%s' uses policy \"route-args\" but has no route_args", entry->name);
             return CONFIG_ERR_VALIDATION;
         }
     }
@@ -548,6 +588,21 @@ static void render_config(const Config *cfg, DynBuf *out) {
                 dynbuf_append_str(out, numbuf);
             }
             dynbuf_append_str(out, "]\n");
+        }
+
+        if (entry->route_arg_count > 0) {
+            dynbuf_append_str(out, "route_args = [");
+            for (size_t j = 0; j < entry->route_arg_count; j++) {
+                if (j > 0) {
+                    dynbuf_append_str(out, ", ");
+                }
+                append_escaped_string(out, entry->route_args[j]);
+            }
+            dynbuf_append_str(out, "]\n");
+        }
+
+        if (entry->strip_matched_args) {
+            dynbuf_append_str(out, "strip_matched_args = true\n");
         }
 
         if (entry->diagnostic) {

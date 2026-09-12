@@ -18,9 +18,11 @@
 
 static const char *USAGE =
     "usage: shimback add <name> [-s <source>] -f <fallback>\n"
-    "                    [--policy exit-code|heuristic|exit-code-match]\n"
+    "                    [--policy exit-code|heuristic|exit-code-match|route-args]\n"
     "                    [--error-pattern <p>]... [--exit-code <code>]...\n"
-    "                    [--diagnostic]\n";
+    "                    [--route-arg <arg>]... [--strip-matched-args] [--diagnostic]\n";
+
+#define OPT_STRIP_MATCHED_ARGS 1000
 
 static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
     if (*count == *cap) {
@@ -35,8 +37,11 @@ int cmd_add(int argc, char **argv) {
     const char *fallback_arg = NULL;
     const char *policy_arg = "exit-code";
     bool diagnostic = false;
+    bool strip_matched_args = false;
     StrVec patterns;
     strvec_init(&patterns);
+    StrVec route_args;
+    strvec_init(&route_args);
     int *exit_codes = NULL;
     size_t exit_code_count = 0;
     size_t exit_code_cap = 0;
@@ -47,12 +52,14 @@ int cmd_add(int argc, char **argv) {
         {"policy", required_argument, 0, 'p'},
         {"error-pattern", required_argument, 0, 'e'},
         {"exit-code", required_argument, 0, 'x'},
+        {"route-arg", required_argument, 0, 'r'},
+        {"strip-matched-args", no_argument, 0, OPT_STRIP_MATCHED_ARGS},
         {"diagnostic", no_argument, 0, 'd'},
         {0, 0, 0, 0},
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "s:f:p:e:x:d", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:f:p:e:x:r:d", long_opts, NULL)) != -1) {
         switch (opt) {
             case 's': source_arg = optarg; break;
             case 'f': fallback_arg = optarg; break;
@@ -68,6 +75,8 @@ int cmd_add(int argc, char **argv) {
                 push_exit_code(&exit_codes, &exit_code_count, &exit_code_cap, (int)v);
                 break;
             }
+            case 'r': strvec_push(&route_args, xstrdup(optarg)); break;
+            case OPT_STRIP_MATCHED_ARGS: strip_matched_args = true; break;
             case 'd': diagnostic = true; break;
             default:
                 fprintf(stderr, "%s", USAGE);
@@ -94,13 +103,17 @@ int cmd_add(int argc, char **argv) {
 
     Policy policy;
     if (!policy_from_string(policy_arg, &policy)) {
-        die("add: --policy must be \"exit-code\", \"heuristic\", or \"exit-code-match\"");
+        die("add: --policy must be \"exit-code\", \"heuristic\", \"exit-code-match\", or "
+            "\"route-args\"");
     }
     if (policy == POLICY_HEURISTIC && patterns.count == 0) {
         die("add: --policy heuristic requires at least one --error-pattern");
     }
     if (policy == POLICY_EXIT_CODE_MATCH && exit_code_count == 0) {
         die("add: --policy exit-code-match requires at least one --exit-code");
+    }
+    if (policy == POLICY_ROUTE_ARGS && route_args.count == 0) {
+        die("add: --policy route-args requires at least one --route-arg");
     }
 
     if (!is_executable_file(fallback_arg)) {
@@ -181,6 +194,13 @@ int cmd_add(int argc, char **argv) {
     free(entry->exit_codes);
     entry->exit_codes = exit_codes; /* ownership transferred */
     entry->exit_code_count = exit_code_count;
+    for (size_t i = 0; i < entry->route_arg_count; i++) {
+        free(entry->route_args[i]);
+    }
+    free(entry->route_args);
+    entry->route_args = route_args.items; /* ownership transferred */
+    entry->route_arg_count = route_args.count;
+    entry->strip_matched_args = strip_matched_args;
     entry->diagnostic = diagnostic;
 
     ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));

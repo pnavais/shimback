@@ -185,6 +185,50 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
 
     char **fwd_argv = build_argv(shim_name, argc, argv);
 
+    if (entry->policy == POLICY_ROUTE_ARGS) {
+        bool matched = false;
+        for (int i = 1; i < argc && !matched; i++) {
+            for (size_t j = 0; j < entry->route_arg_count; j++) {
+                if (strcmp(argv[i], entry->route_args[j]) == 0) {
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        const char *target = matched ? resolved_fallback : resolved_source;
+
+        char **route_argv = fwd_argv;
+        char **filtered = NULL;
+        if (entry->strip_matched_args) {
+            filtered = xmalloc((size_t)(argc + 1) * sizeof(char *));
+            int fi = 0;
+            filtered[fi++] = (char *)shim_name;
+            for (int i = 1; i < argc; i++) {
+                bool is_route_arg = false;
+                for (size_t j = 0; j < entry->route_arg_count; j++) {
+                    if (strcmp(argv[i], entry->route_args[j]) == 0) {
+                        is_route_arg = true;
+                        break;
+                    }
+                }
+                if (!is_route_arg) {
+                    filtered[fi++] = argv[i];
+                }
+            }
+            filtered[fi] = NULL;
+            route_argv = filtered;
+        }
+
+        if (matched && entry->diagnostic) {
+            warn("'%s': routing arg matched; running fallback %s", shim_name, resolved_fallback);
+        }
+
+        int status;
+        run_inherited(target, route_argv, &status);
+        free(filtered);
+        return decode_exit_code(status);
+    }
+
     if (strcmp(resolved_source, resolved_fallback) == 0) {
         warn("'%s': source and fallback resolve to the same binary; running it directly",
              shim_name);

@@ -198,6 +198,11 @@ int cmd_doctor(int argc, char **argv) {
                          "policy is exit-code-match but no --exit-code is configured -- this "
                          "shim will never fall back");
         }
+        if (e->policy == POLICY_ROUTE_ARGS && e->route_arg_count == 0) {
+            report_fail(&issues,
+                         "policy is route-args but no --route-arg is configured -- this shim "
+                         "will always run its source");
+        }
     }
     printf("\n");
 
