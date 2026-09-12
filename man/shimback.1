@@ -125,7 +125,16 @@ symlink and config entry. Leaves the
 .B PATH
 injection in the shell startup file alone, since other shims (or a future
 .BR add )
-may still need it.
+may still need it. If
+.I name
+doesn't match any configured shim, and
+.B fzf
+is found on
+.BR PATH ,
+prints a "did you mean" hint using its non\-interactive
+.B \-\-filter
+mode against the configured names \(em opportunistic, not a dependency; the
+same hint appears for an unrecognized top\-level command.
 .RS
 .PP
 Example:

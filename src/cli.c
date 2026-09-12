@@ -1,11 +1,17 @@
 #include "cli.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "commands/commands.h"
+#include "suggest.h"
 #include "util.h"
 #include "version.h"
+
+static const char *const KNOWN_COMMANDS[] = {
+    "add", "remove", "init", "list", "ls", "doctor", "install", "uninstall",
+};
 
 /* Renders `markup`: a span opened and closed with octal '\001' is a literal
  * (command/flag) and is colored bold green, '\002' is a placeholder value
@@ -146,6 +152,12 @@ int cli_run(int argc, char **argv) {
     }
 
     fprintf(stderr, "shimback: unknown command '%s'\n", argv[1]);
+    char *suggestion = fuzzy_suggest(argv[1], KNOWN_COMMANDS,
+                                      sizeof(KNOWN_COMMANDS) / sizeof(KNOWN_COMMANDS[0]));
+    if (suggestion) {
+        fprintf(stderr, "shimback: did you mean '%s'?\n", suggestion);
+        free(suggestion);
+    }
     print_usage();
     return 1;
 }
