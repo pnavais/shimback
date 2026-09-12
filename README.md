@@ -90,7 +90,8 @@ shimback add sed -f /usr/bin/sed
   below.
 - `add` also ensures the shim directory is on `PATH`, by injecting an
   idempotent, clearly marked block into your current shell's startup file
-  (detected from `$SHELL`). Re-running `add` never duplicates this block.
+  (detected from `$SHELL`) — or, on fish, a dedicated snippet file instead
+  (see `init`, below, for why). Re-running `add` never duplicates this.
   On zsh, if `~/.zshrc.local` exists, the block goes there instead of
   `~/.zshrc` — most zsh setups source it for machine-local overrides kept
   out of a dotfiles repo, so that's the more appropriate place for it; a
@@ -129,13 +130,22 @@ wrong letter, since those break that ordering.
 shimback init
 ```
 
-Detects installed shells (zsh, bash, and fish) and injects the PATH block
-into each one's startup file(s) — useful for setting things up across every
-shell you have installed, rather than just your current one. As of v0.1.0,
-**fish is detected but not automatically configured** (its PATH mechanism,
-`fish_add_path`/`config.fish`, is different enough from an `export PATH=`
-line that it's out of scope for now); `init` will print the manual command
-to run instead.
+Detects installed shells (zsh, bash, and fish) and injects the PATH setup
+into each one — useful for setting things up across every shell you have
+installed, rather than just your current one. For zsh/bash that's the same
+marker-block injection `add` does (see above); for fish, which has its own
+different-enough PATH mechanism, it's a dedicated, shimback-owned snippet
+dropped into `~/.config/fish/conf.d/shimback.fish` (auto-sourced by fish at
+startup, so no editing of `config.fish` itself is needed):
+
+```fish
+# Managed by shimback -- changes here will be overwritten.
+set -gx PATH /path/to/shim/dir $PATH
+```
+
+Like the zsh/bash block, this snippet is unioned rather than overwritten
+across repeated `add`/`init`/`install` calls, and removed outright (the
+whole file) by `uninstall --full`.
 
 ### `list` (alias: `ls`)
 
@@ -239,11 +249,8 @@ simply refreshes the installed copy, and migrates away an old separate
 
 By default, `install` only sets up `PATH` for your **current** shell (like
 `add` does), not every shell you have. Pass `--shell` with a comma-separated
-list (`--shell zsh,bash`) to target specific shells regardless of which
+list (`--shell zsh,bash,fish`) to target specific shells regardless of which
 you're running, or `--all` for every shell `init` would detect as installed.
-`fish` is accepted by `--shell`/`--all` but, as with `add`/`init`, isn't
-automatically configured yet — a manual `fish_add_path` command is printed
-instead.
 
 `install` also installs this man page to `<prefix>/share/man/man1/shimback.1`.
 It first looks for a `shimback.1` bundled next to the running binary — how

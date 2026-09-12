@@ -81,6 +81,23 @@ fi
 assert_contains "install --shell: bashrc got the bin dir" "$(cat "$BASHRC")" "$BIN_DIR"
 assert_contains "install --shell: bashrc got the shim dir" "$(cat "$BASHRC")" "$SHIM_DIR"
 
+# --- --shell fish writes its own conf.d snippet, not a marker block ---
+FISH_SNIPPET="$HOME/.config/fish/conf.d/shimback.fish"
+"$BUNDLED_SHIMBACK" install --prefix "$PREFIX" --shell fish >/dev/null
+if [ ! -f "$FISH_SNIPPET" ]; then
+    fail "install --shell fish: expected a conf.d snippet at $FISH_SNIPPET"
+fi
+assert_contains "install --shell fish: snippet got the bin dir" "$(cat "$FISH_SNIPPET")" "$BIN_DIR"
+assert_contains "install --shell fish: snippet got the shim dir" "$(cat "$FISH_SNIPPET")" \
+    "$SHIM_DIR"
+assert_not_contains "install --shell fish: no marker syntax in the fish snippet" \
+    "$(cat "$FISH_SNIPPET")" "# >>>"
+
+# --- re-running install --shell fish doesn't duplicate directories ---
+"$BUNDLED_SHIMBACK" install --prefix "$PREFIX" --shell fish >/dev/null
+bin_dir_count="$(count_occurrences "$BIN_DIR" "$FISH_SNIPPET")"
+assert_eq "install --shell fish: bin dir stays singular on re-run" "1" "$bin_dir_count"
+
 # --- --shell and --all are mutually exclusive ---
 "$BUNDLED_SHIMBACK" install --prefix "$PREFIX" --shell zsh --all >/dev/null 2>"$SANDBOX/err"
 code3=$?
