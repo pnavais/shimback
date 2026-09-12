@@ -2,12 +2,14 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include "../config.h"
 #include "../paths.h"
+#include "../suggest.h"
 #include "../util.h"
 
 int cmd_remove(int argc, char **argv) {
@@ -28,6 +30,18 @@ int cmd_remove(int argc, char **argv) {
     }
 
     if (!config_find(&cfg, name)) {
+        if (cfg.count > 0) {
+            const char **candidates = xmalloc(cfg.count * sizeof(char *));
+            for (size_t i = 0; i < cfg.count; i++) {
+                candidates[i] = cfg.shims[i].name;
+            }
+            char *suggestion = fuzzy_suggest(name, candidates, cfg.count);
+            free(candidates);
+            if (suggestion) {
+                fprintf(stderr, "shimback: did you mean '%s'?\n", suggestion);
+                free(suggestion);
+            }
+        }
         die("remove: no shim configured for '%s'", name);
     }
 

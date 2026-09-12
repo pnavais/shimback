@@ -30,6 +30,7 @@ add_executable(shimback
   src/dispatch.c
   src/shell.c
   src/paths.c
+  src/suggest.c
   src/util.c
   src/commands/add.c
   src/commands/remove.c

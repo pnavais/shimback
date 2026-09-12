@@ -97,6 +97,17 @@ Removes the symlink and the config entry for `<name>`. It does **not**
 touch the PATH injection in your shell's startup file, since other shims
 (or a future `add`) may still need it.
 
+If `<name>` doesn't match any configured shim, and [`fzf`](https://github.com/junegunn/fzf)
+is found on `PATH`, shimback prints a `did you mean 'X'?` hint using `fzf`'s
+non-interactive `--filter` mode against the configured shim names. The same
+hint appears for an unrecognized top-level command (e.g. `shimback dctor`).
+This is opportunistic, not a dependency — with no `fzf` on `PATH`, or no
+close match, you just get the plain error, exactly as before. Note that
+`fzf`'s fuzzy matching requires the typed characters to appear *in the same
+order* within the real name, so it catches typos like a dropped letter or a
+truncated prefix (`doctr` → `doctor`) but not a transposition (`odctor`) or
+wrong letter, since those break that ordering.
+
 ### `init`
 
 ```sh
