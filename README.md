@@ -1,5 +1,7 @@
 # shimback
 
+![shimback banner](banner.jpg)
+
 `shimback` is a small, dependency-free command-line shim: it wraps a command
 name (e.g. `sed`) with a **source** binary to run and a **fallback** binary
 to transparently retry with if the source doesn't work out. It was born out
@@ -102,6 +104,40 @@ shimback add sed -f /usr/bin/sed
   PATH-mutating activation (for faster prompt startup) would clobber the
   shim dir's position on `PATH` after the rc file finishes sourcing,
   regardless of where the shimback block sits in the file.
+
+#### Interactive wizard
+
+Run `add` at an interactive terminal with required information missing
+(no name at all, or a name but no fallback, or a policy that needs
+`--error-pattern`/`--exit-code`/`--route-arg`/`--rewrite` and doesn't have
+one) and, instead of failing, a small step-by-step wizard walks you through
+filling it in: name, policy (picked from a list), source, fallback, then
+whatever the chosen policy still needs, then the diagnostic flag. Whatever
+was already given on the command line (e.g. `shimback add mytool -s
+/bin/ls`) is skipped straight past — the wizard starts right at the first
+page that's actually missing (`fallback`, in that example) — but every
+earlier page, including the ones filled in from the command line, is still
+reachable and editable.
+
+- **Enter** confirms the current page and moves to the next; on an optional
+  field (source, or fallback under `--policy rewrite`), pressing it with
+  nothing typed just skips that field.
+- **Left/Right arrows** move between pages. Left always goes back one page.
+  Right only moves forward through pages you've already committed in this
+  session — it can't skip ahead into territory you haven't reached yet
+  ("forth" means the last page you'd gotten to, not further).
+- Changing the **policy** after having already gone further resets
+  everything after it (source, fallback, and whatever that policy's own
+  page had collected), since a different policy needs different follow-up
+  pages — you just re-enter them.
+- **Esc** or **Ctrl-C** aborts at any point; nothing is written (no
+  symlink, no config entry) unless the wizard runs all the way through.
+- If [`fzf`](https://github.com/junegunn/fzf) is on `PATH`, pressing **Tab**
+  on the policy page opens it for fuzzy-picking a policy by name, and on
+  the source/fallback pages opens it populated with every executable found
+  on `$PATH`, for fuzzy-picking a binary instead of typing its full path.
+  With no `fzf` on `PATH`, Tab does nothing — this is opportunistic, not a
+  dependency.
 
 ### `remove`
 
