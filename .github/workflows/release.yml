@@ -48,6 +48,7 @@ jobs:
           pkg_dir="shimback-${{ matrix.os_name }}-${{ matrix.arch }}"
           mkdir -p "$pkg_dir"
           cp build/shimback "$pkg_dir/"
+          cp man/shimback.1 "$pkg_dir/"
           cp README.md LICENSE-MIT LICENSE-APACHE "$pkg_dir/"
           tar -czf "$pkg_dir.tar.gz" "$pkg_dir"
 
@@ -61,6 +62,8 @@ jobs:
     runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -75,5 +78,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            artifacts/*.tar.gz artifacts/SHA256SUMS \
+            artifacts/*.tar.gz artifacts/SHA256SUMS man/shimback.1 \
             --generate-notes

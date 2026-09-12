@@ -1,0 +1,311 @@
+.TH SHIMBACK 1 "2026-09-12" "shimback 0.1.0" "User Commands"
+.SH NAME
+shimback \- run a primary command, transparently fall back to another
+.SH SYNOPSIS
+.B shimback add
+.I name
+[\fB\-s\fR \fIsource\fR] \fB\-f\fR \fIfallback\fR
+[\fB\-\-policy\fR \fIexit\-code\fR|\fIheuristic\fR|\fIexit\-code\-match\fR|\fIroute\-args\fR]
+[\fB\-\-error\-pattern\fR \fIp\fR]\|.\|.\|. [\fB\-\-exit\-code\fR \fIcode\fR]\|.\|.\|.
+[\fB\-\-route\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-strip\-matched\-args\fR] [\fB\-\-diagnostic\fR]
+.br
+.B shimback remove
+.I name
+.br
+.B shimback init
+.br
+.B shimback list
+(alias:
+.BR ls )
+.br
+.B shimback doctor
+.br
+.B shimback install
+[\fB\-\-prefix\fR \fIdir\fR]
+.br
+.B shimback uninstall
+[\fB\-\-prefix\fR \fIdir\fR] [\fB\-\-full\fR]
+.br
+.B shimback \-\-help
+|
+.B \-\-version
+.SH DESCRIPTION
+.B shimback
+is a small, dependency\-free command\-line shim: it wraps a command name
+(e.g.
+.IR sed )
+with a
+.B source
+binary to run and a
+.B fallback
+binary to transparently retry with if the source doesn't work out.
+.PP
+.B add
+creates a symlink named
+.I name
+pointing at the
+.B shimback
+binary itself, inside a dedicated shim directory that's prepended to
+.BR PATH .
+When
+.I name
+is run, the OS finds that symlink first;
+.B shimback
+inspects
+.IR argv[0] ,
+sees it was invoked as
+.I name
+rather than
+.BR shimback ,
+looks up
+.IR name 's
+configuration, and runs the source command with the given arguments. If the
+source command fails (the exact condition depends on the shim's policy, see
+.B POLICIES
+below),
+.B shimback
+transparently re\-runs the same arguments against the fallback command
+instead. If the source succeeds, its output is passed through as if
+.B shimback
+weren't there at all.
+.PP
+A failed trial run of the source command is designed to be invisible: its
+stdout and stderr are captured, not streamed live, and are discarded
+entirely if a fallback is triggered \(em nothing about the failed attempt
+reaches the terminal unless the shim explicitly opts into a one\-line
+diagnostic (see
+.B \-\-diagnostic
+below).
+.SH COMMANDS
+.TP
+.BI "add " name " [\-s " source "] \-f " fallback " [options...]"
+Create or update a shim named
+.IR name ,
+wrapping
+.I source
+(or, if
+.B \-s
+is omitted, whatever
+.I name
+resolves to fresh on
+.B PATH
+at dispatch time, skipping shimback's own shim directory) with
+.I fallback
+under the given policy. Refuses to create a shim where source and fallback
+resolve to the same binary. Also ensures the shim directory is on
+.B PATH
+for the current shell, via an idempotent marker\-block injection into its
+startup file.
+.RS
+.PP
+Example:
+.RS
+.nf
+shimback add sed \-f /usr/bin/sed
+.fi
+.RE
+.RE
+.TP
+.BI "remove " name
+Remove
+.IR name 's
+symlink and config entry. Leaves the
+.B PATH
+injection in the shell startup file alone, since other shims (or a future
+.BR add )
+may still need it.
+.RS
+.PP
+Example:
+.RS
+.nf
+shimback remove sed
+.fi
+.RE
+.RE
+.TP
+.B init
+Detect every installed shell (zsh, bash, fish) and add the shim directory to
+.B PATH
+in each one's startup file(s), not just the current shell. fish is detected
+but not automatically configured as of v0.1.0; a manual command is printed
+instead.
+.RS
+.PP
+Example:
+.RS
+.nf
+shimback init
+.fi
+.RE
+.RE
+.TP
+.B list
+List every configured shim as a table: name, source (or
+.IR auto ),
+fallback, policy, and diagnostic flag. Also available as
+.BR ls .
+Colored when stdout is a terminal and
+.B NO_COLOR
+is unset.
+.RS
+.PP
+Example:
+.RS
+.nf
+shimback list
+.fi
+.RE
+.RE
+.TP
+.B doctor
+Check the health of the whole shimback setup: whether the shim directory
+exists and is on
+.BR PATH ,
+whether the config file parses, and, for each shim, whether its symlink is
+dead, whether its fallback/source still exist and are executable, and
+whether its policy has everything it needs to ever trigger. Exits
+.B 0
+if everything checks out,
+.B 1
+otherwise.
+.RS
+.PP
+Example:
+.RS
+.nf
+shimback doctor
+.fi
+.RE
+.RE
+.TP
+.BI "install [\-\-prefix " dir "]"
+Copy the running
+.B shimback
+binary to
+.IR dir /bin/shimback
+(default
+.IR dir :
+.IR \(ti/.local )
+and ensure
+.IR dir /bin
+is on
+.BR PATH .
+Also installs this man page to
+.IR dir /share/man/man1 ,
+preferring a copy bundled next to the running binary and falling back to
+downloading it from the shimback GitHub release matching the running
+version if no local copy is found (requires
+.BR curl ;
+skipped with a warning, non\-fatally, if unavailable). Safe to re\-run after
+building a newer version to refresh the installed copy.
+.RS
+.PP
+Example:
+.RS
+.nf
+shimback install \-\-prefix ~/.local
+.fi
+.RE
+.RE
+.TP
+.BI "uninstall [\-\-prefix " dir "] [\-\-full]"
+Remove every symlink
+.B shimback
+created in the shim directory, the
+.IR dir /bin/shimback
+binary installed by
+.BR install ,
+and the man page installed alongside it. With
+.BR \-\-full ,
+also delete the config file and remove the
+.B PATH
+marker blocks from shell startup files; without it, the config and
+.B PATH
+blocks are left alone.
+.RS
+.PP
+Example:
+.RS
+.nf
+shimback uninstall \-\-full
+.fi
+.RE
+.RE
+.SH POLICIES
+.TP
+.B exit\-code
+(the default) Fall back whenever the source command exits non\-zero.
+.TP
+.B heuristic
+Only fall back when the source's stderr matches one of the shim's
+configured
+.B \-\-error\-pattern
+values (case\-insensitive substring match). Requires at least one
+.BR \-\-error\-pattern .
+.TP
+.B exit\-code\-match
+Only fall back when the source exits with one of the shim's configured
+.B \-\-exit\-code
+values (repeatable, each 0\(en255). Any other non\-zero exit surfaces as\-is.
+Requires at least one
+.BR \-\-exit\-code .
+.TP
+.B route\-args
+Not a fallback\-on\-failure policy: picks source or fallback
+.I before
+running either, based on whether any invocation argument exactly matches
+one of the shim's configured
+.B \-\-route\-arg
+values (fallback if so, source if not), then runs only that one with live,
+inherited stdio \(em no captured trial run, no retry on failure. Pass
+.B \-\-strip\-matched\-args
+to drop the matched argument(s) before forwarding the rest. Requires at
+least one
+.BR \-\-route\-arg .
+.SH DIAGNOSTICS
+By default, falling back leaves no trace. Pass
+.B \-\-diagnostic
+at
+.B add
+time (or set
+.I diagnostic = true
+in the config) to print a single line to stderr whenever that shim falls
+back:
+.RS
+.nf
+shimback: 'sed' failed; falling back to /usr/bin/sed
+.fi
+.RE
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/shimback/config.toml
+Shim configuration (falls back to
+.IR $HOME/.config/shimback/config.toml
+if
+.B XDG_CONFIG_HOME
+is unset). Plain, hand\-editable TOML, managed by
+.B add
+and
+.BR remove .
+.TP
+.I $XDG_DATA_HOME/shimback/bin
+The shim directory: every shim's symlink lives here (falls back to
+.IR $HOME/.local/share/shimback/bin ).
+.SH EXIT STATUS
+.TP
+.B 127
+The shim, source, or fallback couldn't be found or isn't executable.
+.TP
+.B 1
+A CLI or config validation error.
+.TP
+other
+Passed straight through from whichever of source/fallback actually ran (or
+128 + signal if it was killed by a signal).
+.SH SEE ALSO
+Full documentation and source:
+.UR https://github.com/pnavais/shimback
+.UE
+.SH AUTHOR
+Pablo Navais

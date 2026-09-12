@@ -37,6 +37,7 @@ add_executable(shimback
   src/commands/list.c
   src/commands/doctor.c
   src/commands/install.c
+  src/commands/uninstall.c
 )
 
 target_include_directories(shimback PRIVATE
@@ -49,6 +50,7 @@ if(SHIMBACK_DEV_WARNINGS)
 endif()
 
 install(TARGETS shimback RUNTIME DESTINATION bin)
+install(FILES man/shimback.1 DESTINATION share/man/man1)
 
 enable_testing()
 
@@ -74,3 +76,5 @@ add_test(NAME test_doctor
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_doctor.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_install
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_install.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_uninstall
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_uninstall.sh $<TARGET_FILE:shimback>)

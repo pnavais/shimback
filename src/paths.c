@@ -132,6 +132,21 @@ char *self_exe_path(void) {
 }
 #endif
 
+char *dir_of(const char *path) {
+    const char *slash = strrchr(path, '/');
+    if (!slash) {
+        return xstrdup(".");
+    }
+    if (slash == path) {
+        return xstrdup("/");
+    }
+    size_t len = (size_t)(slash - path);
+    char *result = xmalloc(len + 1);
+    memcpy(result, path, len);
+    result[len] = '\0';
+    return result;
+}
+
 bool is_executable_file(const char *path) {
     struct stat st;
     if (stat(path, &st) != 0) {
@@ -143,7 +158,7 @@ bool is_executable_file(const char *path) {
     return access(path, X_OK) == 0;
 }
 
-bool copy_executable(const char *src, const char *dst) {
+static bool copy_file_mode(const char *src, const char *dst, mode_t mode) {
     FILE *in = fopen(src, "rb");
     if (!in) {
         return false;
@@ -170,7 +185,7 @@ bool copy_executable(const char *src, const char *dst) {
     fclose(in);
     fclose(out);
 
-    if (ok && chmod(tmp, 0755) != 0) {
+    if (ok && chmod(tmp, mode) != 0) {
         ok = false;
     }
     if (ok && rename(tmp, dst) == 0) {
@@ -178,6 +193,14 @@ bool copy_executable(const char *src, const char *dst) {
     }
     unlink(tmp);
     return false;
+}
+
+bool copy_executable(const char *src, const char *dst) {
+    return copy_file_mode(src, dst, 0755);
+}
+
+bool copy_file(const char *src, const char *dst) {
+    return copy_file_mode(src, dst, 0644);
 }
 
 bool mkdir_p(const char *dir) {

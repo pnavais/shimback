@@ -43,6 +43,7 @@ shimback init
 shimback list
 shimback doctor
 shimback install [--prefix <dir>]
+shimback uninstall [--prefix <dir>] [--full]
 shimback --help | --version
 ```
 
@@ -160,6 +161,33 @@ symlink (see below), so running it straight out of a build directory means
 every shim breaks the next time that directory is cleaned or rebuilt.
 Re-running `install` (e.g. after building a newer version) simply refreshes
 the installed copy.
+
+`install` also installs this man page to `<prefix>/share/man/man1/shimback.1`.
+It first looks for a `shimback.1` bundled next to the running binary — how
+each [release](https://github.com/pnavais/shimback/releases) tarball ships
+it, so the common "download a release, run install" path never touches the
+network for this. If it can't find one there (e.g. built from source
+directly), it falls back to downloading it from the GitHub release matching
+the running version, via `curl` — the one place shimback shells out to
+something it didn't build, and the reason it isn't unconditionally
+"dependency-free": if `curl` isn't on `PATH`, or the download fails, this
+step is skipped with a warning and `install` still succeeds at its main
+job of getting the binary in place.
+
+### `uninstall`
+
+```sh
+shimback uninstall [--prefix <dir>] [--full]
+```
+
+Removes every symlink `shimback` created in the shim directory (dangling or
+not — nothing else should ever live there), the `<prefix>/bin/shimback`
+binary `install` placed (default prefix: `~/.local`, matching `install`),
+and the man page installed alongside it. By default the config file and the
+`PATH` marker blocks in shell startup files are left alone, so a future
+`add`/`init` just picks up where things left off; pass `--full` to also
+delete the config file and remove those `PATH` blocks — a complete teardown.
+Safe to re-run: nothing left to remove is just reported as already gone.
 
 ## Fallback policies
 
@@ -284,7 +312,10 @@ small subset — no arrays of tables, inline tables, or multi-line strings).
 
 ## Building
 
-Requires a C11 compiler and CMake ≥ 3.16. No external dependencies.
+Requires a C11 compiler and CMake ≥ 3.16. No external dependencies to build
+or run shims (`curl` is only ever shelled out to by `install`, and only as a
+fallback when it can't find a man page bundled next to itself — see
+`install` above).
 
 With [`just`](https://github.com/casey/just) installed, `just build`
 autodetects your OS/arch and builds into `build-<os>-<arch>/`:
@@ -308,7 +339,8 @@ permanent before running `add`**: each shim's symlink is frozen to point at
 wherever the binary was running from at `add` time, so a binary left in a
 build directory will strand every shim once that directory is removed or
 rebuilt. `shimback install` (see above) handles this for you, or install it
-anywhere else on `PATH` yourself (e.g. via `cmake --install build`).
+anywhere else on `PATH` yourself (e.g. via `cmake --install build`, which
+also installs [`man/shimback.1`](man/shimback.1) to `<prefix>/share/man/man1`).
 
 ## Platform support
 

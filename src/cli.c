@@ -66,6 +66,7 @@ static void print_usage(void) {
         "  \001shimback list\001 (alias: \001ls\001)\n"
         "  \001shimback doctor\001\n"
         "  \001shimback install\001 [\001--prefix\001 \002<dir>\002]\n"
+        "  \001shimback uninstall\001 [\001--prefix\001 \002<dir>\002] [\001--full\001]\n"
         "  \001shimback --help\001 | \001--version\001\n"
         "\n"
         "\003COMMANDS:\003\n"
@@ -94,8 +95,14 @@ static void print_usage(void) {
         "\n"
         "  \001install\001   Copy the running shimback binary to a stable, PATH-ed location\n"
         "            (default: ~/.local/bin) so shim symlinks (which point at wherever\n"
-        "            the binary was running from at `add` time) survive a rebuild.\n"
-        "              \004e.g. shimback install --prefix ~/.local\004\n");
+        "            the binary was running from at `add` time) survive a rebuild. Also\n"
+        "            installs this man page (bundled, or downloaded if missing).\n"
+        "              \004e.g. shimback install --prefix ~/.local\004\n"
+        "\n"
+        "  \001uninstall\001 Remove every shim symlink shimback created, the installed binary,\n"
+        "            and the man page. \001--full\001 also clears the config file and the\n"
+        "            PATH blocks in shell startup files (left alone by default).\n"
+        "              \004e.g. shimback uninstall --full\004\n");
 }
 
 int cli_run(int argc, char **argv) {
@@ -128,6 +135,9 @@ int cli_run(int argc, char **argv) {
     }
     if (strcmp(argv[1], "install") == 0) {
         return cmd_install(argc - 1, argv + 1);
+    }
+    if (strcmp(argv[1], "uninstall") == 0) {
+        return cmd_uninstall(argc - 1, argv + 1);
     }
 
     fprintf(stderr, "shimback: unknown command '%s'\n", argv[1]);
