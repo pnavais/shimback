@@ -17,7 +17,6 @@ out="$("$SHIMBACK" init)"
 assert_contains "init: detects zsh" "$out" "Detected zsh"
 assert_contains "init: detects bash" "$out" "Detected bash"
 assert_contains "init: detects fish" "$out" "Detected fish"
-assert_contains "init: reports fish as unsupported" "$out" "not supported"
 
 assert_contains "init: zsh gets a PATH block" "$(cat "$HOME/.zshrc")" "# >>> shimback >>>"
 
@@ -26,15 +25,21 @@ if [ ! -f "$HOME/.bashrc" ]; then
 fi
 assert_contains "init: bash gets a PATH block" "$(cat "$HOME/.bashrc")" "# >>> shimback >>>"
 
-if [ -f "$HOME/.config/fish/config.fish" ]; then
-    fail "init: fish config should not be touched in v0.1.0"
+FISH_SNIPPET="$HOME/.config/fish/conf.d/shimback.fish"
+if [ ! -f "$FISH_SNIPPET" ]; then
+    fail "init: expected a fish conf.d snippet to be created"
 fi
+assert_contains "init: fish snippet sets PATH" "$(cat "$FISH_SNIPPET")" "set -gx PATH"
+assert_contains "init: fish snippet includes the shim dir" "$(cat "$FISH_SNIPPET")" \
+    "$XDG_DATA_HOME/shimback/bin"
 
 # --- idempotent re-run: no duplicate blocks ---
 "$SHIMBACK" init >/dev/null
 zsh_count="$(count_occurrences '# >>> shimback >>>' "$HOME/.zshrc")"
 bash_count="$(count_occurrences '# >>> shimback >>>' "$HOME/.bashrc")"
+fish_dir_count="$(count_occurrences "$XDG_DATA_HOME/shimback/bin" "$FISH_SNIPPET")"
 assert_eq "init: zsh marker stays singular on re-run" "1" "$zsh_count"
 assert_eq "init: bash marker stays singular on re-run" "1" "$bash_count"
+assert_eq "init: fish snippet's shim dir stays singular on re-run" "1" "$fish_dir_count"
 
 finish

@@ -160,11 +160,16 @@ shimback remove sed
 .RE
 .TP
 .B init
-Detect every installed shell (zsh, bash, fish) and add the shim directory to
+Detect every installed shell (zsh, bash, fish) and set up
 .B PATH
-in each one's startup file(s), not just the current shell. fish is detected
-but not automatically configured as of v0.1.0; a manual command is printed
-instead.
+in each one, not just the current shell: for zsh/bash, the same
+marker\-block injection
+.B add
+does; for fish, a dedicated snippet dropped into
+.I ~/.config/fish/conf.d/shimback.fish
+(auto\-sourced by fish at startup), unioned across repeated calls the same
+way and removed outright by
+.BR "uninstall \-\-full" .
 .RS
 .PP
 Example:
@@ -290,11 +295,7 @@ one is running;
 .B \-\-all
 means every shell
 .B init
-would detect as installed.
-.B fish
-is accepted by either but, as with
-.BR add / init ,
-isn't automatically configured yet.
+would detect as installed, fish included.
 .RS
 .PP
 Example:
@@ -314,11 +315,12 @@ binary installed by
 .BR install ,
 and the man page installed alongside it. With
 .BR \-\-full ,
-also delete the config file and remove the
+also delete the config file and undo the
 .B PATH
-marker blocks from shell startup files; without it, the config and
+setup in shell startup files (the zsh/bash marker block, and the fish
+conf.d snippet); without it, the config and
 .B PATH
-blocks are left alone.
+setup are left alone.
 .RS
 .PP
 Example:

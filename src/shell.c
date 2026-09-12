@@ -1,5 +1,6 @@
 #include "shell.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -210,6 +211,36 @@ static bool ends_with(const char *s, const char *suffix) {
     return slen >= suflen && strcmp(s + slen - suflen, suffix) == 0;
 }
 
+/* Merges `dir` into `dirs` in place: a plain union (skip if already
+ * present) for most directories, except that shim_bin_dir() (see paths.c)
+ * is always "<data dir>/shimback/bin" and can change between invocations if
+ * $XDG_DATA_HOME/$HOME changes -- when `dir` is one, any existing entry
+ * that's also one (there should be at most one) is replaced instead, so a
+ * changed shim directory doesn't leave a stale, dead entry behind in PATH
+ * forever. Anything else already present (e.g. install's own bin dir)
+ * doesn't match that shape and is left alone. Shared by every shell's
+ * ensure-path logic so they all treat a changed shim dir the same way. */
+static void merge_dir_into(StrVec *dirs, const char *dir) {
+    if (ends_with(dir, "/shimback/bin")) {
+        for (size_t i = 0; i < dirs->count;) {
+            if (ends_with(dirs->items[i], "/shimback/bin") && strcmp(dirs->items[i], dir) != 0) {
+                free(dirs->items[i]);
+                dirs->items[i] = dirs->items[dirs->count - 1];
+                dirs->count--;
+            } else {
+                i++;
+            }
+        }
+    }
+
+    for (size_t i = 0; i < dirs->count; i++) {
+        if (strcmp(dirs->items[i], dir) == 0) {
+            return;
+        }
+    }
+    strvec_push(dirs, xstrdup(dir));
+}
+
 /* Idempotently ensures `dir` is included in the marker block tagged `tag`
  * in `rc_path` -- unioning it with whatever directories are already there
  * (from an earlier add/init/install) rather than overwriting them, so those
@@ -233,36 +264,7 @@ static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char
         parse_existing_dirs(body_start, (size_t)(body_end - body_start), &dirs);
     }
 
-    /* shim_bin_dir() (see paths.c) is always "<data dir>/shimback/bin", and
-     * can change between invocations if $XDG_DATA_HOME/$HOME changes; when
-     * `dir` is one, replace any existing entry that's also one (there
-     * should be at most one) instead of just unioning it in, so a changed
-     * shim directory doesn't leave a stale, dead entry behind in PATH
-     * forever. Anything else already ensured into this block (e.g.
-     * install's own bin dir) doesn't match this shape and is left alone --
-     * a plain union, same as any other directory. */
-    if (ends_with(dir, "/shimback/bin")) {
-        for (size_t i = 0; i < dirs.count;) {
-            if (ends_with(dirs.items[i], "/shimback/bin") && strcmp(dirs.items[i], dir) != 0) {
-                free(dirs.items[i]);
-                dirs.items[i] = dirs.items[dirs.count - 1];
-                dirs.count--;
-            } else {
-                i++;
-            }
-        }
-    }
-
-    bool already_present = false;
-    for (size_t i = 0; i < dirs.count; i++) {
-        if (strcmp(dirs.items[i], dir) == 0) {
-            already_present = true;
-            break;
-        }
-    }
-    if (!already_present) {
-        strvec_push(&dirs, xstrdup(dir));
-    }
+    merge_dir_into(&dirs, dir);
 
     DynBuf new_body;
     dynbuf_init(&new_body);
@@ -421,6 +423,133 @@ bool shell_zsh_migrate_block_to_local(const char *tag) {
     return ok;
 }
 
+/* fish auto-sources every *.fish snippet dropped into
+ * $XDG_CONFIG_HOME/fish/conf.d (falling back to ~/.config/fish/conf.d) at
+ * shell startup, alphabetically -- so unlike zsh/bash, which share one rc
+ * file our marker-block logic edits in place, fish gives shimback an
+ * entire file of its own to own outright: no markers needed, nothing else
+ * in the file to avoid clobbering. */
+static char *fish_config_dir(void) {
+    char *base = xdg_config_home();
+    if (!base) {
+        char *home = home_dir();
+        base = path_join(home, ".config");
+        free(home);
+    }
+    char *fish_dir = path_join(base, "fish");
+    free(base);
+    return fish_dir;
+}
+
+static char *fish_snippet_path(const char *tag) {
+    char *fish_dir = fish_config_dir();
+    char *confd_dir = path_join(fish_dir, "conf.d");
+    free(fish_dir);
+    char filename[128];
+    snprintf(filename, sizeof(filename), "%s.fish", tag);
+    char *path = path_join(confd_dir, filename);
+    free(confd_dir);
+    return path;
+}
+
+/* Extracts the directory list from a snippet shaped like build_fish_body's
+ * output (a `set -gx PATH ...` line listing space-separated directories
+ * ahead of a literal trailing $PATH), mirroring parse_existing_dirs.
+ * Best-effort: a file with no such line just yields no directories. */
+static void parse_existing_fish_dirs(const char *content, StrVec *out) {
+    const char *marker = "set -gx PATH ";
+    const char *p = strstr(content, marker);
+    if (!p) {
+        return;
+    }
+    p += strlen(marker);
+    const char *end = strchr(p, '\n');
+    size_t len = end ? (size_t)(end - p) : strlen(p);
+    char *line = xmalloc(len + 1);
+    memcpy(line, p, len);
+    line[len] = '\0';
+
+    char *saveptr = NULL;
+    char *tok = strtok_r(line, " ", &saveptr);
+    while (tok) {
+        if (strcmp(tok, "$PATH") != 0) {
+            strvec_push(out, xstrdup(tok));
+        }
+        tok = strtok_r(NULL, " ", &saveptr);
+    }
+    free(line);
+}
+
+static void build_fish_body(DynBuf *body, const StrVec *dirs) {
+    dynbuf_append_str(body, "# Managed by shimback -- changes here will be overwritten.\n");
+    dynbuf_append_str(body, "set -gx PATH");
+    for (size_t i = 0; i < dirs->count; i++) {
+        dynbuf_append_char(body, ' ');
+        dynbuf_append_str(body, dirs->items[i]);
+    }
+    dynbuf_append_str(body, " $PATH\n");
+}
+
+/* Idempotently ensures `dir` is included in `tag`'s fish snippet, unioning
+ * it with whatever's already there the same way ensure_dir_in_block does
+ * for zsh/bash (see merge_dir_into) -- so add/init/install can run in any
+ * order and share one snippet without clobbering each other. Since the
+ * snippet is entirely shimback's own file (unlike the zsh/bash marker
+ * block, which shares a file with everything else in someone's rc), it's
+ * simply rewritten in full each time rather than patched in place. */
+static bool ensure_fish(const char *dir, const char *tag) {
+    char *path = fish_snippet_path(tag);
+    char *confd_dir = dir_of(path);
+    if (!mkdir_p(confd_dir)) {
+        warn("failed to create %s", confd_dir);
+        free(confd_dir);
+        free(path);
+        return false;
+    }
+    free(confd_dir);
+
+    char *content = read_file_or_empty(path);
+    StrVec dirs;
+    strvec_init(&dirs);
+    parse_existing_fish_dirs(content, &dirs);
+    free(content);
+
+    merge_dir_into(&dirs, dir);
+
+    DynBuf desired;
+    dynbuf_init(&desired);
+    build_fish_body(&desired, &dirs);
+    strvec_free(&dirs);
+
+    bool ok = write_file_atomic(path, desired.data, desired.len);
+    dynbuf_free(&desired);
+
+    if (ok) {
+        printf("fish: PATH updated in %s\n", path);
+    } else {
+        warn("failed to update %s", path);
+    }
+    free(path);
+    return ok;
+}
+
+/* Removes the fish snippet entirely -- the inverse of ensure_fish. Since
+ * shimback owns the whole file, "removing our block" here just means
+ * deleting it. A no-op if it's already gone. */
+static bool remove_fish(const char *tag) {
+    char *path = fish_snippet_path(tag);
+    if (access(path, F_OK) != 0) {
+        free(path);
+        return true;
+    }
+    bool ok = unlink(path) == 0;
+    if (!ok) {
+        warn("failed to remove %s: %s", path, strerror(errno));
+    }
+    free(path);
+    return ok;
+}
+
 static bool ensure_zsh(const char *dir, const char *tag) {
     char *home = home_dir();
     char *rc = zsh_rc_path(home);
@@ -512,10 +641,7 @@ bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag) 
         case SHELL_BASH:
             return ensure_bash(dir, tag);
         case SHELL_FISH:
-            printf("fish detected but not supported for automatic PATH injection in v0.1.0; "
-                   "add manually via: fish_add_path %s\n",
-                   dir);
-            return true;
+            return ensure_fish(dir, tag);
         case SHELL_UNKNOWN:
         default:
             printf("could not detect a supported shell; add this to your shell's startup file "
@@ -536,9 +662,10 @@ bool shell_remove_path_tagged(ShellKind kind, const char *tag) {
         case SHELL_BASH:
             return remove_bash(tag);
         case SHELL_FISH:
+            return remove_fish(tag);
         case SHELL_UNKNOWN:
         default:
-            /* shimback never wrote a block for these (see shell_ensure_path_tagged),
+            /* shimback never wrote a block for this (see shell_ensure_path_tagged),
              * so there's nothing to remove. */
             return true;
     }

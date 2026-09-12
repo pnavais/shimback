@@ -77,4 +77,23 @@ assert_not_contains "uninstall --full: PATH block removed" "$(cat "$ZSHRC")" \
 code3=$?
 assert_eq "uninstall: idempotent re-run exits 0" "0" "$code3"
 
+# --- --full also removes a fish conf.d snippet (faking fish onto $PATH so
+# shell_is_installed detects it regardless of the test machine's setup) ---
+FAKE_SHELLS_DIR="$SANDBOX/fake_shells"
+mkdir -p "$FAKE_SHELLS_DIR"
+printf '#!/bin/sh\nexit 0\n' >"$FAKE_SHELLS_DIR/fish"
+chmod +x "$FAKE_SHELLS_DIR/fish"
+export PATH="$FAKE_SHELLS_DIR:$PATH"
+
+FISH_SNIPPET="$HOME/.config/fish/conf.d/shimback.fish"
+"$BUNDLED_SHIMBACK" install --prefix "$PREFIX" --shell fish >/dev/null
+if [ ! -f "$FISH_SNIPPET" ]; then
+    fail "setup: expected a fish conf.d snippet at $FISH_SNIPPET"
+fi
+
+"$SHIMBACK" uninstall --prefix "$PREFIX" --full >/dev/null
+if [ -e "$FISH_SNIPPET" ]; then
+    fail "uninstall --full: fish conf.d snippet should be removed"
+fi
+
 finish
