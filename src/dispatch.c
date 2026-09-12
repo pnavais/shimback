@@ -39,6 +39,60 @@ static char **build_argv(const char *name, int argc, char **argv) {
     return fwd;
 }
 
+/* Builds the argv for a POLICY_REWRITE shim: argv[0] is `shim_name`; each of
+ * argv[1..argc) is checked for an exact match against entry->rewrite_from,
+ * and on a match is replaced by the corresponding entry->rewrite_to value,
+ * split on spaces into one or more tokens (so "-l -a -h" becomes three
+ * arguments, while "-ltrah" stays one; an empty replacement drops the
+ * argument entirely). Anything that doesn't match passes through
+ * unchanged. NULL-terminated, as execv expects. Caller frees the returned
+ * array itself (its elements are all owned by `argv` or newly allocated
+ * split tokens -- see the note below on why only the array is freed). */
+static char **build_rewritten_argv(const ShimEntry *entry, const char *shim_name, int argc,
+                                    char **argv) {
+    /* Elements borrowed from `argv`/`shim_name` are never freed (they
+     * outlive this call in the caller's own argv); only genuinely new
+     * strings -- the split-out replacement tokens -- are allocated, and
+     * this process is about to exec or exit either way, so those are left
+     * for the OS to reclaim rather than tracked and freed individually. */
+    size_t cap = (size_t)argc + 1;
+    char **out = xmalloc(cap * sizeof(char *));
+    size_t n = 0;
+    out[n++] = (char *)shim_name;
+
+    for (int i = 1; i < argc; i++) {
+        const char *replacement = NULL;
+        for (size_t j = 0; j < entry->rewrite_from_count; j++) {
+            if (strcmp(argv[i], entry->rewrite_from[j]) == 0) {
+                replacement = entry->rewrite_to[j];
+                break;
+            }
+        }
+        if (!replacement) {
+            if (n + 1 >= cap) {
+                cap *= 2;
+                out = xrealloc(out, cap * sizeof(char *));
+            }
+            out[n++] = argv[i];
+            continue;
+        }
+        char *copy = xstrdup(replacement);
+        char *saveptr = NULL;
+        for (char *tok = strtok_r(copy, " ", &saveptr); tok != NULL;
+             tok = strtok_r(NULL, " ", &saveptr)) {
+            if (n + 1 >= cap) {
+                cap *= 2;
+                out = xrealloc(out, cap * sizeof(char *));
+            }
+            out[n++] = xstrdup(tok);
+        }
+        free(copy);
+    }
+
+    out[n] = NULL;
+    return out;
+}
+
 /* Runs `exe` with real inherited stdio (no capturing) -- used whenever a run
  * is meant to be the "real", user-visible attempt: the fallback, or the
  * source when it equals the fallback. */
@@ -150,18 +204,6 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         return 127;
     }
 
-    if (!is_executable_file(entry->fallback)) {
-        fprintf(stderr, "shimback: fallback '%s' for '%s' not found or not executable\n",
-                entry->fallback, shim_name);
-        return 127;
-    }
-    char *resolved_fallback = canonicalize(entry->fallback);
-    if (!resolved_fallback) {
-        fprintf(stderr, "shimback: fallback '%s' for '%s' not found or not executable\n",
-                entry->fallback, shim_name);
-        return 127;
-    }
-
     char *resolved_source = NULL;
     if (entry->source) {
         if (!is_executable_file(entry->source)) {
@@ -180,6 +222,31 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     if (!resolved_source) {
         fprintf(stderr, "shimback: no '%s' found on PATH to use as the source command\n",
                 shim_name);
+        return 127;
+    }
+
+    /* rewrite is an alias/macro mechanism, not a fallback one: it never
+     * looks at fallback at all (which is why fallback is optional for it),
+     * always runs source, and does so with live/inherited stdio just like
+     * route-args -- no invisible trial run, no retry if it fails. */
+    if (entry->policy == POLICY_REWRITE) {
+        char **rewritten_argv = build_rewritten_argv(entry, shim_name, argc, argv);
+        int status;
+        run_inherited(resolved_source, rewritten_argv, &status);
+        free(rewritten_argv);
+        return decode_exit_code(status);
+    }
+
+    /* Every other policy needs a fallback to potentially run. */
+    if (!is_executable_file(entry->fallback)) {
+        fprintf(stderr, "shimback: fallback '%s' for '%s' not found or not executable\n",
+                entry->fallback, shim_name);
+        return 127;
+    }
+    char *resolved_fallback = canonicalize(entry->fallback);
+    if (!resolved_fallback) {
+        fprintf(stderr, "shimback: fallback '%s' for '%s' not found or not executable\n",
+                entry->fallback, shim_name);
         return 127;
     }
 

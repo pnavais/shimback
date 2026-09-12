@@ -23,6 +23,7 @@ const char *policy_to_string(Policy p) {
         case POLICY_HEURISTIC: return "heuristic";
         case POLICY_EXIT_CODE_MATCH: return "exit-code-match";
         case POLICY_ROUTE_ARGS: return "route-args";
+        case POLICY_REWRITE: return "rewrite";
         case POLICY_EXIT_CODE:
         default: return "exit-code";
     }
@@ -43,6 +44,10 @@ bool policy_from_string(const char *s, Policy *out) {
     }
     if (strcmp(s, "route-args") == 0) {
         *out = POLICY_ROUTE_ARGS;
+        return true;
+    }
+    if (strcmp(s, "rewrite") == 0) {
+        *out = POLICY_REWRITE;
         return true;
     }
     return false;
@@ -102,6 +107,14 @@ void shim_entry_free(ShimEntry *entry) {
         free(entry->route_args[i]);
     }
     free(entry->route_args);
+    for (size_t i = 0; i < entry->rewrite_from_count; i++) {
+        free(entry->rewrite_from[i]);
+    }
+    free(entry->rewrite_from);
+    for (size_t i = 0; i < entry->rewrite_to_count; i++) {
+        free(entry->rewrite_to[i]);
+    }
+    free(entry->rewrite_to);
     memset(entry, 0, sizeof(*entry));
 }
 
@@ -413,7 +426,7 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             if (!v || !policy_from_string(v, &entry->policy)) {
                 snprintf(errbuf, errbuf_size,
                          "line %d: 'policy' must be \"exit-code\", \"heuristic\", "
-                         "\"exit-code-match\", or \"route-args\"",
+                         "\"exit-code-match\", \"route-args\", or \"rewrite\"",
                          line_no);
                 free(v);
                 status = CONFIG_ERR_PARSE;
@@ -473,6 +486,36 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                 status = CONFIG_ERR_PARSE;
                 break;
             }
+        } else if (strcmp(key, "rewrite_from") == 0) {
+            StrVec vec;
+            strvec_init(&vec);
+            if (!parse_string_array(&cursor, &vec)) {
+                strvec_free(&vec);
+                snprintf(errbuf, errbuf_size, "line %d: malformed 'rewrite_from' array", line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+            for (size_t i = 0; i < entry->rewrite_from_count; i++) {
+                free(entry->rewrite_from[i]);
+            }
+            free(entry->rewrite_from);
+            entry->rewrite_from = vec.items;
+            entry->rewrite_from_count = vec.count;
+        } else if (strcmp(key, "rewrite_to") == 0) {
+            StrVec vec;
+            strvec_init(&vec);
+            if (!parse_string_array(&cursor, &vec)) {
+                strvec_free(&vec);
+                snprintf(errbuf, errbuf_size, "line %d: malformed 'rewrite_to' array", line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+            for (size_t i = 0; i < entry->rewrite_to_count; i++) {
+                free(entry->rewrite_to[i]);
+            }
+            free(entry->rewrite_to);
+            entry->rewrite_to = vec.items;
+            entry->rewrite_to_count = vec.count;
         } else if (strcmp(key, "strip_matched_args") == 0) {
             if (strcmp(value_str, "true") == 0) {
                 entry->strip_matched_args = true;
@@ -499,8 +542,15 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
 
     for (size_t i = 0; i < cfg->count; i++) {
         ShimEntry *entry = &cfg->shims[i];
-        if (!entry->fallback) {
+        if (!entry->fallback && entry->policy != POLICY_REWRITE) {
             snprintf(errbuf, errbuf_size, "shim '%s' is missing a required 'fallback'", entry->name);
+            return CONFIG_ERR_VALIDATION;
+        }
+        if (entry->rewrite_from_count != entry->rewrite_to_count) {
+            snprintf(errbuf, errbuf_size,
+                     "shim '%s' has %zu 'rewrite_from' entries but %zu 'rewrite_to' entries -- "
+                     "they must match up one-to-one",
+                     entry->name, entry->rewrite_from_count, entry->rewrite_to_count);
             return CONFIG_ERR_VALIDATION;
         }
         if (entry->policy == POLICY_HEURISTIC && entry->error_pattern_count == 0) {
@@ -517,6 +567,11 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
         if (entry->policy == POLICY_ROUTE_ARGS && entry->route_arg_count == 0) {
             snprintf(errbuf, errbuf_size,
                      "shim '%s' uses policy \"route-args\" but has no route_args", entry->name);
+            return CONFIG_ERR_VALIDATION;
+        }
+        if (entry->policy == POLICY_REWRITE && entry->rewrite_from_count == 0) {
+            snprintf(errbuf, errbuf_size,
+                     "shim '%s' uses policy \"rewrite\" but has no rewrite rules", entry->name);
             return CONFIG_ERR_VALIDATION;
         }
     }
@@ -558,9 +613,11 @@ static void render_config(const Config *cfg, DynBuf *out) {
             dynbuf_append_char(out, '\n');
         }
 
-        dynbuf_append_str(out, "fallback = ");
-        append_escaped_string(out, entry->fallback);
-        dynbuf_append_char(out, '\n');
+        if (entry->fallback) {
+            dynbuf_append_str(out, "fallback = ");
+            append_escaped_string(out, entry->fallback);
+            dynbuf_append_char(out, '\n');
+        }
 
         dynbuf_append_str(out, "policy = ");
         append_escaped_string(out, policy_to_string(entry->policy));
@@ -603,6 +660,27 @@ static void render_config(const Config *cfg, DynBuf *out) {
 
         if (entry->strip_matched_args) {
             dynbuf_append_str(out, "strip_matched_args = true\n");
+        }
+
+        if (entry->rewrite_from_count > 0) {
+            dynbuf_append_str(out, "rewrite_from = [");
+            for (size_t j = 0; j < entry->rewrite_from_count; j++) {
+                if (j > 0) {
+                    dynbuf_append_str(out, ", ");
+                }
+                append_escaped_string(out, entry->rewrite_from[j]);
+            }
+            dynbuf_append_str(out, "]\n");
+        }
+        if (entry->rewrite_to_count > 0) {
+            dynbuf_append_str(out, "rewrite_to = [");
+            for (size_t j = 0; j < entry->rewrite_to_count; j++) {
+                if (j > 0) {
+                    dynbuf_append_str(out, ", ");
+                }
+                append_escaped_string(out, entry->rewrite_to[j]);
+            }
+            dynbuf_append_str(out, "]\n");
         }
 
         if (entry->diagnostic) {

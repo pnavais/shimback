@@ -30,6 +30,10 @@ void warn(const char *fmt, ...);
 void *xmalloc(size_t size);
 void *xrealloc(void *ptr, size_t size);
 char *xstrdup(const char *s);
+/* Duplicates the first `n` bytes of `s` (or up to its NUL, if shorter),
+ * NUL-terminating the result -- e.g. splitting "<from>=<to>" on '=' without
+ * a temporary copy of the whole string. */
+char *xstrndup(const char *s, size_t n);
 
 /* A growable byte buffer, reused by config serialization, shell rc-file
  * rewriting, and dispatch's captured child output. Not assumed to be a

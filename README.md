@@ -22,7 +22,7 @@ pair of commands.
    **policy** — see below), `shimback` transparently re-runs the same
    arguments against the **fallback** command instead. If the source
    succeeds, its output is passed through as if `shimback` weren't there at
-   all. (The `route-args` policy is the exception to this "try source,
+   all. (`route-args` and `rewrite` are exceptions to this "try source,
    maybe fall back" shape — see below.)
 
 A failed trial run of the source command is designed to be **invisible**:
@@ -35,9 +35,10 @@ diagnostic (see `diagnostic` below).
 
 ```
 shimback add <name> [-s <source>] -f <fallback>
-                     [--policy exit-code|heuristic|exit-code-match|route-args]
+                     [--policy exit-code|heuristic|exit-code-match|route-args|rewrite]
                      [--error-pattern <p>]... [--exit-code <code>]...
-                     [--route-arg <arg>]... [--strip-matched-args] [--diagnostic]
+                     [--route-arg <arg>]... [--strip-matched-args]
+                     [--rewrite <from>=<to>]... [--diagnostic]
 shimback remove <name>
 shimback init
 shimback list
@@ -67,8 +68,9 @@ shimback add sed -f /usr/bin/sed
   anything that resolves back to the `shimback` binary itself), so it
   naturally follows whatever the "real" `<name>` on your system currently
   is.
-- `-f`/`--fallback` is required, and is resolved the same way `-s` is: once,
-  at `add` time, frozen as an absolute path.
+- `-f`/`--fallback` is required (except with `--policy rewrite`, which never
+  uses it), and is resolved the same way `-s` is: once, at `add` time,
+  frozen as an absolute path.
 - Both `-s` and `-f` accept either a path (`/usr/local/bin/eza`,
   `./eza`) or a bare command name (`eza`) — a bare name with no `/` is
   looked up on `PATH` (skipping nothing, unlike auto-resolved `-s`) exactly
@@ -311,18 +313,37 @@ Safe to re-run: nothing left to remove is just reported as already gone.
   instead. Pass `--strip-matched-args` to drop the matched argument(s)
   before forwarding the rest — with it set, `cools x` above would run
   `eza` with no arguments at all.
+- **`rewrite`**: not a fallback-on-failure policy either, and unlike every
+  other policy, **`-f`/`--fallback` is optional and never used** — this is
+  an alias/argument-macro mechanism, not a retry mechanism. Each
+  `--rewrite <from>=<to>` rule (repeatable) is checked against every
+  argument the shim was invoked with; a match is replaced with `<to>`
+  before running the **source**, live/inherited, no capture, no retry:
+
+  ```sh
+  shimback add tmux -s /usr/bin/tmux --policy rewrite --rewrite "all=ls"
+  shimback add ls -s /bin/ls --policy rewrite --rewrite "--full=-ltrah"
+  ```
+
+  Running `tmux all` runs `tmux ls` instead; running `ls --full` runs
+  `ls -ltrah` instead. A `<to>` containing spaces expands into multiple
+  forwarded arguments (e.g. `--rewrite "backup=-c -z -f backup.tar.gz"`);
+  an empty `<to>` (e.g. `--rewrite "-v="`) just drops the matched argument.
+  Arguments that don't match any rule pass through unchanged.
 
 > **Note:** `exit-code` is deliberately the least precise policy (any
 > failure triggers a retry) and needs no extra configuration. `heuristic`,
-> `exit-code-match`, and `route-args` are more targeted — each requires at
-> least one `--error-pattern` / `--exit-code` / `--route-arg` respectively,
-> enforced both at `add` time and on every config load, so a shim can never
-> silently end up in a state where it's configured to be selective but has
-> nothing to select on (`shimback doctor` also flags this if the config is
-> hand-edited into that state). The first three policies only ever affect
-> *failed* runs — a source that exits `0` always has its output passed
-> through untouched, regardless of policy — `route-args` is the exception,
-> deciding source vs. fallback up front from the arguments alone.
+> `exit-code-match`, `route-args`, and `rewrite` are more targeted — each
+> requires at least one `--error-pattern` / `--exit-code` / `--route-arg` /
+> `--rewrite` respectively, enforced both at `add` time and on every config
+> load, so a shim can never silently end up in a state where it's
+> configured to be selective but has nothing to select on (`shimback
+> doctor` also flags this if the config is hand-edited into that state).
+> The first three policies only ever affect *failed* runs — a source that
+> exits `0` always has its output passed through untouched, regardless of
+> policy. `route-args` and `rewrite` are the exceptions: both decide what
+> to run (or how to rewrite it) up front from the arguments alone, never
+> looking at the exit code at all.
 
 ### Diagnostics
 
@@ -367,6 +388,12 @@ fallback = "/usr/local/bin/eza"
 policy = "route-args"
 route_args = ["x"]
 strip_matched_args = true
+
+[shims.ls]
+source = "/bin/ls"
+policy = "rewrite"
+rewrite_from = ["--full"]
+rewrite_to = ["-ltrah"]
 ```
 
 The file is managed by `add`/`remove`, but is plain, hand-editable TOML (a

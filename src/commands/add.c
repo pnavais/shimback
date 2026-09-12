@@ -18,9 +18,11 @@
 
 static const char *USAGE =
     "usage: shimback add <name> [-s <source>] -f <fallback>\n"
-    "                    [--policy exit-code|heuristic|exit-code-match|route-args]\n"
+    "                    [--policy exit-code|heuristic|exit-code-match|route-args|rewrite]\n"
     "                    [--error-pattern <p>]... [--exit-code <code>]...\n"
-    "                    [--route-arg <arg>]... [--strip-matched-args] [--diagnostic]\n";
+    "                    [--route-arg <arg>]... [--strip-matched-args]\n"
+    "                    [--rewrite <from>=<to>]... [--diagnostic]\n"
+    "-f/--fallback is required, except with --policy rewrite, where it's unused.\n";
 
 #define OPT_STRIP_MATCHED_ARGS 1000
 
@@ -42,6 +44,10 @@ int cmd_add(int argc, char **argv) {
     strvec_init(&patterns);
     StrVec route_args;
     strvec_init(&route_args);
+    StrVec rewrite_from;
+    strvec_init(&rewrite_from);
+    StrVec rewrite_to;
+    strvec_init(&rewrite_to);
     int *exit_codes = NULL;
     size_t exit_code_count = 0;
     size_t exit_code_cap = 0;
@@ -54,12 +60,13 @@ int cmd_add(int argc, char **argv) {
         {"exit-code", required_argument, 0, 'x'},
         {"route-arg", required_argument, 0, 'r'},
         {"strip-matched-args", no_argument, 0, OPT_STRIP_MATCHED_ARGS},
+        {"rewrite", required_argument, 0, 'w'},
         {"diagnostic", no_argument, 0, 'd'},
         {0, 0, 0, 0},
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "s:f:p:e:x:r:d", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:f:p:e:x:r:w:d", long_opts, NULL)) != -1) {
         switch (opt) {
             case 's': source_arg = optarg; break;
             case 'f': fallback_arg = optarg; break;
@@ -77,6 +84,15 @@ int cmd_add(int argc, char **argv) {
             }
             case 'r': strvec_push(&route_args, xstrdup(optarg)); break;
             case OPT_STRIP_MATCHED_ARGS: strip_matched_args = true; break;
+            case 'w': {
+                const char *eq = strchr(optarg, '=');
+                if (!eq || eq == optarg) {
+                    die("add: --rewrite must be '<from>=<to>' (got '%s')", optarg);
+                }
+                strvec_push(&rewrite_from, xstrndup(optarg, (size_t)(eq - optarg)));
+                strvec_push(&rewrite_to, xstrdup(eq + 1));
+                break;
+            }
             case 'd': diagnostic = true; break;
             default:
                 fprintf(stderr, "%s", USAGE);
@@ -96,15 +112,15 @@ int cmd_add(int argc, char **argv) {
     if (name[0] == '\0' || strchr(name, '/') != NULL || strcmp(name, "shimback") == 0) {
         die("add: invalid shim name '%s'", name);
     }
-    if (!fallback_arg) {
-        fprintf(stderr, "%s", USAGE);
-        die("add: -f/--fallback is required");
-    }
 
     Policy policy;
     if (!policy_from_string(policy_arg, &policy)) {
-        die("add: --policy must be \"exit-code\", \"heuristic\", \"exit-code-match\", or "
-            "\"route-args\"");
+        die("add: --policy must be \"exit-code\", \"heuristic\", \"exit-code-match\", "
+            "\"route-args\", or \"rewrite\"");
+    }
+    if (!fallback_arg && policy != POLICY_REWRITE) {
+        fprintf(stderr, "%s", USAGE);
+        die("add: -f/--fallback is required (except with --policy rewrite)");
     }
     if (policy == POLICY_HEURISTIC && patterns.count == 0) {
         die("add: --policy heuristic requires at least one --error-pattern");
@@ -115,19 +131,25 @@ int cmd_add(int argc, char **argv) {
     if (policy == POLICY_ROUTE_ARGS && route_args.count == 0) {
         die("add: --policy route-args requires at least one --route-arg");
     }
+    if (policy == POLICY_REWRITE && rewrite_from.count == 0) {
+        die("add: --policy rewrite requires at least one --rewrite <from>=<to>");
+    }
 
     char *self_exe = self_exe_path();
 
-    char *resolved_fallback = resolve_binary_arg(fallback_arg);
-    if (!resolved_fallback) {
-        die("add: fallback '%s' does not exist, is not executable, or isn't on $PATH",
-            fallback_arg);
-    }
-    if (strcmp(resolved_fallback, self_exe) == 0) {
-        die("add: fallback '%s' resolves back to the shimback binary itself -- that would loop "
-            "forever if this shim were ever invoked (did it resolve via $PATH to another shim, "
-            "or to this one?)",
-            fallback_arg);
+    char *resolved_fallback = NULL;
+    if (fallback_arg) {
+        resolved_fallback = resolve_binary_arg(fallback_arg);
+        if (!resolved_fallback) {
+            die("add: fallback '%s' does not exist, is not executable, or isn't on $PATH",
+                fallback_arg);
+        }
+        if (strcmp(resolved_fallback, self_exe) == 0) {
+            die("add: fallback '%s' resolves back to the shimback binary itself -- that would "
+                "loop forever if this shim were ever invoked (did it resolve via $PATH to "
+                "another shim, or to this one?)",
+                fallback_arg);
+        }
     }
 
     char *shim_dir = shim_bin_dir();
@@ -149,7 +171,8 @@ int cmd_add(int argc, char **argv) {
         resolved_source_for_check = path_search(name, shim_dir, self_exe);
     }
 
-    if (resolved_source_for_check && strcmp(resolved_source_for_check, resolved_fallback) == 0) {
+    if (resolved_source_for_check && resolved_fallback &&
+        strcmp(resolved_source_for_check, resolved_fallback) == 0) {
         die("add: source and fallback both resolve to '%s' -- refusing to add a no-op shim",
             resolved_fallback);
     }
@@ -200,7 +223,7 @@ int cmd_add(int argc, char **argv) {
      * to re-search $PATH for themselves. */
     entry->source = source_arg ? xstrdup(resolved_source_for_check) : NULL;
     free(entry->fallback);
-    entry->fallback = xstrdup(resolved_fallback);
+    entry->fallback = resolved_fallback ? xstrdup(resolved_fallback) : NULL;
     entry->policy = policy;
     for (size_t i = 0; i < entry->error_pattern_count; i++) {
         free(entry->error_patterns[i]);
@@ -218,6 +241,18 @@ int cmd_add(int argc, char **argv) {
     entry->route_args = route_args.items; /* ownership transferred */
     entry->route_arg_count = route_args.count;
     entry->strip_matched_args = strip_matched_args;
+    for (size_t i = 0; i < entry->rewrite_from_count; i++) {
+        free(entry->rewrite_from[i]);
+    }
+    free(entry->rewrite_from);
+    entry->rewrite_from = rewrite_from.items; /* ownership transferred */
+    entry->rewrite_from_count = rewrite_from.count;
+    for (size_t i = 0; i < entry->rewrite_to_count; i++) {
+        free(entry->rewrite_to[i]);
+    }
+    free(entry->rewrite_to);
+    entry->rewrite_to = rewrite_to.items; /* ownership transferred */
+    entry->rewrite_to_count = rewrite_to.count;
     entry->diagnostic = diagnostic;
 
     ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
@@ -226,7 +261,7 @@ int cmd_add(int argc, char **argv) {
     }
 
     printf("shimback: '%s' -> %s (fallback: %s, policy: %s)\n", name, symlink_path,
-           resolved_fallback, policy_to_string(policy));
+           resolved_fallback ? resolved_fallback : "none", policy_to_string(policy));
 
     ShellKind shell = detect_current_shell();
     shell_ensure_path(shell, shim_dir);
