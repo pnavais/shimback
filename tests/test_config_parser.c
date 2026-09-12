@@ -1,0 +1,188 @@
+/* Standalone unit test for the hand-rolled TOML-subset config parser and
+ * serializer -- no framework, just a sequence of checks tallying failures.
+ * Run directly, or via `ctest`. */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "config.h"
+#include "util.h"
+
+static int failures = 0;
+
+static void check(bool cond, const char *desc) {
+    if (!cond) {
+        fprintf(stderr, "FAIL: %s\n", desc);
+        failures++;
+    }
+}
+
+static void check_str_eq(const char *desc, const char *expected, const char *actual) {
+    bool ok = (expected == NULL && actual == NULL) ||
+              (expected != NULL && actual != NULL && strcmp(expected, actual) == 0);
+    if (!ok) {
+        fprintf(stderr, "FAIL: %s: expected [%s], got [%s]\n", desc, expected ? expected : "(null)",
+                actual ? actual : "(null)");
+        failures++;
+    }
+}
+
+static char *make_temp_path(const char *tag) {
+    char *buf = xmalloc(256);
+    snprintf(buf, 256, "/tmp/shimback_test_%s_%d.toml", tag, (int)getpid());
+    return buf;
+}
+
+static void test_round_trip(void) {
+    Config cfg;
+    config_init(&cfg);
+    cfg.version = 1;
+
+    size_t sed_idx = config_upsert(&cfg, "sed");
+    cfg.shims[sed_idx].fallback = xstrdup("/usr/bin/sed");
+    cfg.shims[sed_idx].policy = POLICY_EXIT_CODE;
+
+    size_t awk_idx = config_upsert(&cfg, "awk");
+    cfg.shims[awk_idx].source = xstrdup("/opt/homebrew/bin/gawk");
+    cfg.shims[awk_idx].fallback = xstrdup("/usr/bin/awk");
+    cfg.shims[awk_idx].policy = POLICY_HEURISTIC;
+    cfg.shims[awk_idx].diagnostic = true;
+    cfg.shims[awk_idx].error_patterns = xmalloc(3 * sizeof(char *));
+    cfg.shims[awk_idx].error_patterns[0] = xstrdup("invalid option");
+    cfg.shims[awk_idx].error_patterns[1] = xstrdup("illegal option");
+    cfg.shims[awk_idx].error_patterns[2] = xstrdup("unrecognized option");
+    cfg.shims[awk_idx].error_pattern_count = 3;
+
+    char *path = make_temp_path("roundtrip");
+    char errbuf[256];
+
+    ConfigStatus st = config_save(&cfg, path, errbuf, sizeof(errbuf));
+    check(st == CONFIG_OK, "round-trip: config_save succeeds");
+
+    Config reloaded;
+    st = config_load(path, &reloaded, errbuf, sizeof(errbuf));
+    check(st == CONFIG_OK, "round-trip: config_load succeeds");
+    check(reloaded.version == 1, "round-trip: version is 1");
+    check(reloaded.count == 2, "round-trip: shim count is 2");
+
+    ShimEntry *sed = config_find(&reloaded, "sed");
+    check(sed != NULL, "round-trip: sed entry found");
+    if (sed) {
+        check_str_eq("sed.source", NULL, sed->source);
+        check_str_eq("sed.fallback", "/usr/bin/sed", sed->fallback);
+        check(sed->policy == POLICY_EXIT_CODE, "sed.policy == exit-code");
+        check(sed->error_pattern_count == 0, "sed.error_pattern_count == 0");
+        check(sed->diagnostic == false, "sed.diagnostic == false");
+    }
+
+    ShimEntry *awk = config_find(&reloaded, "awk");
+    check(awk != NULL, "round-trip: awk entry found");
+    if (awk) {
+        check_str_eq("awk.source", "/opt/homebrew/bin/gawk", awk->source);
+        check_str_eq("awk.fallback", "/usr/bin/awk", awk->fallback);
+        check(awk->policy == POLICY_HEURISTIC, "awk.policy == heuristic");
+        check(awk->error_pattern_count == 3, "awk.error_pattern_count == 3");
+        if (awk->error_pattern_count == 3) {
+            check_str_eq("awk.error_patterns[0]", "invalid option", awk->error_patterns[0]);
+            check_str_eq("awk.error_patterns[1]", "illegal option", awk->error_patterns[1]);
+            check_str_eq("awk.error_patterns[2]", "unrecognized option", awk->error_patterns[2]);
+        }
+        check(awk->diagnostic == true, "awk.diagnostic == true");
+    }
+
+    config_free(&cfg);
+    config_free(&reloaded);
+    unlink(path);
+    free(path);
+}
+
+static void test_literal_parse(void) {
+    const char *literal =
+        "# a leading comment\n"
+        "version = 1\n"
+        "\n"
+        "[shims.sed]\n"
+        "fallback = \"/usr/bin/sed\" # trailing comment\n"
+        "policy = \"exit-code\"\n";
+
+    char *path = make_temp_path("literal");
+    FILE *f = fopen(path, "wb");
+    check(f != NULL, "literal: temp file created");
+    if (f) {
+        fwrite(literal, 1, strlen(literal), f);
+        fclose(f);
+    }
+
+    Config cfg;
+    char errbuf[256];
+    ConfigStatus st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_OK, "literal: config_load succeeds");
+    check(cfg.count == 1, "literal: one shim entry");
+
+    ShimEntry *sed = config_find(&cfg, "sed");
+    check(sed != NULL, "literal: sed entry found");
+    if (sed) {
+        check_str_eq("literal: trailing comment stripped from fallback", "/usr/bin/sed",
+                     sed->fallback);
+    }
+
+    config_free(&cfg);
+    unlink(path);
+    free(path);
+}
+
+static void test_validation_errors(void) {
+    const char *missing_fallback = "version = 1\n\n[shims.sed]\npolicy = \"exit-code\"\n";
+    const char *missing_patterns =
+        "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"heuristic\"\n";
+
+    char *path = make_temp_path("invalid");
+    Config cfg;
+    char errbuf[256];
+
+    FILE *f = fopen(path, "wb");
+    fwrite(missing_fallback, 1, strlen(missing_fallback), f);
+    fclose(f);
+    ConfigStatus st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_VALIDATION, "missing fallback is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(missing_patterns, 1, strlen(missing_patterns), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_VALIDATION, "heuristic without error_patterns is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    unlink(path);
+    free(path);
+}
+
+static void test_missing_file_is_empty_config(void) {
+    Config cfg;
+    char errbuf[256];
+    ConfigStatus st = config_load("/tmp/shimback_test_does_not_exist.toml", &cfg, errbuf,
+                                   sizeof(errbuf));
+    check(st == CONFIG_OK, "missing config file is not an error");
+    check(cfg.count == 0, "missing config file yields zero shims");
+    config_free(&cfg);
+}
+
+int main(void) {
+    test_round_trip();
+    test_literal_parse();
+    test_validation_errors();
+    test_missing_file_is_empty_config();
+
+    if (failures > 0) {
+        fprintf(stderr, "%d check(s) failed\n", failures);
+        return 1;
+    }
+    printf("OK\n");
+    return 0;
+}
