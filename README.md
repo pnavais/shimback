@@ -105,7 +105,20 @@ shimback list
 ```
 
 Prints every configured shim's name, source (or `auto`), fallback, policy,
-and diagnostic flag.
+and diagnostic flag as a column-aligned table:
+
+```
+NAME  SOURCE                   FALLBACK      POLICY     DIAGNOSTIC
+sed   auto                     /usr/bin/sed  exit-code  false
+awk   /opt/homebrew/bin/gawk   /usr/bin/awk  heuristic  true
+```
+
+When stdout is a terminal (and [`NO_COLOR`](https://no-color.org/) isn't
+set), the policy column is colored by kind (`heuristic` yellow,
+`exit-code-match` magenta, `exit-code` uncolored as the baseline), `auto`
+sources and `false` diagnostics are dimmed, and `true` diagnostics are
+green. Piping the output (e.g. to a file or another command) disables
+color automatically.
 
 ### `doctor`
 
