@@ -67,6 +67,54 @@ fi
 assert_not_contains "exit-code-match without codes: nothing written to config" \
     "$("$SHIMBACK" list)" "badxtool"
 
+# --- route-args policy ---
+"$SHIMBACK" add rtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy route-args --route-arg "special" >/dev/null
+
+RTOOL="$(shim_path rtool)"
+
+out="$(FAKE_EXIT_CODE=5 FAKE_STDOUT="primary-out" FAKE_STDERR="primary-err" "$RTOOL" other 2>"$SANDBOX/err")"
+code=$?
+assert_eq "route-args no-match: runs source directly, real exit code surfaces" "5" "$code"
+assert_eq "route-args no-match: source's real stdout surfaces live (no capture)" "primary-out" "$out"
+assert_eq "route-args no-match: source's real stderr surfaces live (no capture)" "primary-err" \
+    "$(cat "$SANDBOX/err")"
+assert_not_contains "route-args no-match: fallback did not run" "$out" "FALLBACK_RAN"
+
+out="$("$RTOOL" special)"
+code=$?
+assert_eq "route-args match: routes to fallback, exit 0" "0" "$code"
+assert_contains "route-args match: fallback ran with the matched arg kept" "$out" "FALLBACK_RAN:special"
+
+# --- route-args with --strip-matched-args removes the matched arg ---
+"$SHIMBACK" add striptool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy route-args --route-arg "special" --strip-matched-args >/dev/null
+STRIPTOOL="$(shim_path striptool)"
+
+out="$("$STRIPTOOL" special keep-me)"
+assert_contains "route-args strip: fallback ran without the matched arg" "$out" "FALLBACK_RAN:keep-me"
+assert_not_contains "route-args strip: matched arg was removed from forwarded args" "$out" "special"
+
+# --- route-args diagnostic opt-in only fires when routed to fallback ---
+"$SHIMBACK" add drtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy route-args --route-arg "special" --diagnostic >/dev/null
+DRTOOL="$(shim_path drtool)"
+"$DRTOOL" special >/dev/null 2>"$SANDBOX/err"
+assert_contains "route-args diagnostic: prints a note when routed to fallback" \
+    "$(cat "$SANDBOX/err")" "shimback:"
+"$DRTOOL" other >/dev/null 2>"$SANDBOX/err"
+assert_eq "route-args diagnostic: silent when routed to source" "" "$(cat "$SANDBOX/err")"
+
+# --- route-args without --route-arg is rejected at add time ---
+"$SHIMBACK" add badroute -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --policy route-args \
+    >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add with policy route-args and no --route-arg should have failed"
+fi
+assert_not_contains "route-args without route args: nothing written to config" \
+    "$("$SHIMBACK" list)" "badroute"
+
 # --- diagnostic opt-in ---
 "$SHIMBACK" add dtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --diagnostic >/dev/null
 DTOOL="$(shim_path dtool)"

@@ -22,7 +22,8 @@ pair of commands.
    **policy** — see below), `shimback` transparently re-runs the same
    arguments against the **fallback** command instead. If the source
    succeeds, its output is passed through as if `shimback` weren't there at
-   all.
+   all. (The `route-args` policy is the exception to this "try source,
+   maybe fall back" shape — see below.)
 
 A failed trial run of the source command is designed to be **invisible**:
 its stdout and stderr are captured, not streamed live, and are discarded
@@ -34,9 +35,9 @@ diagnostic (see `diagnostic` below).
 
 ```
 shimback add <name> [-s <source>] -f <fallback>
-                     [--policy exit-code|heuristic|exit-code-match]
+                     [--policy exit-code|heuristic|exit-code-match|route-args]
                      [--error-pattern <p>]... [--exit-code <code>]...
-                     [--diagnostic]
+                     [--route-arg <arg>]... [--strip-matched-args] [--diagnostic]
 shimback remove <name>
 shimback init
 shimback list
@@ -115,10 +116,10 @@ awk   /opt/homebrew/bin/gawk   /usr/bin/awk  heuristic  true
 
 When stdout is a terminal (and [`NO_COLOR`](https://no-color.org/) isn't
 set), the policy column is colored by kind (`heuristic` yellow,
-`exit-code-match` magenta, `exit-code` uncolored as the baseline), `auto`
-sources and `false` diagnostics are dimmed, and `true` diagnostics are
-green. Piping the output (e.g. to a file or another command) disables
-color automatically.
+`exit-code-match` magenta, `route-args` cyan, `exit-code` uncolored as the
+baseline), `auto` sources and `false` diagnostics are dimmed, and `true`
+diagnostics are green. Piping the output (e.g. to a file or another
+command) disables color automatically.
 
 ### `doctor`
 
@@ -185,17 +186,37 @@ the installed copy.
 
   Any other non-zero exit (e.g. grep's own "no match" exit `1`) surfaces
   as-is, with the fallback **not** run.
+- **`route-args`**: not a fallback-on-failure policy at all. Instead of
+  running the source and reacting to how it went, `shimback` looks at the
+  invocation's arguments *before running anything*: if any of them exactly
+  match one of the shim's configured `--route-arg` values, it runs the
+  **fallback**; otherwise it runs the **source**. Only the chosen one ever
+  runs, directly, with live/inherited stdio (no invisible trial run, no
+  captured output, no retry if it fails) — useful for a command whose
+  behavior you want to switch on a flag rather than on failure:
+
+  ```sh
+  shimback add cagao -s /bin/ls -f /usr/local/bin/eza \
+      --policy route-args \
+      --route-arg x
+  ```
+
+  Running `cagao` normally runs `ls`; running `cagao x` runs `eza x`
+  instead. Pass `--strip-matched-args` to drop the matched argument(s)
+  before forwarding the rest — with it set, `cagao x` above would run
+  `eza` with no arguments at all.
 
 > **Note:** `exit-code` is deliberately the least precise policy (any
-> failure triggers a retry) and needs no extra configuration. `heuristic`
-> and `exit-code-match` are more targeted — each requires at least one
-> `--error-pattern` / `--exit-code` respectively, enforced both at `add`
-> time and on every config load, so a shim can never silently end up in a
-> state where it's configured to be selective but has nothing to select on
-> (`shimback doctor` also flags this if the config is hand-edited into that
-> state). All three policies only ever affect *failed* runs — a source that
-> exits `0` always has its output passed through untouched, regardless of
-> policy.
+> failure triggers a retry) and needs no extra configuration. `heuristic`,
+> `exit-code-match`, and `route-args` are more targeted — each requires at
+> least one `--error-pattern` / `--exit-code` / `--route-arg` respectively,
+> enforced both at `add` time and on every config load, so a shim can never
+> silently end up in a state where it's configured to be selective but has
+> nothing to select on (`shimback doctor` also flags this if the config is
+> hand-edited into that state). The first three policies only ever affect
+> *failed* runs — a source that exits `0` always has its output passed
+> through untouched, regardless of policy — `route-args` is the exception,
+> deciding source vs. fallback up front from the arguments alone.
 
 ### Diagnostics
 
@@ -233,6 +254,13 @@ diagnostic = true
 fallback = "/usr/bin/grep"
 policy = "exit-code-match"
 exit_codes = [2]
+
+[shims.cagao]
+source = "/bin/ls"
+fallback = "/usr/local/bin/eza"
+policy = "route-args"
+route_args = ["x"]
+strip_matched_args = true
 ```
 
 The file is managed by `add`/`remove`, but is plain, hand-editable TOML (a

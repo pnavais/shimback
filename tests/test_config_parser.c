@@ -62,6 +62,15 @@ static void test_round_trip(void) {
     cfg.shims[grep_idx].exit_codes[1] = 64;
     cfg.shims[grep_idx].exit_code_count = 2;
 
+    size_t cagao_idx = config_upsert(&cfg, "cagao");
+    cfg.shims[cagao_idx].source = xstrdup("/bin/ls");
+    cfg.shims[cagao_idx].fallback = xstrdup("/usr/local/bin/eza");
+    cfg.shims[cagao_idx].policy = POLICY_ROUTE_ARGS;
+    cfg.shims[cagao_idx].strip_matched_args = true;
+    cfg.shims[cagao_idx].route_args = xmalloc(1 * sizeof(char *));
+    cfg.shims[cagao_idx].route_args[0] = xstrdup("x");
+    cfg.shims[cagao_idx].route_arg_count = 1;
+
     char *path = make_temp_path("roundtrip");
     char errbuf[256];
 
@@ -72,7 +81,7 @@ static void test_round_trip(void) {
     st = config_load(path, &reloaded, errbuf, sizeof(errbuf));
     check(st == CONFIG_OK, "round-trip: config_load succeeds");
     check(reloaded.version == 1, "round-trip: version is 1");
-    check(reloaded.count == 3, "round-trip: shim count is 3");
+    check(reloaded.count == 4, "round-trip: shim count is 4");
 
     ShimEntry *sed = config_find(&reloaded, "sed");
     check(sed != NULL, "round-trip: sed entry found");
@@ -107,6 +116,19 @@ static void test_round_trip(void) {
         if (grep->exit_code_count == 2) {
             check(grep->exit_codes[0] == 2, "grep.exit_codes[0] == 2");
             check(grep->exit_codes[1] == 64, "grep.exit_codes[1] == 64");
+        }
+    }
+
+    ShimEntry *cagao = config_find(&reloaded, "cagao");
+    check(cagao != NULL, "round-trip: cagao entry found");
+    if (cagao) {
+        check_str_eq("cagao.source", "/bin/ls", cagao->source);
+        check_str_eq("cagao.fallback", "/usr/local/bin/eza", cagao->fallback);
+        check(cagao->policy == POLICY_ROUTE_ARGS, "cagao.policy == route-args");
+        check(cagao->strip_matched_args == true, "cagao.strip_matched_args == true");
+        check(cagao->route_arg_count == 1, "cagao.route_arg_count == 1");
+        if (cagao->route_arg_count == 1) {
+            check_str_eq("cagao.route_args[0]", "x", cagao->route_args[0]);
         }
     }
 
@@ -157,6 +179,8 @@ static void test_validation_errors(void) {
         "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"heuristic\"\n";
     const char *missing_exit_codes =
         "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"exit-code-match\"\n";
+    const char *missing_route_args =
+        "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"route-args\"\n";
 
     char *path = make_temp_path("invalid");
     Config cfg;
@@ -185,6 +209,15 @@ static void test_validation_errors(void) {
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
     check(st == CONFIG_ERR_VALIDATION, "exit-code-match without exit_codes is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(missing_route_args, 1, strlen(missing_route_args), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_VALIDATION, "route-args without route_args is rejected");
     if (st == CONFIG_OK) {
         config_free(&cfg);
     }
