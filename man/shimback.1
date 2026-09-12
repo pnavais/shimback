@@ -5,9 +5,10 @@ shimback \- run a primary command, transparently fall back to another
 .B shimback add
 .I name
 [\fB\-s\fR \fIsource\fR] \fB\-f\fR \fIfallback\fR
-[\fB\-\-policy\fR \fIexit\-code\fR|\fIheuristic\fR|\fIexit\-code\-match\fR|\fIroute\-args\fR]
+[\fB\-\-policy\fR \fIexit\-code\fR|\fIheuristic\fR|\fIexit\-code\-match\fR|\fIroute\-args\fR|\fIrewrite\fR]
 [\fB\-\-error\-pattern\fR \fIp\fR]\|.\|.\|. [\fB\-\-exit\-code\fR \fIcode\fR]\|.\|.\|.
-[\fB\-\-route\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-strip\-matched\-args\fR] [\fB\-\-diagnostic\fR]
+[\fB\-\-route\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-strip\-matched\-args\fR]
+[\fB\-\-rewrite\fR \fIfrom\fR=\fIto\fR]\|.\|.\|. [\fB\-\-diagnostic\fR]
 .br
 .B shimback remove
 .I name
@@ -93,7 +94,11 @@ resolves to fresh on
 .B PATH
 at dispatch time, skipping shimback's own shim directory) with
 .I fallback
-under the given policy. Both
+under the given policy.
+.B \-f
+is required for every policy except
+.IR rewrite ,
+which never uses a fallback at all. Both
 .B \-s
 and
 .B \-f
@@ -338,6 +343,33 @@ inherited stdio \(em no captured trial run, no retry on failure. Pass
 to drop the matched argument(s) before forwarding the rest. Requires at
 least one
 .BR \-\-route\-arg .
+.TP
+.B rewrite
+Not a fallback\-on\-failure policy either, and unlike every other policy,
+.B \-\-fallback
+is optional and never used \(em this is an alias/argument\-macro mechanism,
+not a retry mechanism. Each
+.BI "\-\-rewrite " from = to
+rule (repeatable) is checked against every invocation argument; a match is
+replaced with
+.I to
+before running the source, live and inherited, no capture, no retry. A
+.I to
+containing spaces expands into multiple forwarded arguments; an empty
+.I to
+drops the matched argument. Arguments matching no rule pass through
+unchanged. Requires at least one
+.BR \-\-rewrite .
+.RS
+.PP
+Examples:
+.RS
+.nf
+shimback add tmux \-s /usr/bin/tmux \-\-policy rewrite \-\-rewrite "all=ls"
+shimback add ls \-s /bin/ls \-\-policy rewrite \-\-rewrite "\-\-full=\-ltrah"
+.fi
+.RE
+.RE
 .SH DIAGNOSTICS
 By default, falling back leaves no trace. Pass
 .B \-\-diagnostic

@@ -163,7 +163,7 @@ static bool fix_cycle_if_needed(ShimEntry *entry, const char *self_exe) {
         }
     }
 
-    char *resolved_fb = canonicalize(entry->fallback);
+    char *resolved_fb = entry->fallback ? canonicalize(entry->fallback) : NULL;
     bool fb_cyclic = resolved_fb && strcmp(resolved_fb, self_exe) == 0;
     free(resolved_fb);
     if (fb_cyclic) {
@@ -240,8 +240,14 @@ static void check_symlink(int *issues, const char *shim_dir, const char *name) {
  * executable file, reporting a failure and returning NULL otherwise. Also
  * reports (but doesn't return NULL for) a fallback that resolves back to
  * the shimback binary itself -- a cycle -- since the resolved path is still
- * useful to the caller's source==fallback check. */
+ * useful to the caller's source==fallback check. A NULL `fallback` (only
+ * valid for POLICY_REWRITE, which never uses it) is reported as fine, not
+ * checked at all, and returns NULL. */
 static char *check_fallback(int *issues, const char *fallback, const char *self_exe) {
+    if (!fallback) {
+        report_ok("fallback: none (not used by policy rewrite)");
+        return NULL;
+    }
     if (!is_executable_file(fallback)) {
         report_fail(issues, "fallback '%s' does not exist or is not executable", fallback);
         return NULL;
@@ -387,6 +393,11 @@ int cmd_doctor(int argc, char **argv) {
             report_fail(&issues,
                          "policy is route-args but no --route-arg is configured -- this shim "
                          "will always run its source");
+        }
+        if (e->policy == POLICY_REWRITE && e->rewrite_from_count == 0) {
+            report_fail(&issues,
+                         "policy is rewrite but no --rewrite rule is configured -- this shim "
+                         "will never rewrite anything");
         }
     }
     printf("\n");

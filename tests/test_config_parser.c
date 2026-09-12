@@ -71,6 +71,19 @@ static void test_round_trip(void) {
     cfg.shims[cagao_idx].route_args[0] = xstrdup("x");
     cfg.shims[cagao_idx].route_arg_count = 1;
 
+    size_t ls_idx = config_upsert(&cfg, "ls");
+    cfg.shims[ls_idx].source = xstrdup("/bin/ls");
+    cfg.shims[ls_idx].fallback = NULL; /* optional, and unused, for rewrite */
+    cfg.shims[ls_idx].policy = POLICY_REWRITE;
+    cfg.shims[ls_idx].rewrite_from = xmalloc(2 * sizeof(char *));
+    cfg.shims[ls_idx].rewrite_from[0] = xstrdup("--full");
+    cfg.shims[ls_idx].rewrite_from[1] = xstrdup("all");
+    cfg.shims[ls_idx].rewrite_from_count = 2;
+    cfg.shims[ls_idx].rewrite_to = xmalloc(2 * sizeof(char *));
+    cfg.shims[ls_idx].rewrite_to[0] = xstrdup("-ltrah");
+    cfg.shims[ls_idx].rewrite_to[1] = xstrdup("-c -z -f backup.tar.gz");
+    cfg.shims[ls_idx].rewrite_to_count = 2;
+
     char *path = make_temp_path("roundtrip");
     char errbuf[256];
 
@@ -81,7 +94,7 @@ static void test_round_trip(void) {
     st = config_load(path, &reloaded, errbuf, sizeof(errbuf));
     check(st == CONFIG_OK, "round-trip: config_load succeeds");
     check(reloaded.version == 1, "round-trip: version is 1");
-    check(reloaded.count == 4, "round-trip: shim count is 4");
+    check(reloaded.count == 5, "round-trip: shim count is 5");
 
     ShimEntry *sed = config_find(&reloaded, "sed");
     check(sed != NULL, "round-trip: sed entry found");
@@ -129,6 +142,22 @@ static void test_round_trip(void) {
         check(cagao->route_arg_count == 1, "cagao.route_arg_count == 1");
         if (cagao->route_arg_count == 1) {
             check_str_eq("cagao.route_args[0]", "x", cagao->route_args[0]);
+        }
+    }
+
+    ShimEntry *ls = config_find(&reloaded, "ls");
+    check(ls != NULL, "round-trip: ls entry found");
+    if (ls) {
+        check_str_eq("ls.source", "/bin/ls", ls->source);
+        check_str_eq("ls.fallback", NULL, ls->fallback);
+        check(ls->policy == POLICY_REWRITE, "ls.policy == rewrite");
+        check(ls->rewrite_from_count == 2, "ls.rewrite_from_count == 2");
+        check(ls->rewrite_to_count == 2, "ls.rewrite_to_count == 2");
+        if (ls->rewrite_from_count == 2 && ls->rewrite_to_count == 2) {
+            check_str_eq("ls.rewrite_from[0]", "--full", ls->rewrite_from[0]);
+            check_str_eq("ls.rewrite_to[0]", "-ltrah", ls->rewrite_to[0]);
+            check_str_eq("ls.rewrite_from[1]", "all", ls->rewrite_from[1]);
+            check_str_eq("ls.rewrite_to[1]", "-c -z -f backup.tar.gz", ls->rewrite_to[1]);
         }
     }
 
@@ -181,6 +210,11 @@ static void test_validation_errors(void) {
         "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"exit-code-match\"\n";
     const char *missing_route_args =
         "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"route-args\"\n";
+    const char *missing_rewrite_rules =
+        "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"rewrite\"\n";
+    const char *mismatched_rewrite_arrays =
+        "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"rewrite\"\n"
+        "rewrite_from = [\"a\", \"b\"]\nrewrite_to = [\"x\"]\n";
 
     char *path = make_temp_path("invalid");
     Config cfg;
@@ -218,6 +252,25 @@ static void test_validation_errors(void) {
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
     check(st == CONFIG_ERR_VALIDATION, "route-args without route_args is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(missing_rewrite_rules, 1, strlen(missing_rewrite_rules), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_VALIDATION, "rewrite without rewrite rules is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(mismatched_rewrite_arrays, 1, strlen(mismatched_rewrite_arrays), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_VALIDATION,
+          "mismatched rewrite_from/rewrite_to array lengths are rejected");
     if (st == CONFIG_OK) {
         config_free(&cfg);
     }

@@ -115,6 +115,61 @@ fi
 assert_not_contains "route-args without route args: nothing written to config" \
     "$("$SHIMBACK" list)" "badroute"
 
+# --- rewrite policy: an alias/argument-macro mechanism, not a fallback one.
+# fake_fallback.sh (which just echoes its own args as "FALLBACK_RAN:$*") is
+# reused here as the *source* -- rewrite never touches fallback at all, so
+# any argv-echoing fixture works fine as its source. ---
+"$SHIMBACK" add rwtool -s "$FAKE_FALLBACK" --policy rewrite \
+    --rewrite "--full=-ltrah" --rewrite "all=ls" \
+    --rewrite "backup=-c -z -f backup.tar.gz" --rewrite "--verbose=" >/dev/null
+code=$?
+assert_eq "rewrite: add succeeds without a fallback" "0" "$code"
+
+RWTOOL="$(shim_path rwtool)"
+
+out="$("$RWTOOL" -a foo)"
+assert_eq "rewrite: unmatched args pass through unchanged" "FALLBACK_RAN:-a foo" "$out"
+
+out="$("$RWTOOL" --full)"
+assert_eq "rewrite: single-token replacement" "FALLBACK_RAN:-ltrah" "$out"
+
+out="$("$RWTOOL" --full extra)"
+assert_eq "rewrite: replacement mixed with a pass-through arg" "FALLBACK_RAN:-ltrah extra" "$out"
+
+out="$("$RWTOOL" all)"
+assert_eq "rewrite: alias example (all -> ls)" "FALLBACK_RAN:ls" "$out"
+
+out="$("$RWTOOL" backup)"
+assert_eq "rewrite: multi-token replacement expands into separate args" \
+    "FALLBACK_RAN:-c -z -f backup.tar.gz" "$out"
+
+out="$("$RWTOOL" --verbose keep-me)"
+assert_eq "rewrite: empty replacement drops the matched arg" "FALLBACK_RAN:keep-me" "$out"
+
+FAKE_FALLBACK_EXIT_CODE=9 "$RWTOOL" >/dev/null
+code=$?
+assert_eq "rewrite: source's real exit code surfaces directly (no capture, no retry)" "9" "$code"
+
+assert_contains "rewrite: list shows no fallback configured" "$("$SHIMBACK" list)" "none"
+
+# --- rewrite without --rewrite is rejected at add time ---
+"$SHIMBACK" add badrewrite -s "$FAKE_FALLBACK" --policy rewrite >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add with policy rewrite and no --rewrite should have failed"
+fi
+assert_contains "rewrite: missing rule error" "$(cat "$SANDBOX/err")" \
+    "requires at least one --rewrite"
+
+# --- a malformed --rewrite (no '=') is rejected ---
+"$SHIMBACK" add badrewrite2 -s "$FAKE_FALLBACK" --policy rewrite --rewrite "noequals" \
+    >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add with a malformed --rewrite value should have failed"
+fi
+assert_contains "rewrite: malformed rule error" "$(cat "$SANDBOX/err")" "<from>=<to>"
+
 # --- diagnostic opt-in ---
 "$SHIMBACK" add dtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --diagnostic >/dev/null
 DTOOL="$(shim_path dtool)"

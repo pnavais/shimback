@@ -26,6 +26,7 @@ static const char *policy_color(Policy p) {
         case POLICY_HEURISTIC: return ANSI_YELLOW;
         case POLICY_EXIT_CODE_MATCH: return ANSI_MAGENTA;
         case POLICY_ROUTE_ARGS: return ANSI_CYAN;
+        case POLICY_REWRITE: return ANSI_GREEN;
         case POLICY_EXIT_CODE:
         default: return NULL;
     }
@@ -59,9 +60,10 @@ int cmd_list(int argc, char **argv) {
     for (size_t i = 0; i < cfg.count; i++) {
         ShimEntry *e = &cfg.shims[i];
         const char *source_display = e->source ? e->source : "auto";
+        const char *fallback_display = e->fallback ? e->fallback : "none";
         size_t nl = strlen(e->name);
         size_t sl = strlen(source_display);
-        size_t fl = strlen(e->fallback);
+        size_t fl = strlen(fallback_display);
         size_t pl = strlen(policy_to_string(e->policy));
         if (nl > name_w) name_w = nl;
         if (sl > source_w) source_w = sl;
@@ -84,13 +86,14 @@ int cmd_list(int argc, char **argv) {
     for (size_t i = 0; i < cfg.count; i++) {
         ShimEntry *e = &cfg.shims[i];
         const char *source_display = e->source ? e->source : "auto";
+        const char *fallback_display = e->fallback ? e->fallback : "none";
         const char *policy_str = policy_to_string(e->policy);
 
         print_cell(e->name, name_w, ANSI_BOLD ANSI_CYAN, colorize);
         printf("  ");
         print_cell(source_display, source_w, e->source ? ANSI_GREEN : ANSI_DIM, colorize);
         printf("  ");
-        print_cell(e->fallback, fallback_w, ANSI_BLUE, colorize);
+        print_cell(fallback_display, fallback_w, e->fallback ? ANSI_BLUE : ANSI_DIM, colorize);
         printf("  ");
         print_cell(policy_str, policy_w, policy_color(e->policy), colorize);
         printf("  ");

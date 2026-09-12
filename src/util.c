@@ -53,6 +53,17 @@ char *xstrdup(const char *s) {
     return copy;
 }
 
+char *xstrndup(const char *s, size_t n) {
+    size_t len = strlen(s);
+    if (len < n) {
+        n = len;
+    }
+    char *copy = xmalloc(n + 1);
+    memcpy(copy, s, n);
+    copy[n] = '\0';
+    return copy;
+}
+
 void dynbuf_init(DynBuf *buf) {
     buf->data = NULL;
     buf->len = 0;

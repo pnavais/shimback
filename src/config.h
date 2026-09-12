@@ -11,18 +11,24 @@
  * POLICY_ROUTE_ARGS: not a fallback-on-failure policy at all -- picks source
  * or fallback up front, before running either, based on whether any of the
  * invocation's arguments match one of route_args (fallback if so, source if
- * not), then runs only that one with live/inherited stdio. */
+ * not), then runs only that one with live/inherited stdio.
+ * POLICY_REWRITE: not a fallback mechanism either -- always runs source,
+ * after rewriting any argument matching one of rewrite_from into the
+ * corresponding rewrite_to (an alias/macro mechanism, e.g. "--full" ->
+ * "-ltrah"), with live/inherited stdio. fallback is never used, and so is
+ * the one policy where it's optional. */
 typedef enum {
     POLICY_EXIT_CODE,
     POLICY_HEURISTIC,
     POLICY_EXIT_CODE_MATCH,
     POLICY_ROUTE_ARGS,
+    POLICY_REWRITE,
 } Policy;
 
 typedef struct {
     char *name;               /* owned; never NULL */
     char *source;              /* owned; NULL means "auto" (resolve from PATH at dispatch time) */
-    char *fallback;             /* owned; required */
+    char *fallback;             /* owned; required, except NULL is allowed for POLICY_REWRITE */
     Policy policy;
     char **error_patterns;      /* owned array of owned strings; NULL if none */
     size_t error_pattern_count;
@@ -33,6 +39,19 @@ typedef struct {
     size_t route_arg_count;
     bool strip_matched_args;     /* only meaningful for POLICY_ROUTE_ARGS: remove a matched
                                    * route arg before forwarding it to source/fallback */
+    char **rewrite_from;         /* owned array of owned strings; only meaningful for
+                                   * POLICY_REWRITE. Parallel to rewrite_to: rewrite_from[i]
+                                   * -> rewrite_to[i]. Tracked as two separate counts (not
+                                   * one shared one) because config_load parses the two
+                                   * TOML arrays independently and must be able to detect
+                                   * a hand-edited config where they end up different
+                                   * lengths, rather than silently indexing past the
+                                   * shorter one. config_load rejects any mismatch, so
+                                   * everywhere past that point the two counts are equal. */
+    size_t rewrite_from_count;
+    char **rewrite_to;           /* owned array of owned strings; each may contain spaces,
+                                   * expanding to multiple forwarded arguments. */
+    size_t rewrite_to_count;
     bool diagnostic;
 } ShimEntry;
 
