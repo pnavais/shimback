@@ -16,6 +16,7 @@ shimback \- run a primary command, transparently fall back to another
 .B shimback init
 .br
 .B shimback list
+[\fB\-\-full\fR]
 (alias:
 .BR ls )
 .br
@@ -198,7 +199,7 @@ shimback init
 .RE
 .RE
 .TP
-.B list
+.BI "list [" \-\-full "]"
 List every configured shim as a table: name, source (or
 .IR auto ),
 fallback, policy, and diagnostic flag. Also available as
@@ -206,12 +207,31 @@ fallback, policy, and diagnostic flag. Also available as
 Colored when stdout is a terminal and
 .B NO_COLOR
 is unset.
+.IP
+.B \-\-full
+also prints, as extra indented lines right under each shim's row,
+whatever the table's columns leave out: the policy\-specific
+configuration that actually drives its behavior (error patterns for
+.IR heuristic ,
+the configured codes for
+.IR exit\-code\-match ,
+route args and strip\-matched\-args for
+.IR route\-args ,
+and each
+.I from
+->
+.I to
+pair for
+.IR rewrite ).
+A shim on the plain
+.I exit\-code
+policy has nothing extra to show.
 .RS
 .PP
 Example:
 .RS
 .nf
-shimback list
+shimback list \-\-full
 .fi
 .RE
 .RE

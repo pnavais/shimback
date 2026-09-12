@@ -1,11 +1,14 @@
 #include "commands.h"
 
+#include <getopt.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "../config.h"
 #include "../paths.h"
 #include "../util.h"
+
+static const char *USAGE = "usage: shimback list [--full]\n";
 
 /* Prints `text`, optionally wrapped in `color`, then pads with spaces up to
  * `width` -- padding is based on the plain text length, since padding to
@@ -32,9 +35,94 @@ static const char *policy_color(Policy p) {
     }
 }
 
+static void print_detail_line(bool colorize, const char *label, const char *value) {
+    const char *dim = colorize ? ANSI_DIM : "";
+    const char *reset = colorize ? ANSI_RESET : "";
+    printf("        %s%s:%s %s\n", dim, label, reset, value);
+}
+
+/* Everything the compact table leaves out: the policy-specific
+ * configuration that actually drives a shim's behavior (which arguments
+ * route it, which exit codes trigger a fallback, what gets rewritten into
+ * what, ...). Prints nothing for a policy with no such configuration
+ * (POLICY_EXIT_CODE), or for a field that's simply empty. */
+static void print_full_details(const ShimEntry *e, bool colorize) {
+    if (e->policy == POLICY_HEURISTIC && e->error_pattern_count > 0) {
+        DynBuf buf;
+        dynbuf_init(&buf);
+        for (size_t i = 0; i < e->error_pattern_count; i++) {
+            if (i > 0) {
+                dynbuf_append_str(&buf, ", ");
+            }
+            dynbuf_append_str(&buf, e->error_patterns[i]);
+        }
+        print_detail_line(colorize, "error patterns", dynbuf_cstr(&buf));
+        dynbuf_free(&buf);
+    }
+
+    if (e->policy == POLICY_EXIT_CODE_MATCH && e->exit_code_count > 0) {
+        DynBuf buf;
+        dynbuf_init(&buf);
+        for (size_t i = 0; i < e->exit_code_count; i++) {
+            char num[16];
+            snprintf(num, sizeof(num), "%s%d", i > 0 ? ", " : "", e->exit_codes[i]);
+            dynbuf_append_str(&buf, num);
+        }
+        print_detail_line(colorize, "exit codes", dynbuf_cstr(&buf));
+        dynbuf_free(&buf);
+    }
+
+    if (e->policy == POLICY_ROUTE_ARGS) {
+        if (e->route_arg_count > 0) {
+            DynBuf buf;
+            dynbuf_init(&buf);
+            for (size_t i = 0; i < e->route_arg_count; i++) {
+                if (i > 0) {
+                    dynbuf_append_str(&buf, ", ");
+                }
+                dynbuf_append_str(&buf, e->route_args[i]);
+            }
+            print_detail_line(colorize, "route args", dynbuf_cstr(&buf));
+            dynbuf_free(&buf);
+        }
+        print_detail_line(colorize, "strip matched args", e->strip_matched_args ? "true" : "false");
+    }
+
+    if (e->policy == POLICY_REWRITE && e->rewrite_from_count > 0) {
+        DynBuf buf;
+        dynbuf_init(&buf);
+        for (size_t i = 0; i < e->rewrite_from_count; i++) {
+            if (i > 0) {
+                dynbuf_append_str(&buf, ", ");
+            }
+            dynbuf_append_str(&buf, e->rewrite_from[i]);
+            dynbuf_append_str(&buf, " -> ");
+            dynbuf_append_str(&buf, e->rewrite_to[i]);
+        }
+        print_detail_line(colorize, "rewrite rules", dynbuf_cstr(&buf));
+        dynbuf_free(&buf);
+    }
+}
+
 int cmd_list(int argc, char **argv) {
-    if (argc > 1) {
-        die("list: unexpected argument '%s'", argv[1]);
+    bool full = false;
+
+    static struct option long_opts[] = {
+        {"full", no_argument, 0, 'f'},
+        {0, 0, 0, 0},
+    };
+
+    int opt;
+    while ((opt = getopt_long(argc, argv, "f", long_opts, NULL)) != -1) {
+        switch (opt) {
+            case 'f': full = true; break;
+            default:
+                fprintf(stderr, "%s", USAGE);
+                return 1;
+        }
+    }
+    if (optind < argc) {
+        die("list: unexpected argument '%s'", argv[optind]);
     }
 
     char *cfg_path = config_file_path();
@@ -100,6 +188,10 @@ int cmd_list(int argc, char **argv) {
         print_cell(e->diagnostic ? "true" : "false", 0, e->diagnostic ? ANSI_GREEN : ANSI_DIM,
                    colorize);
         printf("\n");
+
+        if (full) {
+            print_full_details(e, colorize);
+        }
     }
 
     return 0;
