@@ -35,4 +35,11 @@ bool shell_ensure_path(ShellKind kind, const char *shim_dir);
  * shim-dir block. */
 bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag);
 
+/* Removes the marker block tagged `tag` (if present) from `kind`'s usual
+ * startup file(s) -- the inverse of shell_ensure_path_tagged, used by
+ * `uninstall --full`. A no-op for SHELL_FISH/SHELL_UNKNOWN, since shimback
+ * never writes a block for those. Returns false only on an actual I/O
+ * failure while writing. */
+bool shell_remove_path_tagged(ShellKind kind, const char *tag);
+
 #endif /* SHIMBACK_SHELL_H */

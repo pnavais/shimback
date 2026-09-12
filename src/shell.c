@@ -160,6 +160,84 @@ static bool inject_block(const char *rc_path, const char *body, const char *tag)
     return ok;
 }
 
+/* Removes the marker block tagged `tag` from `rc_path`, if present. A no-op
+ * (returns true) if the file doesn't exist or has no such block -- the
+ * inverse of inject_block, used by `uninstall --full`. */
+static bool remove_block(const char *rc_path, const char *tag) {
+    char mark_start[128];
+    char mark_end[128];
+    snprintf(mark_start, sizeof(mark_start), "# >>> %s >>>", tag);
+    snprintf(mark_end, sizeof(mark_end), "# <<< %s <<<", tag);
+
+    char *content = read_file_or_empty(rc_path);
+    char *start = strstr(content, mark_start);
+    if (!start) {
+        free(content);
+        return true;
+    }
+    char *end = strstr(start, mark_end);
+    if (!end) {
+        warn("found a %s start marker without a matching end marker in %s; leaving it alone", tag,
+             rc_path);
+        free(content);
+        return true;
+    }
+    char *after_end = end + strlen(mark_end);
+    if (*after_end == '\n') {
+        after_end++;
+    }
+
+    DynBuf out;
+    dynbuf_init(&out);
+    dynbuf_append(&out, content, (size_t)(start - content));
+    dynbuf_append_str(&out, after_end);
+    bool ok = write_file_atomic(rc_path, out.data, out.len);
+    dynbuf_free(&out);
+    free(content);
+    return ok;
+}
+
+static bool remove_zsh(const char *tag) {
+    char *home = home_dir();
+    char *rc = path_join(home, ".zshrc");
+    bool ok = remove_block(rc, tag);
+    free(rc);
+    free(home);
+    return ok;
+}
+
+static bool remove_bash(const char *tag) {
+    static const char *candidates[] = {".bashrc", ".bash_profile", ".profile"};
+    char *home = home_dir();
+    bool all_ok = true;
+
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        char *path = path_join(home, candidates[i]);
+        if (access(path, F_OK) == 0) {
+            all_ok = remove_block(path, tag) && all_ok;
+        }
+        free(path);
+    }
+
+    free(home);
+    return all_ok;
+}
+
+bool shell_remove_path_tagged(ShellKind kind, const char *tag) {
+    switch (kind) {
+        case SHELL_ZSH:
+            return remove_zsh(tag);
+        case SHELL_BASH:
+            return remove_bash(tag);
+        case SHELL_FISH:
+        case SHELL_UNKNOWN:
+        default:
+            /* shimback never wrote a block for these (see shell_ensure_path_tagged),
+             * so there's nothing to remove. */
+            return true;
+    }
+}
+
 /* zsh-defer (https://github.com/romkatv/zsh-defer) lets plugin managers and
  * tools like mise queue their PATH-mutating activation to run asynchronously
  * after the whole rc file has sourced, which would otherwise let them clobber

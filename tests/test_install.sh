@@ -4,10 +4,23 @@ set -u
 
 PREFIX="$SANDBOX/opt"
 DEST="$PREFIX/bin/shimback"
+MAN_DEST="$PREFIX/share/man/man1/shimback.1"
 ZSHRC="$HOME/.zshrc"
 
-# --- install copies the binary and injects a PATH block for it ---
-out="$("$SHIMBACK" install --prefix "$PREFIX")"
+# install's man-page step looks for a "shimback.1" bundled next to the
+# *running* binary (how a release tarball ships it) before ever considering
+# a network fetch. Run install through a sandboxed copy of $SHIMBACK with a
+# real man page sitting beside it, so these tests exercise that local path
+# deterministically instead of racing a real `curl` call against GitHub.
+BUNDLE_DIR="$SANDBOX/bundle"
+mkdir -p "$BUNDLE_DIR"
+cp "$SHIMBACK" "$BUNDLE_DIR/shimback"
+chmod +x "$BUNDLE_DIR/shimback"
+cp "$TEST_DIR/../man/shimback.1" "$BUNDLE_DIR/shimback.1"
+BUNDLED_SHIMBACK="$BUNDLE_DIR/shimback"
+
+# --- install copies the binary, the bundled man page, and injects a PATH block ---
+out="$("$BUNDLED_SHIMBACK" install --prefix "$PREFIX")"
 code=$?
 assert_eq "install: exits 0" "0" "$code"
 
@@ -17,11 +30,17 @@ fi
 assert_contains "install: reports installed" "$out" "installed to $DEST"
 assert_contains "install: PATH block injected" "$(cat "$ZSHRC")" "# >>> shimback-bin >>>"
 
+if [ ! -f "$MAN_DEST" ]; then
+    fail "install: expected a man page at $MAN_DEST"
+fi
+assert_contains "install: reports man page installed" "$out" "man page installed to $MAN_DEST"
+assert_not_contains "install: man page came from the bundle, not a download" "$out" "downloaded"
+
 marker_count="$(count_occurrences '# >>> shimback-bin >>>' "$ZSHRC")"
 assert_eq "install: exactly one shimback-bin marker block" "1" "$marker_count"
 
 # --- re-running install is idempotent: refreshes the copy, no duplicate marker ---
-out2="$("$SHIMBACK" install --prefix "$PREFIX")"
+out2="$("$BUNDLED_SHIMBACK" install --prefix "$PREFIX")"
 code2=$?
 assert_eq "install: re-run exits 0" "0" "$code2"
 assert_contains "install: re-run reports installed" "$out2" "installed to $DEST"

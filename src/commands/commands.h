@@ -10,5 +10,6 @@ int cmd_init(int argc, char **argv);
 int cmd_list(int argc, char **argv);
 int cmd_doctor(int argc, char **argv);
 int cmd_install(int argc, char **argv);
+int cmd_uninstall(int argc, char **argv);
 
 #endif /* SHIMBACK_COMMANDS_H */
