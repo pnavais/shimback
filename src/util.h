@@ -1,7 +1,21 @@
 #ifndef SHIMBACK_UTIL_H
 #define SHIMBACK_UTIL_H
 
+#include <stdbool.h>
 #include <stddef.h>
+
+#define ANSI_RESET "\033[0m"
+#define ANSI_BOLD "\033[1m"
+#define ANSI_DIM "\033[2m"
+#define ANSI_RED "\033[31m"
+#define ANSI_GREEN "\033[32m"
+#define ANSI_YELLOW "\033[33m"
+#define ANSI_CYAN "\033[36m"
+#define ANSI_MAGENTA "\033[35m"
+
+/* Whether to color stdout output: a real terminal, unless NO_COLOR
+ * (https://no-color.org/) is set. */
+bool stdout_is_color(void);
 
 /* Prints "shimback: <msg>" to stderr and exits with status 1. Never returns.
  * Reserved for unrecoverable CLI/validation errors -- never call this from
