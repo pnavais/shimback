@@ -39,6 +39,8 @@ shimback add <name> [-s <source>] -f <fallback>
 shimback remove <name>
 shimback init
 shimback list
+shimback doctor
+shimback install [--prefix <dir>]
 shimback --help | --version
 ```
 
@@ -103,6 +105,38 @@ shimback list
 
 Prints every configured shim's name, source (or `auto`), fallback, policy,
 and diagnostic flag.
+
+### `doctor`
+
+```sh
+shimback doctor
+```
+
+Checks the health of your whole shimback setup and reports any problems:
+whether the shim directory exists and is actually on `$PATH`, whether the
+config file parses, and, for each configured shim, whether its symlink
+exists and isn't dead, whether its fallback (and, if explicit, its source)
+still exist and are executable, and whether its policy is fully configured
+(e.g. `heuristic` with no `--error-pattern`, or `exit-code-match` with no
+`--exit-code`, can never fall back). Exits `0` if everything checks out,
+`1` otherwise — safe to run in CI or a shell startup hook.
+
+### `install`
+
+```sh
+shimback install [--prefix <dir>]
+```
+
+Copies the running `shimback` binary to `<prefix>/bin/shimback` (default
+prefix: `~/.local`) and ensures `<prefix>/bin` is on `PATH`, via the same
+kind of idempotent, marker-block injection `add`/`init` use for the shim
+directory (under its own tag, so the two blocks coexist). This is the
+easiest way to get `shimback` itself onto a **stable** location: `add`
+freezes the path of whatever binary is currently running into each shim's
+symlink (see below), so running it straight out of a build directory means
+every shim breaks the next time that directory is cleaned or rebuilt.
+Re-running `install` (e.g. after building a newer version) simply refreshes
+the installed copy.
 
 ## Fallback policies
 
@@ -190,9 +224,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure   # optional
 ```
 
-The resulting `shimback` binary is self-contained — `add` creates symlinks
-pointing at wherever you place it, so install it anywhere on `PATH` (or run
-`cmake --install build`).
+The resulting `shimback` binary is self-contained, but **place it somewhere
+permanent before running `add`**: each shim's symlink is frozen to point at
+wherever the binary was running from at `add` time, so a binary left in a
+build directory will strand every shim once that directory is removed or
+rebuilt. `shimback install` (see above) handles this for you, or install it
+anywhere else on `PATH` yourself (e.g. via `cmake --install build`).
 
 ## Platform support
 
