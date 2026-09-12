@@ -13,6 +13,7 @@ if [ ! -L "$MYTOOL_LINK" ]; then
 fi
 assert_contains "add: config has the shim section" "$(cat "$(config_file)")" "[shims.mytool]"
 assert_contains "add: PATH block injected into .zshrc" "$(cat "$ZSHRC")" "# >>> shimback >>>"
+assert_eq "ls is an alias for list" "$("$SHIMBACK" list)" "$("$SHIMBACK" ls)"
 
 marker_count="$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
 assert_eq "add: exactly one marker block after first add" "1" "$marker_count"

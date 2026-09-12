@@ -69,7 +69,7 @@ int cmd_list(int argc, char **argv) {
         if (pl > policy_w) policy_w = pl;
     }
 
-    const char *header_color = ANSI_BOLD;
+    const char *header_color = ANSI_BOLD ANSI_YELLOW;
     print_cell("NAME", name_w, header_color, colorize);
     printf("  ");
     print_cell("SOURCE", source_w, header_color, colorize);
@@ -86,11 +86,11 @@ int cmd_list(int argc, char **argv) {
         const char *source_display = e->source ? e->source : "auto";
         const char *policy_str = policy_to_string(e->policy);
 
-        print_cell(e->name, name_w, ANSI_BOLD, colorize);
+        print_cell(e->name, name_w, ANSI_BOLD ANSI_CYAN, colorize);
         printf("  ");
-        print_cell(source_display, source_w, e->source ? NULL : ANSI_DIM, colorize);
+        print_cell(source_display, source_w, e->source ? ANSI_GREEN : ANSI_DIM, colorize);
         printf("  ");
-        print_cell(e->fallback, fallback_w, NULL, colorize);
+        print_cell(e->fallback, fallback_w, ANSI_BLUE, colorize);
         printf("  ");
         print_cell(policy_str, policy_w, policy_color(e->policy), colorize);
         printf("  ");

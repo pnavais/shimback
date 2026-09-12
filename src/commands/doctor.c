@@ -11,9 +11,19 @@
 #include "../paths.h"
 #include "../util.h"
 
+/* Set once at the start of cmd_doctor and read by the report_ok/report_fail/
+ * check_* helpers below -- a single-shot CLI command has no concurrency to
+ * worry about, so a file-scope flag is simpler than threading a colorize
+ * parameter through every helper's signature. */
+static bool g_colorize = false;
+
 static void report_ok(const char *fmt, ...) {
     va_list ap;
-    printf("  [ok]   ");
+    if (g_colorize) {
+        printf("  [%s%sok%s]   ", ANSI_BOLD, ANSI_GREEN, ANSI_RESET);
+    } else {
+        printf("  [ok]   ");
+    }
     va_start(ap, fmt);
     vprintf(fmt, ap);
     va_end(ap);
@@ -22,7 +32,11 @@ static void report_ok(const char *fmt, ...) {
 
 static void report_fail(int *issues, const char *fmt, ...) {
     va_list ap;
-    printf("  [fail] ");
+    if (g_colorize) {
+        printf("  [%s%sfail%s] ", ANSI_BOLD, ANSI_RED, ANSI_RESET);
+    } else {
+        printf("  [fail] ");
+    }
     va_start(ap, fmt);
     vprintf(fmt, ap);
     va_end(ap);
@@ -137,22 +151,27 @@ int cmd_doctor(int argc, char **argv) {
     }
 
     int issues = 0;
+    g_colorize = stdout_is_color();
+    const char *hdr = g_colorize ? ANSI_BOLD ANSI_YELLOW : "";
+    const char *name_color = g_colorize ? ANSI_BOLD ANSI_CYAN : "";
+    const char *reset = g_colorize ? ANSI_RESET : "";
 
     char *cfg_path = config_file_path();
     Config cfg;
     char errbuf[256];
     ConfigStatus cst = config_load(cfg_path, &cfg, errbuf, sizeof(errbuf));
-    printf("config: %s\n", cfg_path);
+    printf("%sconfig:%s %s\n", hdr, reset, cfg_path);
     if (cst != CONFIG_OK) {
         report_fail(&issues, "%s", errbuf);
-        printf("\nshimback doctor: %d issue(s) found\n", issues);
+        printf("\n%sshimback doctor: %d issue(s) found%s\n", g_colorize ? ANSI_BOLD ANSI_RED : "",
+               issues, reset);
         return 1;
     }
     report_ok("parsed successfully");
     printf("\n");
 
     char *shim_dir = shim_bin_dir();
-    printf("shim directory: %s\n", shim_dir);
+    printf("%sshim directory:%s %s\n", hdr, reset, shim_dir);
     if (access(shim_dir, F_OK) != 0) {
         if (cfg.count > 0) {
             report_fail(&issues,
@@ -178,10 +197,10 @@ int cmd_doctor(int argc, char **argv) {
 
     char *self_exe = self_exe_path();
 
-    printf("%zu shim(s) configured:\n", cfg.count);
+    printf("%s%zu shim(s) configured:%s\n", hdr, cfg.count, reset);
     for (size_t i = 0; i < cfg.count; i++) {
         ShimEntry *e = &cfg.shims[i];
-        printf("\n%s\n", e->name);
+        printf("\n%s%s%s\n", name_color, e->name, reset);
 
         check_symlink(&issues, shim_dir, e->name);
         char *resolved_fallback = check_fallback(&issues, e->fallback);
@@ -207,9 +226,11 @@ int cmd_doctor(int argc, char **argv) {
     printf("\n");
 
     if (issues > 0) {
-        printf("shimback doctor: %d issue(s) found\n", issues);
+        printf("%sshimback doctor: %d issue(s) found%s\n", g_colorize ? ANSI_BOLD ANSI_RED : "",
+               issues, reset);
     } else {
-        printf("shimback doctor: all checks passed\n");
+        printf("%sshimback doctor: all checks passed%s\n", g_colorize ? ANSI_BOLD ANSI_GREEN : "",
+               reset);
     }
     return issues > 0 ? 1 : 0;
 }

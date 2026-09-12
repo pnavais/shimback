@@ -104,7 +104,7 @@ shell you have installed, rather than just your current one. As of v0.1.0,
 line that it's out of scope for now); `init` will print the manual command
 to run instead.
 
-### `list`
+### `list` (alias: `ls`)
 
 ```sh
 shimback list
@@ -120,11 +120,12 @@ awk   /opt/homebrew/bin/gawk   /usr/bin/awk  heuristic  true
 ```
 
 When stdout is a terminal (and [`NO_COLOR`](https://no-color.org/) isn't
-set), the policy column is colored by kind (`heuristic` yellow,
-`exit-code-match` magenta, `route-args` cyan, `exit-code` uncolored as the
-baseline), `auto` sources and `false` diagnostics are dimmed, and `true`
-diagnostics are green. Piping the output (e.g. to a file or another
-command) disables color automatically.
+set): shim names are bold cyan; an explicit source is green and `auto` is
+dimmed; the fallback path is blue; the policy column is colored by kind
+(`heuristic` yellow, `exit-code-match` magenta, `route-args` cyan,
+`exit-code` uncolored as the baseline); `false` diagnostics are dimmed and
+`true` ones are green; column headers are bold yellow. Piping the output
+(e.g. to a file or another command) disables color automatically.
 
 ### `doctor`
 
@@ -139,7 +140,9 @@ exists and isn't dead, whether its fallback (and, if explicit, its source)
 still exist and are executable, and whether its policy is fully configured
 (e.g. `heuristic` with no `--error-pattern`, or `exit-code-match` with no
 `--exit-code`, can never fall back). Exits `0` if everything checks out,
-`1` otherwise — safe to run in CI or a shell startup hook.
+`1` otherwise — safe to run in CI or a shell startup hook. Section headers
+and shim names are bold yellow/cyan, `[ok]`/`[fail]` are green/red, and the
+closing summary line is green or red, when stdout is a terminal.
 
 ### `install`
 
