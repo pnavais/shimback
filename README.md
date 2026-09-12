@@ -251,14 +251,14 @@ Safe to re-run: nothing left to remove is just reported as already gone.
   behavior you want to switch on a flag rather than on failure:
 
   ```sh
-  shimback add cagao -s /bin/ls -f /usr/local/bin/eza \
+  shimback add cools -s /bin/ls -f /usr/local/bin/eza \
       --policy route-args \
       --route-arg x
   ```
 
-  Running `cagao` normally runs `ls`; running `cagao x` runs `eza x`
+  Running `cools` normally runs `ls`; running `cools x` runs `eza x`
   instead. Pass `--strip-matched-args` to drop the matched argument(s)
-  before forwarding the rest — with it set, `cagao x` above would run
+  before forwarding the rest — with it set, `cools x` above would run
   `eza` with no arguments at all.
 
 > **Note:** `exit-code` is deliberately the least precise policy (any
@@ -310,7 +310,7 @@ fallback = "/usr/bin/grep"
 policy = "exit-code-match"
 exit_codes = [2]
 
-[shims.cagao]
+[shims.cools]
 source = "/bin/ls"
 fallback = "/usr/local/bin/eza"
 policy = "route-args"
