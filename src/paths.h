@@ -54,6 +54,17 @@ bool copy_file(const char *src, const char *dst);
 char *path_search(const char *name, const char *exclude_dir,
                    const char *exclude_canonical);
 
+/* Resolves a user-supplied command reference (a -s/-f argument, or a
+ * doctor-fix replacement typed interactively) to an absolute, executable
+ * path: if `arg` is already a valid executable file as given (relative to
+ * the current directory, or absolute), that's canonicalized and returned.
+ * If it contains no '/' -- a bare command name -- and doesn't resolve that
+ * way, it's searched for on $PATH instead (unrestricted: this can resolve
+ * to a shim symlink, or to shimback itself -- callers that care about
+ * cycles must check the result against self_exe_path() themselves). Returns
+ * NULL if neither works. */
+char *resolve_binary_arg(const char *arg);
+
 /* mkdir -p equivalent. Returns true on success (including "already exists
  * as a directory"). */
 bool mkdir_p(const char *dir);

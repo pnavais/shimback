@@ -261,3 +261,13 @@ char *path_search(const char *name, const char *exclude_dir,
     free(path_copy);
     return result;
 }
+
+char *resolve_binary_arg(const char *arg) {
+    if (is_executable_file(arg)) {
+        return canonicalize(arg);
+    }
+    if (strchr(arg, '/') == NULL) {
+        return path_search(arg, NULL, NULL);
+    }
+    return NULL;
+}

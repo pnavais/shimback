@@ -80,4 +80,74 @@ if [ "$code" -eq 0 ]; then
 fi
 assert_contains "doctor: reports missing fallback" "$out" "does not exist or is not executable"
 
+# --- add refuses a fallback/source that resolves back to shimback itself ---
+"$SHIMBACK" add cycletool -s "$FAKE_PRIMARY" -f "$SHIMBACK" >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add: a fallback resolving to the shimback binary itself should be rejected"
+fi
+assert_contains "add: cycle error mentions the shimback binary" "$(cat "$SANDBOX/err")" \
+    "resolves back to the shimback binary itself"
+assert_not_contains "add: cyclic shim was not created" "$("$SHIMBACK" list)" "cycletool"
+
+"$SHIMBACK" add cycletool2 -s "$SHIMBACK" -f "$FAKE_FALLBACK" >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add: a source resolving to the shimback binary itself should be rejected"
+fi
+assert_contains "add: source-cycle error mentions the shimback binary" "$(cat "$SANDBOX/err")" \
+    "resolves back to the shimback binary itself"
+
+# --- doctor detects a cycle induced by hand-editing config.toml (add
+# already refuses to create one going forward, so this is the only way one
+# can end up in the config) ---
+CFG="$(config_file)"
+{
+    echo "version = 1"
+    echo ""
+    echo "[shims.cyc]"
+    echo "source = \"$FAKE_PRIMARY\""
+    printf 'fallback = "%s"\n' "$SHIMBACK"
+    echo "policy = \"exit-code\""
+} >"$CFG"
+CYC_LINK="$(shim_path cyc)"
+ln -sf "$SHIMBACK" "$CYC_LINK"
+
+out="$("$SHIMBACK" doctor)"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "doctor: should fail when a fallback resolves back to shimback itself"
+fi
+assert_contains "doctor: reports the fallback cycle" "$out" \
+    "resolves back to the shimback binary itself"
+
+# --- doctor fix: interactive prompt loop rejects a bad answer, accepts a good one ---
+out2="$(printf 'not-a-real-command\n%s\n' "$FAKE_FALLBACK" | "$SHIMBACK" doctor fix)"
+assert_contains "doctor fix: rejects an invalid replacement and re-prompts" "$out2" \
+    "does not exist, is not executable, or isn't on \$PATH -- try again."
+assert_contains "doctor fix: accepts a valid replacement" "$out2" "[fixed] fallback updated to"
+assert_contains "doctor fix: config change gets saved" "$out2" "saved config changes to"
+assert_contains "doctor fix: cycle is gone" "$(cat "$CFG")" \
+    "fallback = \"$FAKE_FALLBACK\""
+
+# --- doctor fix: EOF on stdin (non-interactive) gives up gracefully, no hang ---
+{
+    echo "version = 1"
+    echo ""
+    echo "[shims.cyc]"
+    echo "source = \"$FAKE_PRIMARY\""
+    printf 'fallback = "%s"\n' "$SHIMBACK"
+    echo "policy = \"exit-code\""
+} >"$CFG"
+
+out3="$(run_with_timeout 5 "$SANDBOX/fix_eof_out" "$SHIMBACK" doctor fix </dev/null; \
+    cat "$SANDBOX/fix_eof_out")"
+code3=$?
+if [ "$code3" -eq 137 ]; then
+    fail "doctor fix: hung waiting for input on a closed stdin"
+fi
+assert_contains "doctor fix: gives up gracefully on EOF" "$out3" "Leaving '$SHIMBACK' as-is."
+assert_contains "doctor fix: still reports the unresolved cycle" "$out3" \
+    "resolves back to the shimback binary itself"
+
 finish

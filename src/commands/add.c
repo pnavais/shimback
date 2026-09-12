@@ -32,22 +32,6 @@ static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
     (*arr)[(*count)++] = value;
 }
 
-/* Resolves a -s/-f argument to an absolute, executable path: if `arg` is
- * already a valid executable file as given (relative to the current
- * directory, or absolute), that's canonicalized and returned. If it
- * contains no '/' -- a bare command name -- and doesn't resolve that way,
- * it's searched for on $PATH instead, the same way a shell would find it.
- * Returns NULL (nothing to free) if neither works. */
-static char *resolve_binary_arg(const char *arg) {
-    if (is_executable_file(arg)) {
-        return canonicalize(arg);
-    }
-    if (strchr(arg, '/') == NULL) {
-        return path_search(arg, NULL, NULL);
-    }
-    return NULL;
-}
-
 int cmd_add(int argc, char **argv) {
     const char *source_arg = NULL;
     const char *fallback_arg = NULL;
@@ -132,9 +116,17 @@ int cmd_add(int argc, char **argv) {
         die("add: --policy route-args requires at least one --route-arg");
     }
 
+    char *self_exe = self_exe_path();
+
     char *resolved_fallback = resolve_binary_arg(fallback_arg);
     if (!resolved_fallback) {
         die("add: fallback '%s' does not exist, is not executable, or isn't on $PATH",
+            fallback_arg);
+    }
+    if (strcmp(resolved_fallback, self_exe) == 0) {
+        die("add: fallback '%s' resolves back to the shimback binary itself -- that would loop "
+            "forever if this shim were ever invoked (did it resolve via $PATH to another shim, "
+            "or to this one?)",
             fallback_arg);
     }
 
@@ -147,8 +139,14 @@ int cmd_add(int argc, char **argv) {
             die("add: source '%s' does not exist, is not executable, or isn't on $PATH",
                 source_arg);
         }
+        if (strcmp(resolved_source_for_check, self_exe) == 0) {
+            die("add: source '%s' resolves back to the shimback binary itself -- that would "
+                "loop forever if this shim were ever invoked (did it resolve via $PATH to "
+                "another shim, or to this one?)",
+                source_arg);
+        }
     } else {
-        resolved_source_for_check = path_search(name, shim_dir, NULL);
+        resolved_source_for_check = path_search(name, shim_dir, self_exe);
     }
 
     if (resolved_source_for_check && strcmp(resolved_source_for_check, resolved_fallback) == 0) {
@@ -160,7 +158,6 @@ int cmd_add(int argc, char **argv) {
         die("add: failed to create shim directory %s", shim_dir);
     }
 
-    char *self_exe = self_exe_path();
     char *symlink_path = path_join(shim_dir, name);
 
     struct stat st;
