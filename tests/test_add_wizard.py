@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""Drives shimback's interactive `add` wizard through a real pseudo-terminal.
+
+The wizard is gated on stdin/stdout both being a real tty (see add.c), so
+it can't be exercised by the project's other, sandboxed-but-non-tty shell
+tests. This script spawns the built binary attached to a pty via
+subprocess + pty.openpty(), feeds scripted keystrokes (including raw ANSI
+escape sequences for arrow keys), and inspects the resulting
+config.toml/symlink in a sandboxed $HOME/$XDG_CONFIG_HOME/$XDG_DATA_HOME
+to verify each scenario.
+"""
+import os
+import select
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+FAILURES = []
+
+
+def fail(msg):
+    FAILURES.append(msg)
+    print(f"FAIL: {msg}", file=sys.stderr)
+
+
+def assert_eq(desc, expected, actual):
+    if expected != actual:
+        fail(f"{desc}: expected [{expected}], got [{actual}]")
+
+
+def assert_contains(desc, haystack, needle):
+    if needle not in haystack:
+        fail(f"{desc}: expected to find [{needle}] in [{haystack}]")
+
+
+def assert_not_contains(desc, haystack, needle):
+    if needle in haystack:
+        fail(f"{desc}: expected NOT to find [{needle}] in [{haystack}]")
+
+
+class Sandbox:
+    def __init__(self, binary):
+        self.binary = binary
+        self.root = tempfile.mkdtemp(prefix="sb_wizard_test_")
+        self.home = os.path.join(self.root, "home")
+        os.makedirs(self.home, exist_ok=True)
+        self.env = dict(os.environ)
+        self.env["HOME"] = self.home
+        self.env["XDG_CONFIG_HOME"] = os.path.join(self.home, ".config")
+        self.env["XDG_DATA_HOME"] = os.path.join(self.home, ".local", "share")
+        self.env["TERM"] = "xterm"
+        self.master = None
+        self.proc = None
+
+    def cleanup(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.kill()
+            self.proc.wait()
+        if self.master is not None:
+            try:
+                os.close(self.master)
+            except OSError:
+                pass
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def spawn(self, argv):
+        master, slave = os.openpty()
+        self.master = master
+        self.proc = subprocess.Popen(
+            [self.binary] + argv,
+            stdin=slave, stdout=slave, stderr=slave,
+            env=self.env, close_fds=True,
+        )
+        os.close(slave)
+        time.sleep(0.2)
+        return self.drain()
+
+    def drain(self, timeout=0.3):
+        buf = b""
+        while True:
+            r, _, _ = select.select([self.master], [], [], timeout)
+            if not r:
+                break
+            try:
+                chunk = os.read(self.master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            buf += chunk
+        return buf.decode(errors="replace")
+
+    def send(self, data, delay=0.1):
+        os.write(self.master, data)
+        time.sleep(delay)
+        return self.drain()
+
+    def wait(self, timeout=5):
+        try:
+            self.proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            self.proc.wait()
+        return self.proc.returncode
+
+    def config_path(self):
+        return os.path.join(self.env["XDG_CONFIG_HOME"], "shimback", "config.toml")
+
+    def config_text(self):
+        p = self.config_path()
+        return open(p).read() if os.path.exists(p) else ""
+
+    def shim_path(self, name):
+        return os.path.join(self.env["XDG_DATA_HOME"], "shimback", "bin", name)
+
+
+BIN = sys.argv[1]
+
+ENTER = b"\r"
+ESC = b"\x1b"
+CTRL_C = b"\x03"
+UP = b"\x1b[A"
+DOWN = b"\x1b[B"
+LEFT = b"\x1b[D"
+RIGHT = b"\x1b[C"
+
+
+# --- 1a: fully blank wizard, default exit-code policy ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"tool1" + ENTER)
+    sb.send(ENTER)          # policy: exit-code (default)
+    sb.send(ENTER)          # source: skip (auto)
+    sb.send(b"/bin/cat" + ENTER)  # fallback
+    sb.send(ENTER, 0.5)     # diagnostic: no
+    code = sb.wait()
+    assert_eq("1a exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("1a config has shim", cfg, "[shims.tool1]")
+    assert_contains("1a fallback stored", cfg, 'fallback = "/bin/cat"')
+    assert_contains("1a policy stored", cfg, 'policy = "exit-code"')
+    assert_not_contains("1a no explicit source (auto)", cfg, "source =")
+    if not os.path.islink(sb.shim_path("tool1")):
+        fail("1a: expected a symlink for tool1")
+finally:
+    sb.cleanup()
+
+# --- 1b: fully blank wizard, route-args policy (a list page + boolean) ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"tool2" + ENTER)
+    sb.send(DOWN + DOWN + DOWN + ENTER)  # exit-code -> heuristic -> exit-code-match -> route-args
+    sb.send(ENTER)                # source: auto
+    sb.send(b"/bin/echo" + ENTER)  # fallback
+    sb.send(b"special" + ENTER)   # route-arg 1
+    sb.send(ENTER)                # finish list
+    sb.send(b"y" + ENTER)         # strip-matched-args: yes
+    sb.send(ENTER, 0.5)           # diagnostic: no
+    code = sb.wait()
+    assert_eq("1b exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("1b policy is route-args", cfg, 'policy = "route-args"')
+    assert_contains("1b route_args stored", cfg, 'route_args = ["special"]')
+    assert_contains("1b strip_matched_args stored", cfg, "strip_matched_args = true")
+finally:
+    sb.cleanup()
+
+# --- 2: partial CLI args (name + source) resume at the first missing page
+# (fallback), and preserve the already-given name/source ---
+sb = Sandbox(BIN)
+try:
+    out = sb.spawn(["add", "seeded", "-s", "/bin/ls"])
+    assert_contains("2: resumes directly at the fallback page", out, "Fallback command")
+    assert_contains("2: name preserved in breadcrumb", out, "seeded")
+    assert_contains("2: source preserved in breadcrumb", out, "/bin/ls")
+    sb.send(b"/bin/cat" + ENTER)
+    sb.send(ENTER, 0.5)  # diagnostic: no
+    code = sb.wait()
+    assert_eq("2 exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("2 source preserved in config", cfg, 'source = "/bin/ls"')
+    assert_contains("2 fallback set in config", cfg, 'fallback = "/bin/cat"')
+finally:
+    sb.cleanup()
+
+# --- 3: Left-then-edit-then-forward on a non-policy page preserves
+# already-entered later data ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"tool3" + ENTER)
+    sb.send(ENTER)                  # policy: exit-code
+    sb.send(b"/bin/ls" + ENTER)     # source
+    sb.send(b"/bin/cat" + ENTER)    # fallback -> now on diagnostic page
+    sb.send(LEFT)                   # back to fallback
+    out = sb.send(LEFT)             # back to source
+    assert_contains("3: back-nav shows previously typed source", out, "/bin/ls")
+    out = sb.send(RIGHT)            # forward to fallback again (unedited)
+    assert_contains("3: forward-nav still shows fallback page with prior value", out, "/bin/cat")
+    sb.send(ENTER)                  # re-accept fallback unchanged -> advances to diagnostic
+    sb.send(ENTER, 0.5)             # diagnostic: no
+    code = sb.wait()
+    assert_eq("3 exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("3 source preserved after back+forward", cfg, 'source = "/bin/ls"')
+    assert_contains("3 fallback preserved after back+forward", cfg, 'fallback = "/bin/cat"')
+finally:
+    sb.cleanup()
+
+# --- 4: changing the policy after going back truncates/resets later pages ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"tool4" + ENTER)
+    sb.send(ENTER)                  # policy: exit-code
+    sb.send(ENTER)                  # source: auto
+    sb.send(b"/bin/cat" + ENTER)    # fallback -> now on diagnostic page
+    out = sb.send(LEFT + LEFT + LEFT)  # back to policy page
+    assert_contains("4: back-nav reaches policy page", out, "Policy:")
+    out = sb.send(DOWN + ENTER)     # exit-code -> heuristic, commit (a real change)
+    assert_contains("4: policy change resets to a fresh source page", out, "Source command")
+    sb.send(ENTER)                  # source: auto (freshly re-asked)
+    sb.send(b"/bin/ls" + ENTER)     # fallback (freshly re-asked, different value)
+    sb.send(b"invalid option" + ENTER)  # pattern
+    sb.send(ENTER)                  # finish list
+    sb.send(ENTER, 0.5)             # diagnostic: no
+    code = sb.wait()
+    assert_eq("4 exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("4 policy changed to heuristic", cfg, 'policy = "heuristic"')
+    assert_contains("4 new fallback value used", cfg, 'fallback = "/bin/ls"')
+    assert_contains("4 pattern set after policy change", cfg, 'error_patterns = ["invalid option"]')
+finally:
+    sb.cleanup()
+
+# --- 5: abort via Esc leaves no symlink/config entry ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"esctool" + ENTER)
+    sb.send(ESC, 0.3)
+    code = sb.wait()
+    assert_eq("5 exit code", 1, code)
+    assert_not_contains("5: nothing written to config", sb.config_text(), "esctool")
+    if os.path.exists(sb.shim_path("esctool")):
+        fail("5: no symlink should exist after Esc abort")
+finally:
+    sb.cleanup()
+
+# --- 6: abort via Ctrl-C leaves no symlink/config entry ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"ctrlctool" + ENTER)
+    sb.send(CTRL_C, 0.3)
+    code = sb.wait()
+    assert_eq("6 exit code", 1, code)
+    assert_not_contains("6: nothing written to config", sb.config_text(), "ctrlctool")
+    if os.path.exists(sb.shim_path("ctrlctool")):
+        fail("6: no symlink should exist after Ctrl-C abort")
+finally:
+    sb.cleanup()
+
+# --- 7: an optional field (source) skipped via blank Enter results in no
+# explicit source (auto) in the config ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"tool7" + ENTER)
+    sb.send(ENTER)                # policy: exit-code
+    sb.send(ENTER)                # source: blank -> skip/auto
+    sb.send(b"/bin/cat" + ENTER)  # fallback
+    sb.send(ENTER, 0.5)           # diagnostic: no
+    code = sb.wait()
+    assert_eq("7 exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("7: shim present", cfg, "[shims.tool7]")
+    assert_not_contains("7: no explicit source line (auto)", cfg, "source =")
+finally:
+    sb.cleanup()
+
+# --- 8: a list page refuses to finish with zero items ---
+sb = Sandbox(BIN)
+try:
+    out = sb.spawn(["add", "tool8", "-f", "/bin/cat", "--policy", "heuristic"])
+    assert_contains("8: starts on the patterns page", out, "Error patterns")
+    out = sb.send(ENTER, 0.2)  # blank with 0 items -> must NOT advance
+    assert_contains("8: refuses to finish with zero items", out, "At least one is required")
+    assert_contains("8: still on the patterns page", out, "Error patterns")
+    sb.send(b"invalid option" + ENTER)  # add one item
+    sb.send(ENTER)                       # now blank-finish is allowed
+    sb.send(ENTER, 0.5)                  # diagnostic: no
+    code = sb.wait()
+    assert_eq("8 exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("8: pattern stored", cfg, 'error_patterns = ["invalid option"]')
+finally:
+    sb.cleanup()
+
+
+# --- 9: revisiting a boolean page (strip-matched-args) and re-confirming it
+# unchanged (blank Enter) must NOT silently reset a prior "yes" to "no" ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"tool9" + ENTER)
+    sb.send(DOWN + DOWN + DOWN + ENTER)  # exit-code -> ... -> route-args
+    sb.send(ENTER)                # source: auto
+    sb.send(b"/bin/echo" + ENTER)  # fallback
+    sb.send(b"special" + ENTER)   # route-arg 1
+    sb.send(ENTER)                # finish list
+    sb.send(b"y" + ENTER)         # strip-matched-args: yes -> now on diagnostic page
+    out = sb.send(LEFT)           # back to strip-matched-args page
+    assert_contains("9: revisited page pre-fills the prior \"yes\"", out, "> y")
+    sb.send(ENTER)                # re-confirm unchanged -> forward to diagnostic
+    sb.send(ENTER, 0.5)           # diagnostic: no
+    code = sb.wait()
+    assert_eq("9 exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("9: strip_matched_args stayed true after revisit", cfg,
+                     "strip_matched_args = true")
+finally:
+    sb.cleanup()
+
+
+if FAILURES:
+    print(f"{len(FAILURES)} assertion(s) failed", file=sys.stderr)
+    sys.exit(1)
+print("OK")
+sys.exit(0)
