@@ -1,0 +1,11 @@
+/build/
+/build-*/
+*.o
+*.obj
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+*.dSYM/

@@ -1,0 +1,70 @@
+cmake_minimum_required(VERSION 3.16)
+
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SHIMBACK_VERSION LIMIT_COUNT 1)
+
+project(shimback LANGUAGES C VERSION ${SHIMBACK_VERSION})
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+endif()
+
+option(SHIMBACK_DEV_WARNINGS "Build with -Wall -Wextra -Werror" ${CMAKE_BUILD_TYPE_IS_DEBUG})
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(SHIMBACK_DEV_WARNINGS ON)
+endif()
+
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/version.h.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/version.h"
+  @ONLY
+)
+
+add_executable(shimback
+  src/main.c
+  src/cli.c
+  src/config.c
+  src/dispatch.c
+  src/shell.c
+  src/paths.c
+  src/util.c
+  src/commands/add.c
+  src/commands/remove.c
+  src/commands/init.c
+  src/commands/list.c
+)
+
+target_include_directories(shimback PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated"
+)
+
+if(SHIMBACK_DEV_WARNINGS)
+  target_compile_options(shimback PRIVATE -Wall -Wextra -Werror)
+endif()
+
+install(TARGETS shimback RUNTIME DESTINATION bin)
+
+enable_testing()
+
+add_executable(test_config_parser
+  tests/test_config_parser.c
+  src/config.c
+  src/paths.c
+  src/util.c
+)
+target_include_directories(test_config_parser PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated"
+)
+add_test(NAME test_config_parser COMMAND test_config_parser)
+
+add_test(NAME test_dispatch
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dispatch.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_add_remove
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_add_remove.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_init
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_init.sh $<TARGET_FILE:shimback>)

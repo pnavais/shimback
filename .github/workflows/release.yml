@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os_name: macos
+            arch: x86_64
+            runner: macos-13
+          - os_name: macos
+            arch: arm64
+            runner: macos-14
+          - os_name: linux
+            arch: x86_64
+            runner: ubuntu-24.04
+          - os_name: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.runner }}
+    name: build (${{ matrix.os_name }}-${{ matrix.arch }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          pkg_dir="shimback-${{ matrix.os_name }}-${{ matrix.arch }}"
+          mkdir -p "$pkg_dir"
+          cp build/shimback "$pkg_dir/"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$pkg_dir/"
+          tar -czf "$pkg_dir.tar.gz" "$pkg_dir"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shimback-${{ matrix.os_name }}-${{ matrix.arch }}
+          path: shimback-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: shasum -a 256 *.tar.gz > SHA256SUMS
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            artifacts/*.tar.gz artifacts/SHA256SUMS \
+            --generate-notes
