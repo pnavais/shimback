@@ -91,12 +91,16 @@ shimback add sed -f /usr/bin/sed
 - `add` also ensures the shim directory is on `PATH`, by injecting an
   idempotent, clearly marked block into your current shell's startup file
   (detected from `$SHELL`). Re-running `add` never duplicates this block.
-  On zsh, if [`zsh-defer`](https://github.com/romkatv/zsh-defer) is
-  available, the injected block routes its `export PATH=` through it too —
-  otherwise tools like `mise` or `direnv` that defer their own PATH-mutating
-  activation (for faster prompt startup) would clobber the shim dir's
-  position on `PATH` after the rc file finishes sourcing, regardless of
-  where the shimback block sits in the file.
+  On zsh, if `~/.zshrc.local` exists, the block goes there instead of
+  `~/.zshrc` — most zsh setups source it for machine-local overrides kept
+  out of a dotfiles repo, so that's the more appropriate place for it; a
+  later `uninstall --full` checks both files, regardless of which one
+  currently exists. If [`zsh-defer`](https://github.com/romkatv/zsh-defer)
+  is available, the injected block routes its `export PATH=` through it
+  too — otherwise tools like `mise` or `direnv` that defer their own
+  PATH-mutating activation (for faster prompt startup) would clobber the
+  shim dir's position on `PATH` after the rc file finishes sourcing,
+  regardless of where the shimback block sits in the file.
 
 ### `remove`
 
@@ -202,6 +206,13 @@ nothing shimback-specific). If stdin isn't interactive (e.g. run from a
 script) and hits EOF before you've answered, it gives up on that one entry
 and leaves it as-is — `doctor fix` never hangs waiting for input that can't
 arrive.
+
+`doctor` also checks for a stray PATH block: if `~/.zshrc.local` exists but
+the shimback block is still sitting in `~/.zshrc` (written by an `add`/
+`init`/`install` that ran before `~/.zshrc.local` existed, or before
+shimback preferred it — see `add`, above), it's flagged as a `[warn]`, not
+a `[fail]` — it doesn't affect `doctor`'s exit code, since PATH still works
+fine either way. `doctor fix` acts on it by moving the block over.
 
 ### `install`
 

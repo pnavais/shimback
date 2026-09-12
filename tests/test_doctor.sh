@@ -150,4 +150,34 @@ assert_contains "doctor fix: gives up gracefully on EOF" "$out3" "Leaving '$SHIM
 assert_contains "doctor fix: still reports the unresolved cycle" "$out3" \
     "resolves back to the shimback binary itself"
 
+# --- doctor warns (but doesn't fail) when ~/.zshrc.local exists without our
+# block while ~/.zshrc has it (from an earlier add, before .zshrc.local
+# existed); doctor fix migrates it, after which the warning is gone. The
+# config at this point still has an unrelated unresolved cycle (left by the
+# EOF test above), so doctor's exit code is already non-zero regardless --
+# the point here is that the warning doesn't change the issue *count*. ---
+ZSHRC="$HOME/.zshrc"
+ZSHRC_LOCAL="$HOME/.zshrc.local"
+assert_contains "migration setup: block is currently in .zshrc" "$(cat "$ZSHRC")" \
+    "# >>> shimback >>>"
+
+issues_before="$("$SHIMBACK" doctor | grep -o '[0-9]* issue(s) found')"
+
+: >"$ZSHRC_LOCAL"
+out4="$("$SHIMBACK" doctor)"
+assert_contains "doctor: warns about a block left in .zshrc" "$out4" \
+    "[warn] ~/.zshrc.local exists, but the shimback PATH block is still in ~/.zshrc"
+issues_after="$(echo "$out4" | grep -o '[0-9]* issue(s) found')"
+assert_eq "doctor: the migration warning doesn't add to the issue count" \
+    "$issues_before" "$issues_after"
+
+"$SHIMBACK" doctor fix >/dev/null
+assert_contains "doctor fix: block moved into .zshrc.local" "$(cat "$ZSHRC_LOCAL")" \
+    "# >>> shimback >>>"
+assert_not_contains "doctor fix: block gone from .zshrc" "$(cat "$ZSHRC")" "shimback"
+
+out5="$("$SHIMBACK" doctor)"
+assert_not_contains "doctor: no more migration warning once moved" "$out5" \
+    "zshrc.local exists"
+
 finish

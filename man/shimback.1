@@ -116,7 +116,12 @@ binary, this also catches a bare name that happens to resolve to another
 shim). Also ensures the shim directory is on
 .B PATH
 for the current shell, via an idempotent marker\-block injection into its
-startup file.
+startup file (on zsh,
+.I ~/.zshrc.local
+instead of
+.I ~/.zshrc
+when the former exists, since that's what most zsh setups source for
+machine\-local overrides).
 .RS
 .PP
 Example:
@@ -229,6 +234,17 @@ something that works or is interrupted with
 If stdin isn't interactive and hits EOF before being answered,
 .B fix
 gives up on that entry and leaves it as\-is rather than hang.
+.IP
+Also flags a stray PATH block: if
+.I ~/.zshrc.local
+exists but the shimback block is still in
+.IR ~/.zshrc ,
+that's a
+.BR warn ,
+not a failure \(em it doesn't affect the exit status, since PATH still
+works either way.
+.B fix
+moves the block over.
 .RS
 .PP
 Example:

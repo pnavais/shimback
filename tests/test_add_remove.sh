@@ -119,4 +119,26 @@ if [ "$code3" -eq 0 ]; then
 fi
 export PATH="$OLD_PATH"
 
+# --- when ~/.zshrc.local exists, the PATH block goes there instead of
+# ~/.zshrc (most zsh setups source .zshrc.local from .zshrc for
+# machine-local overrides kept out of a dotfiles repo) ---
+ZSHRC_LOCAL="$HOME/.zshrc.local"
+zshrc_before_local="$(cat "$ZSHRC")"
+: >"$ZSHRC_LOCAL"
+
+"$SHIMBACK" add localtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+assert_contains "add: with .zshrc.local present, PATH block goes there" \
+    "$(cat "$ZSHRC_LOCAL")" "# >>> shimback >>>"
+assert_eq "add: .zshrc itself is untouched once .zshrc.local exists" \
+    "$zshrc_before_local" "$(cat "$ZSHRC")"
+
+marker_count="$(count_occurrences '# >>> shimback >>>' "$ZSHRC_LOCAL")"
+assert_eq "add: exactly one marker block in .zshrc.local" "1" "$marker_count"
+
+"$SHIMBACK" uninstall --full >/dev/null 2>&1
+assert_not_contains "uninstall --full: PATH block removed from .zshrc.local" \
+    "$(cat "$ZSHRC_LOCAL")" "shimback"
+
+rm -f "$ZSHRC_LOCAL"
+
 finish

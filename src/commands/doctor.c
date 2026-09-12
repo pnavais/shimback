@@ -10,6 +10,7 @@
 
 #include "../config.h"
 #include "../paths.h"
+#include "../shell.h"
 #include "../util.h"
 
 /* Set once at the start of cmd_doctor and read by the report_ok/report_fail/
@@ -17,6 +18,11 @@
  * worry about, so a file-scope flag is simpler than threading a colorize
  * parameter through every helper's signature. */
 static bool g_colorize = false;
+
+/* Matches shell.c's DEFAULT_TAG / uninstall.c's SHIM_DIR_TAG -- the single
+ * marker tag add/init/install all share for the shim directory's PATH
+ * block. */
+#define SHIM_DIR_TAG "shimback"
 
 static void report_ok(const char *fmt, ...) {
     va_list ap;
@@ -51,6 +57,22 @@ static void report_fixed(const char *fmt, ...) {
         printf("  [%s%sfixed%s] ", ANSI_BOLD, ANSI_CYAN, ANSI_RESET);
     } else {
         printf("  [fixed] ");
+    }
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("\n");
+}
+
+/* Unlike report_fail, doesn't increment *issues or affect doctor's exit
+ * code -- for suggestions that are worth surfacing but aren't a broken
+ * setup (e.g. a PATH block that would be better off somewhere else). */
+static void report_warn(const char *fmt, ...) {
+    va_list ap;
+    if (g_colorize) {
+        printf("  [%s%swarn%s] ", ANSI_BOLD, ANSI_YELLOW, ANSI_RESET);
+    } else {
+        printf("  [warn] ");
     }
     va_start(ap, fmt);
     vprintf(fmt, ap);
@@ -356,6 +378,22 @@ int cmd_doctor(int argc, char **argv) {
                      "startup file)");
     }
     printf("\n");
+
+    if (detect_current_shell() == SHELL_ZSH && shell_zsh_block_needs_migration(SHIM_DIR_TAG)) {
+        if (fix_mode) {
+            if (shell_zsh_migrate_block_to_local(SHIM_DIR_TAG)) {
+                report_fixed("moved the shimback PATH block from ~/.zshrc to ~/.zshrc.local");
+            } else {
+                warn("doctor fix: failed to migrate the PATH block to ~/.zshrc.local");
+            }
+        } else {
+            report_warn(
+                "~/.zshrc.local exists, but the shimback PATH block is still in ~/.zshrc -- "
+                "most zsh setups source ~/.zshrc.local for machine-local overrides, so that's "
+                "the more appropriate place for it now (run `shimback doctor fix` to move it)");
+        }
+        printf("\n");
+    }
 
     if (cfg.count == 0) {
         printf("No shims configured.\n");
