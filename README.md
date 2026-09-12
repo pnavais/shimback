@@ -77,6 +77,15 @@ shimback add sed -f /usr/bin/sed
 - `add` refuses to create a shim where source and fallback resolve to the
   same binary (nothing would ever change), and never writes anything if
   validation fails.
+- Because a bare `-s`/`-f` name is looked up on `PATH` with nothing
+  excluded, it can resolve to another shim's symlink — and every shim
+  symlink points at the same `shimback` binary, so that's indistinguishable
+  from pointing at `shimback` directly. `add` refuses this too: a source or
+  fallback that resolves back to the `shimback` binary itself would loop
+  forever the moment the shim actually ran. `shimback doctor` checks for
+  this as well (in case a cycle ever ends up in a hand-edited config), and
+  `shimback doctor fix` repairs it by prompting for a replacement — see
+  below.
 - `add` also ensures the shim directory is on `PATH`, by injecting an
   idempotent, clearly marked block into your current shell's startup file
   (detected from `$SHELL`). Re-running `add` never duplicates this block.
@@ -170,6 +179,27 @@ the currently running `shimback` binary, the same way `add` creates it in
 the first place. It never touches a symlink that still resolves (even to a
 different-but-valid `shimback` binary elsewhere) or a path occupied by
 anything other than a symlink — only genuinely dead or missing entries.
+
+It also checks every shim's source (if explicit) and fallback for a
+**cycle**: a value that resolves back to the `shimback` binary itself (see
+`add`, above). `add` refuses to create one, so the only way a cycle ends up
+in the config is by hand-editing it. When `fix` finds one, it prompts
+interactively for a replacement, right there in the terminal:
+
+```
+cyc
+  fallback '/Users/you/.local/bin/shimback' for shim 'cyc' resolves back to the shimback binary itself (a cycle).
+  Enter a corrected fallback (Ctrl+C to abort):
+```
+
+Whatever you type is resolved and re-checked the same way `add` would; an
+invalid answer, or another cycle, just re-prompts — it keeps asking until
+you give it something that works, or until you press **Ctrl+C** to abort
+the whole `doctor fix` run (the normal way a terminal handles that signal;
+nothing shimback-specific). If stdin isn't interactive (e.g. run from a
+script) and hits EOF before you've answered, it gives up on that one entry
+and leaves it as-is — `doctor fix` never hangs waiting for input that can't
+arrive.
 
 ### `install`
 

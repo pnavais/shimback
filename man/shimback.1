@@ -103,8 +103,12 @@ once, at
 .B add
 time, the same way a shell would find it); either way the resolved absolute
 path is what gets frozen into the config. Refuses to create a shim where
-source and fallback resolve to the same binary. Also ensures the shim
-directory is on
+source and fallback resolve to the same binary, or where either resolves
+back to the
+.B shimback
+binary itself (a cycle \(em since every shim symlink points at the same
+binary, this also catches a bare name that happens to resolve to another
+shim). Also ensures the shim directory is on
 .B PATH
 for the current shell, via an idempotent marker\-block injection into its
 startup file.
@@ -201,6 +205,25 @@ binary \(em the same thing
 .B add
 does when it first creates one. Never touches a symlink that still
 resolves, or a path occupied by anything other than a symlink.
+.IP
+Also checks every shim's source (if explicit) and fallback for a cycle (a
+value resolving back to the
+.B shimback
+binary itself \(em see
+.BR add ,
+above; the only way one ends up in the config, since
+.B add
+refuses to create one, is by hand\-editing it). When found,
+.B fix
+prompts interactively in the terminal for a replacement, re\-validating
+each answer the same way
+.B add
+would and re\-prompting on an invalid one or another cycle, until it gets
+something that works or is interrupted with
+.BR Ctrl-C .
+If stdin isn't interactive and hits EOF before being answered,
+.B fix
+gives up on that entry and leaves it as\-is rather than hang.
 .RS
 .PP
 Example:
