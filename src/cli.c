@@ -10,18 +10,22 @@
 /* Renders `markup`: a span opened and closed with octal '\001' is a literal
  * (command/flag) and is colored bold green, '\002' is a placeholder value
  * and is colored cyan, '\003' is a section header and is colored bold
- * yellow -- matching clap-rs's default styled-help palette. Delimiters are
- * stripped either way; colors are only ever emitted when `colorize`.
- * Octal escapes, not hex: `\x` greedily consumes trailing hex digits, which
- * would silently swallow a leading 'e' in content like "exit-code". */
+ * yellow, '\004' is muted example/aside text and is colored dim --
+ * matching clap-rs's default styled-help palette for the first three.
+ * Delimiters are stripped either way; colors are only ever emitted when
+ * `colorize`. Octal escapes, not hex: `\x` greedily consumes trailing hex
+ * digits, which would silently swallow a leading 'e' in content like
+ * "exit-code". */
 static void print_markup(bool colorize, const char *markup) {
     const char *lit = ANSI_BOLD ANSI_GREEN;
     const char *ph = ANSI_CYAN;
     const char *hdr = ANSI_BOLD ANSI_YELLOW;
+    const char *dim = ANSI_DIM;
     for (const char *p = markup; *p != '\0'; p++) {
         char delim = *p;
-        if (delim == '\001' || delim == '\002' || delim == '\003') {
-            const char *color = delim == '\001' ? lit : delim == '\002' ? ph : hdr;
+        if (delim == '\001' || delim == '\002' || delim == '\003' || delim == '\004') {
+            const char *color =
+                delim == '\001' ? lit : delim == '\002' ? ph : delim == '\003' ? hdr : dim;
             p++;
             if (colorize) {
                 printf("%s", color);
@@ -59,10 +63,39 @@ static void print_usage(void) {
         "[\001--strip-matched-args\001] [\001--diagnostic\001]\n"
         "  \001shimback remove\001 \002<name>\002\n"
         "  \001shimback init\001\n"
-        "  \001shimback list\001\n"
+        "  \001shimback list\001 (alias: \001ls\001)\n"
         "  \001shimback doctor\001\n"
         "  \001shimback install\001 [\001--prefix\001 \002<dir>\002]\n"
-        "  \001shimback --help\001 | \001--version\001\n");
+        "  \001shimback --help\001 | \001--version\001\n"
+        "\n"
+        "\003COMMANDS:\003\n"
+        "  \001add\001       Create or update a shim named <name>, running \002<source>\002 "
+        "first and\n"
+        "            transparently retrying \002<fallback>\002 depending on the policy (see\n"
+        "            README.md for all four).\n"
+        "              \004e.g. shimback add sed -f /usr/bin/sed\004\n"
+        "\n"
+        "  \001remove\001    Remove a shim's symlink and its config entry. Leaves the PATH\n"
+        "            injection in your shell startup file alone.\n"
+        "              \004e.g. shimback remove sed\004\n"
+        "\n"
+        "  \001init\001      Detect every installed shell (zsh, bash, fish) and add the shim\n"
+        "            directory to PATH in each one, not just your current shell.\n"
+        "              \004e.g. shimback init\004\n"
+        "\n"
+        "  \001list\001      List every configured shim as a table: name, source, fallback,\n"
+        "            policy, and diagnostic flag. Also available as \001ls\001.\n"
+        "              \004e.g. shimback list\004\n"
+        "\n"
+        "  \001doctor\001    Check the whole setup end to end -- dead symlinks, missing or\n"
+        "            non-executable source/fallback binaries, a policy with nothing to\n"
+        "            select on -- and exit non-zero if anything's wrong.\n"
+        "              \004e.g. shimback doctor\004\n"
+        "\n"
+        "  \001install\001   Copy the running shimback binary to a stable, PATH-ed location\n"
+        "            (default: ~/.local/bin) so shim symlinks (which point at wherever\n"
+        "            the binary was running from at `add` time) survive a rebuild.\n"
+        "              \004e.g. shimback install --prefix ~/.local\004\n");
 }
 
 int cli_run(int argc, char **argv) {
@@ -87,7 +120,7 @@ int cli_run(int argc, char **argv) {
     if (strcmp(argv[1], "init") == 0) {
         return cmd_init(argc - 1, argv + 1);
     }
-    if (strcmp(argv[1], "list") == 0) {
+    if (strcmp(argv[1], "list") == 0 || strcmp(argv[1], "ls") == 0) {
         return cmd_list(argc - 1, argv + 1);
     }
     if (strcmp(argv[1], "doctor") == 0) {
