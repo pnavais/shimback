@@ -149,16 +149,19 @@ Removes the symlink and the config entry for `<name>`. It does **not**
 touch the PATH injection in your shell's startup file, since other shims
 (or a future `add`) may still need it.
 
-If `<name>` doesn't match any configured shim, and [`fzf`](https://github.com/junegunn/fzf)
-is found on `PATH`, shimback prints a `did you mean 'X'?` hint using `fzf`'s
-non-interactive `--filter` mode against the configured shim names. The same
-hint appears for an unrecognized top-level command (e.g. `shimback dctor`).
-This is opportunistic, not a dependency — with no `fzf` on `PATH`, or no
-close match, you just get the plain error, exactly as before. Note that
-`fzf`'s fuzzy matching requires the typed characters to appear *in the same
-order* within the real name, so it catches typos like a dropped letter or a
-truncated prefix (`doctr` → `doctor`) but not a transposition (`odctor`) or
-wrong letter, since those break that ordering.
+If `<name>` doesn't match any configured shim, shimback prints a
+`did you mean 'X'?` hint for whichever configured shim name is closest by
+edit (Levenshtein) distance — the minimum number of single-character
+insertions, deletions, or substitutions needed to turn one string into the
+other — as long as that distance is small relative to the name's length
+(roughly one typo per three characters), so an unrelated name never gets
+suggested. The same hint appears for an unrecognized top-level command
+(e.g. `shimback dctor` → `did you mean 'doctor'?`). No external tool is
+involved, and it catches any single-character typo shape — a dropped,
+inserted, or substituted letter (`shed` → `sed`, not just `doctr` →
+`doctor`) — unlike a subsequence-only fuzzy match (e.g. `fzf --filter`),
+which can only catch a typo that's literally containable, in order, within
+the real name.
 
 ### `init`
 

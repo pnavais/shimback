@@ -160,14 +160,12 @@ injection in the shell startup file alone, since other shims (or a future
 .BR add )
 may still need it. If
 .I name
-doesn't match any configured shim, and
-.B fzf
-is found on
-.BR PATH ,
-prints a "did you mean" hint using its non\-interactive
-.B \-\-filter
-mode against the configured names \(em opportunistic, not a dependency; the
-same hint appears for an unrecognized top\-level command.
+doesn't match any configured shim, prints a "did you mean" hint for
+whichever configured name is closest by edit (Levenshtein) distance,
+scaled to that name's length so an unrelated one is never suggested \(em
+no external tool involved, and any single\-character typo (dropped,
+inserted, or substituted) is caught, not just a dropped one. The same
+hint appears for an unrecognized top\-level command.
 .RS
 .PP
 Example:
