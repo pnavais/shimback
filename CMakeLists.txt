@@ -31,8 +31,10 @@ add_executable(shimback
   src/shell.c
   src/paths.c
   src/suggest.c
+  src/tui.c
   src/util.c
   src/commands/add.c
+  src/commands/add_wizard.c
   src/commands/remove.c
   src/commands/init.c
   src/commands/list.c
@@ -79,3 +81,5 @@ add_test(NAME test_install
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_install.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_uninstall
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_uninstall.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_add_wizard
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_add_wizard.sh $<TARGET_FILE:shimback>)

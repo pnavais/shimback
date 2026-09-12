@@ -122,6 +122,24 @@ instead of
 .I ~/.zshrc
 when the former exists, since that's what most zsh setups source for
 machine\-local overrides).
+.IP
+Run at an interactive terminal with required information missing (no
+.IR name ,
+or no
+.IR fallback ,
+or a policy missing the option it needs), an interactive wizard fills it
+in instead of failing: one page per field, Enter to confirm and continue
+(skipping an optional one if left blank), Left/Right arrows to revisit
+and edit earlier pages (Right only as far as a page already reached),
+Esc or Ctrl\-C to abort without writing anything. Whatever was already
+given on the command line is skipped straight to the first missing page,
+but stays reachable via Left. If
+.B fzf
+is on
+.BR PATH ,
+Tab on the policy page fuzzy\-picks a policy, and on the source/fallback
+pages fuzzy\-picks from every executable on
+.BR PATH .
 .RS
 .PP
 Example:
