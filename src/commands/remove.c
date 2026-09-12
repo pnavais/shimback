@@ -30,6 +30,7 @@ int cmd_remove(int argc, char **argv) {
     }
 
     if (!config_find(&cfg, name)) {
+        fprintf(stderr, "shimback: remove: no shim configured for '%s'\n", name);
         if (cfg.count > 0) {
             const char **candidates = xmalloc(cfg.count * sizeof(char *));
             for (size_t i = 0; i < cfg.count; i++) {
@@ -38,11 +39,11 @@ int cmd_remove(int argc, char **argv) {
             char *suggestion = fuzzy_suggest(name, candidates, cfg.count);
             free(candidates);
             if (suggestion) {
-                fprintf(stderr, "shimback: did you mean '%s'?\n", suggestion);
+                print_suggestion_hint(suggestion);
                 free(suggestion);
             }
         }
-        die("remove: no shim configured for '%s'", name);
+        exit(1);
     }
 
     char *shim_dir = shim_bin_dir();

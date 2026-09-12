@@ -12,6 +12,8 @@ shimback \- run a primary command, transparently fall back to another
 .br
 .B shimback remove
 .I name
+(alias:
+.BR rm )
 .br
 .B shimback init
 .br
@@ -154,18 +156,22 @@ shimback add sed \-f /usr/bin/sed
 .BI "remove " name
 Remove
 .IR name 's
-symlink and config entry. Leaves the
+symlink and config entry. Also available as
+.BR rm .
+Leaves the
 .B PATH
 injection in the shell startup file alone, since other shims (or a future
 .BR add )
 may still need it. If
 .I name
-doesn't match any configured shim, prints a "did you mean" hint for
-whichever configured name is closest by edit (Levenshtein) distance,
-scaled to that name's length so an unrelated one is never suggested \(em
-no external tool involved, and any single\-character typo (dropped,
-inserted, or substituted) is caught, not just a dropped one. The same
-hint appears for an unrecognized top\-level command.
+doesn't match any configured shim, prints the error first, then, right
+after it, a "did you mean" hint (in yellow, when stderr is a terminal and
+.B NO_COLOR
+is unset) for whichever configured name is closest by edit (Levenshtein)
+distance, scaled to that name's length so an unrelated one is never
+suggested \(em no external tool involved, and any single\-character typo
+(dropped, inserted, or substituted) is caught, not just a dropped one.
+The same hint appears for an unrecognized top\-level command.
 .RS
 .PP
 Example:
