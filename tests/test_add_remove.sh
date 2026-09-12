@@ -91,33 +91,36 @@ if [ "$code" -eq 0 ]; then
     fail "remove: removing an already-removed shim should fail"
 fi
 
-# --- fuzzy "did you mean" hints, only when fzf is actually on $PATH ---
-if command -v fzf >/dev/null 2>&1; then
-    "$SHIMBACK" add typotool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+# --- fuzzy "did you mean" hints: edit-distance based, no fzf (or any other
+# external tool) involved, so these always run regardless of the test
+# machine's setup ---
+"$SHIMBACK" add typotool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
 
-    out="$("$SHIMBACK" remove typotoo 2>&1)"
-    assert_contains "remove typo: did-you-mean hint via fzf" "$out" "did you mean 'typotool'?"
+out="$("$SHIMBACK" remove typotoo 2>&1)"
+assert_contains "remove typo (dropped char): did-you-mean hint" "$out" "did you mean 'typotool'?"
 
-    out2="$("$SHIMBACK" doctr 2>&1)"
-    assert_contains "unknown command typo: did-you-mean hint via fzf" "$out2" \
-        "did you mean 'doctor'?"
+out2="$("$SHIMBACK" doctr 2>&1)"
+assert_contains "unknown command typo (dropped char): did-you-mean hint" "$out2" \
+    "did you mean 'doctor'?"
 
-    "$SHIMBACK" remove typotool >/dev/null
-else
-    echo "fzf not found on \$PATH; skipping fuzzy-suggestion assertions" 1>&2
+# --- an inserted (not just dropped) character must be caught too -- a
+# subsequence-only fuzzy match (e.g. `fzf --filter`) can't catch this shape
+# at all, since "shed" is longer than "sed" and so can never be a
+# subsequence of it ---
+"$SHIMBACK" add sed -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+out3="$("$SHIMBACK" remove shed 2>&1)"
+assert_contains "remove typo (inserted char): did-you-mean hint" "$out3" "did you mean 'sed'?"
+"$SHIMBACK" remove sed >/dev/null
+
+"$SHIMBACK" remove typotool >/dev/null
+
+# --- a genuinely unrelated name gets no hint at all, just the plain error ---
+out4="$("$SHIMBACK" remove nonexistent-shim-xyz 2>&1)"
+code4=$?
+assert_not_contains "remove: no hint for an unrelated name" "$out4" "did you mean"
+if [ "$code4" -eq 0 ]; then
+    fail "remove: removing a nonexistent shim should still fail"
 fi
-
-# --- no fzf on $PATH: no hint, just the plain error (never a crash) ---
-mkdir -p "$SANDBOX/empty-path"
-OLD_PATH="$PATH"
-export PATH="$SANDBOX/empty-path"
-out3="$("$SHIMBACK" remove nonexistent-shim-xyz 2>&1)"
-code3=$?
-assert_not_contains "remove: no hint when fzf isn't on \$PATH" "$out3" "did you mean"
-if [ "$code3" -eq 0 ]; then
-    fail "remove: removing a nonexistent shim should still fail without fzf"
-fi
-export PATH="$OLD_PATH"
 
 # --- when ~/.zshrc.local exists, the PATH block goes there instead of
 # ~/.zshrc (most zsh setups source .zshrc.local from .zshrc for
