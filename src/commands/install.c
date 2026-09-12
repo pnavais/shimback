@@ -146,6 +146,13 @@ int cmd_install(int argc, char **argv) {
     install_man_page(prefix, self_exe);
 
     ShellKind shell = detect_current_shell();
+    /* Ensures both PATH entries are set up even on a totally fresh install,
+     * before any `add` has ever run: this binary's own location, and the
+     * shim directory itself (normally add/init's job) -- redundant, and a
+     * harmless no-op, if add/init already wrote it. */
+    char *shim_dir = shim_bin_dir();
+    shell_ensure_path(shell, shim_dir);
+    free(shim_dir);
     shell_ensure_path_tagged(shell, bin_dir, INSTALL_TAG);
     printf("Restart your shell (or re-source its startup file) for the PATH change to take "
            "effect.\n");
