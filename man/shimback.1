@@ -93,8 +93,18 @@ resolves to fresh on
 .B PATH
 at dispatch time, skipping shimback's own shim directory) with
 .I fallback
-under the given policy. Refuses to create a shim where source and fallback
-resolve to the same binary. Also ensures the shim directory is on
+under the given policy. Both
+.B \-s
+and
+.B \-f
+accept a path or a bare command name (looked up on
+.B PATH
+once, at
+.B add
+time, the same way a shell would find it); either way the resolved absolute
+path is what gets frozen into the config. Refuses to create a shim where
+source and fallback resolve to the same binary. Also ensures the shim
+directory is on
 .B PATH
 for the current shell, via an idempotent marker\-block injection into its
 startup file.

@@ -60,14 +60,20 @@ shimback add sed -f /usr/bin/sed
 
 - `<name>` is the command name to shim (e.g. `sed`). It can't contain `/`
   and can't be `shimback` itself.
-- `-s`/`--source` is optional. If given, it's the exact path to the primary
-  binary, resolved once and frozen in the config — re-run `add` if that
+- `-s`/`--source` is optional. If given, it's resolved **once**, at `add`
+  time, and frozen in the config as an absolute path — re-run `add` if that
   binary moves. If omitted, the source is resolved fresh from `PATH` on
   **every invocation**, skipping shimback's own shim directory (and
   anything that resolves back to the `shimback` binary itself), so it
   naturally follows whatever the "real" `<name>` on your system currently
   is.
-- `-f`/`--fallback` is required: the path to the fallback binary.
+- `-f`/`--fallback` is required, and is resolved the same way `-s` is: once,
+  at `add` time, frozen as an absolute path.
+- Both `-s` and `-f` accept either a path (`/usr/local/bin/eza`,
+  `./eza`) or a bare command name (`eza`) — a bare name with no `/` is
+  looked up on `PATH` (skipping nothing, unlike auto-resolved `-s`) exactly
+  once, the same way a shell would find it, and that resolved path is what
+  gets stored.
 - `add` refuses to create a shim where source and fallback resolve to the
   same binary (nothing would ever change), and never writes anything if
   validation fails.

@@ -46,6 +46,34 @@ if [ -e "$(shim_path badtool)" ]; then
     fail "add rejection: no symlink should have been created for badtool"
 fi
 
+# --- bare -s/-f command names resolve via $PATH, not just a raw stat, and
+# get stored as the resolved absolute path (frozen, like an explicit path) ---
+FIXTURES_DIR_REAL="$(cd "$(dirname "$FAKE_FALLBACK")" && pwd)"
+OLD_PATH="$PATH"
+export PATH="$FIXTURES_DIR_REAL:$PATH"
+
+"$SHIMBACK" add pathtool -s "$(basename "$FAKE_PRIMARY")" -f "$(basename "$FAKE_FALLBACK")" \
+    >/dev/null
+code=$?
+assert_eq "add: bare -s/-f names resolve via \$PATH" "0" "$code"
+
+cfg_contents="$(cat "$(config_file)")"
+assert_contains "add: resolved fallback stored as an absolute path" "$cfg_contents" \
+    "fallback = \"$FAKE_FALLBACK\""
+assert_contains "add: resolved source stored as an absolute path" "$cfg_contents" \
+    "source = \"$FAKE_PRIMARY\""
+
+export PATH="$OLD_PATH"
+
+# --- a bare name not found anywhere on $PATH is rejected, mentioning $PATH ---
+"$SHIMBACK" add badpathtool -s "$FAKE_PRIMARY" -f totally-not-a-real-command-xyz \
+    >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add: a fallback not found on \$PATH should fail"
+fi
+assert_contains "add: bad bare fallback error mentions \$PATH" "$(cat "$SANDBOX/err")" '$PATH'
+
 # --- remove drops the symlink and config entry, leaves PATH block alone ---
 zshrc_before_remove="$(cat "$ZSHRC")"
 "$SHIMBACK" remove mytool >/dev/null

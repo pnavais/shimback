@@ -32,6 +32,22 @@ static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
     (*arr)[(*count)++] = value;
 }
 
+/* Resolves a -s/-f argument to an absolute, executable path: if `arg` is
+ * already a valid executable file as given (relative to the current
+ * directory, or absolute), that's canonicalized and returned. If it
+ * contains no '/' -- a bare command name -- and doesn't resolve that way,
+ * it's searched for on $PATH instead, the same way a shell would find it.
+ * Returns NULL (nothing to free) if neither works. */
+static char *resolve_binary_arg(const char *arg) {
+    if (is_executable_file(arg)) {
+        return canonicalize(arg);
+    }
+    if (strchr(arg, '/') == NULL) {
+        return path_search(arg, NULL, NULL);
+    }
+    return NULL;
+}
+
 int cmd_add(int argc, char **argv) {
     const char *source_arg = NULL;
     const char *fallback_arg = NULL;
@@ -116,22 +132,21 @@ int cmd_add(int argc, char **argv) {
         die("add: --policy route-args requires at least one --route-arg");
     }
 
-    if (!is_executable_file(fallback_arg)) {
-        die("add: fallback '%s' does not exist or is not executable", fallback_arg);
-    }
-    char *resolved_fallback = canonicalize(fallback_arg);
+    char *resolved_fallback = resolve_binary_arg(fallback_arg);
     if (!resolved_fallback) {
-        die("add: fallback '%s' does not exist or is not executable", fallback_arg);
+        die("add: fallback '%s' does not exist, is not executable, or isn't on $PATH",
+            fallback_arg);
     }
 
     char *shim_dir = shim_bin_dir();
 
     char *resolved_source_for_check = NULL;
     if (source_arg) {
-        if (!is_executable_file(source_arg)) {
-            die("add: source '%s' does not exist or is not executable", source_arg);
+        resolved_source_for_check = resolve_binary_arg(source_arg);
+        if (!resolved_source_for_check) {
+            die("add: source '%s' does not exist, is not executable, or isn't on $PATH",
+                source_arg);
         }
-        resolved_source_for_check = canonicalize(source_arg);
     } else {
         resolved_source_for_check = path_search(name, shim_dir, NULL);
     }
@@ -181,9 +196,14 @@ int cmd_add(int argc, char **argv) {
     size_t idx = config_upsert(&cfg, name);
     ShimEntry *entry = &cfg.shims[idx];
     free(entry->source);
-    entry->source = source_arg ? xstrdup(source_arg) : NULL;
+    /* Store the resolved (canonicalized, and PATH-searched if bare) form,
+     * not the raw argument -- this is what "resolved once and frozen in the
+     * config" (see README) actually means, and it's what dispatch/doctor
+     * already assume: a stable absolute path, not a bare name they'd have
+     * to re-search $PATH for themselves. */
+    entry->source = source_arg ? xstrdup(resolved_source_for_check) : NULL;
     free(entry->fallback);
-    entry->fallback = xstrdup(fallback_arg);
+    entry->fallback = xstrdup(resolved_fallback);
     entry->policy = policy;
     for (size_t i = 0; i < entry->error_pattern_count; i++) {
         free(entry->error_patterns[i]);
