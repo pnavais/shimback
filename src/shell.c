@@ -8,8 +8,7 @@
 #include "paths.h"
 #include "util.h"
 
-#define MARK_START "# >>> shimback >>>"
-#define MARK_END "# <<< shimback <<<"
+#define DEFAULT_TAG "shimback"
 
 ShellKind detect_current_shell(void) {
     const char *shell = getenv("SHELL");
@@ -89,30 +88,40 @@ static bool write_file_atomic(const char *path, const char *content, size_t len)
     return true;
 }
 
-/* Idempotently ensures the shimback marker block, wrapping `body` (the
- * PATH-mutating shell snippet, already newline-terminated), is present (and
- * up to date) in `rc_path`. See shell.h. */
-static bool inject_block(const char *rc_path, const char *body) {
+/* Idempotently ensures the marker block tagged `tag` (e.g. "shimback" for
+ * the shim dir, a distinct tag for any other directory shimback also needs
+ * on PATH), wrapping `body` (the PATH-mutating shell snippet, already
+ * newline-terminated), is present (and up to date) in `rc_path`. Distinct
+ * tags get distinct markers, so multiple independently-managed blocks can
+ * coexist in the same rc file without colliding. See shell.h. */
+static bool inject_block(const char *rc_path, const char *body, const char *tag) {
+    char mark_start[128];
+    char mark_end[128];
+    snprintf(mark_start, sizeof(mark_start), "# >>> %s >>>", tag);
+    snprintf(mark_end, sizeof(mark_end), "# <<< %s <<<", tag);
+
     char *content = read_file_or_empty(rc_path);
 
     DynBuf desired;
     dynbuf_init(&desired);
-    dynbuf_append_str(&desired, MARK_START "\n");
+    dynbuf_append_str(&desired, mark_start);
+    dynbuf_append_char(&desired, '\n');
     dynbuf_append_str(&desired, body);
-    dynbuf_append_str(&desired, MARK_END "\n");
+    dynbuf_append_str(&desired, mark_end);
+    dynbuf_append_char(&desired, '\n');
 
-    char *start = strstr(content, MARK_START);
+    char *start = strstr(content, mark_start);
     bool ok;
     if (start) {
-        char *end = strstr(start, MARK_END);
+        char *end = strstr(start, mark_end);
         if (!end) {
-            warn("found a shimback start marker without a matching end marker in %s; leaving it alone",
-                 rc_path);
+            warn("found a %s start marker without a matching end marker in %s; leaving it alone",
+                 tag, rc_path);
             free(content);
             dynbuf_free(&desired);
             return true;
         }
-        char *after_end = end + strlen(MARK_END);
+        char *after_end = end + strlen(mark_end);
         if (*after_end == '\n') {
             after_end++;
         }
@@ -171,7 +180,7 @@ static void build_zsh_body(DynBuf *body, const char *shim_dir) {
     dynbuf_append_str(body, "fi\n");
 }
 
-static bool ensure_zsh(const char *shim_dir) {
+static bool ensure_zsh(const char *shim_dir, const char *tag) {
     char *home = home_dir();
     char *rc = path_join(home, ".zshrc");
 
@@ -179,7 +188,7 @@ static bool ensure_zsh(const char *shim_dir) {
     dynbuf_init(&body);
     build_zsh_body(&body, shim_dir);
 
-    bool ok = inject_block(rc, dynbuf_cstr(&body));
+    bool ok = inject_block(rc, dynbuf_cstr(&body), tag);
     if (ok) {
         printf("zsh: PATH updated in %s\n", rc);
     } else {
@@ -197,7 +206,7 @@ static void build_bash_body(DynBuf *body, const char *shim_dir) {
     dynbuf_append_str(body, ":$PATH\"\n");
 }
 
-static bool ensure_bash(const char *shim_dir) {
+static bool ensure_bash(const char *shim_dir, const char *tag) {
     static const char *candidates[] = {".bashrc", ".bash_profile", ".profile"};
     char *home = home_dir();
     bool any_exists = false;
@@ -212,7 +221,7 @@ static bool ensure_bash(const char *shim_dir) {
         char *path = path_join(home, candidates[i]);
         if (access(path, F_OK) == 0) {
             any_exists = true;
-            bool ok = inject_block(path, body_str);
+            bool ok = inject_block(path, body_str, tag);
             if (ok) {
                 printf("bash: PATH updated in %s\n", path);
             } else {
@@ -225,7 +234,7 @@ static bool ensure_bash(const char *shim_dir) {
 
     if (!any_exists) {
         char *path = path_join(home, ".bashrc");
-        bool ok = inject_block(path, body_str);
+        bool ok = inject_block(path, body_str, tag);
         if (ok) {
             printf("bash: created %s with PATH update\n", path);
         } else {
@@ -240,22 +249,26 @@ static bool ensure_bash(const char *shim_dir) {
     return all_ok;
 }
 
-bool shell_ensure_path(ShellKind kind, const char *shim_dir) {
+bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag) {
     switch (kind) {
         case SHELL_ZSH:
-            return ensure_zsh(shim_dir);
+            return ensure_zsh(dir, tag);
         case SHELL_BASH:
-            return ensure_bash(shim_dir);
+            return ensure_bash(dir, tag);
         case SHELL_FISH:
             printf("fish detected but not supported for automatic PATH injection in v0.1.0; "
                    "add manually via: fish_add_path %s\n",
-                   shim_dir);
+                   dir);
             return true;
         case SHELL_UNKNOWN:
         default:
             printf("could not detect a supported shell; add this to your shell's startup file "
                    "manually:\n  export PATH=\"%s:$PATH\"\n",
-                   shim_dir);
+                   dir);
             return true;
     }
+}
+
+bool shell_ensure_path(ShellKind kind, const char *shim_dir) {
+    return shell_ensure_path_tagged(kind, shim_dir, DEFAULT_TAG);
 }

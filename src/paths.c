@@ -143,6 +143,43 @@ bool is_executable_file(const char *path) {
     return access(path, X_OK) == 0;
 }
 
+bool copy_executable(const char *src, const char *dst) {
+    FILE *in = fopen(src, "rb");
+    if (!in) {
+        return false;
+    }
+
+    char tmp[4160];
+    snprintf(tmp, sizeof(tmp), "%s.tmp.%d", dst, (int)getpid());
+    FILE *out = fopen(tmp, "wb");
+    if (!out) {
+        fclose(in);
+        return false;
+    }
+
+    char buf[65536];
+    size_t n;
+    bool ok = true;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) {
+            ok = false;
+            break;
+        }
+    }
+    ok = ok && !ferror(in) && fflush(out) == 0;
+    fclose(in);
+    fclose(out);
+
+    if (ok && chmod(tmp, 0755) != 0) {
+        ok = false;
+    }
+    if (ok && rename(tmp, dst) == 0) {
+        return true;
+    }
+    unlink(tmp);
+    return false;
+}
+
 bool mkdir_p(const char *dir) {
     char *copy = xstrdup(dir);
     size_t len = strlen(copy);

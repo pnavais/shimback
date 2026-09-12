@@ -34,6 +34,11 @@ char *self_exe_path(void);
 
 bool is_executable_file(const char *path);
 
+/* Copies `src` to `dst` (as an executable, mode 0755), atomically via a
+ * temp-file-plus-rename in `dst`'s own directory. Returns false on any I/O
+ * failure, leaving `dst` untouched. */
+bool copy_executable(const char *src, const char *dst);
+
 /* Searches $PATH in order for the first executable named `name`, skipping
  * any directory equal to `exclude_dir` (may be NULL for no exclusion) and
  * any candidate that canonicalizes to `exclude_canonical` (may be NULL).

@@ -16,6 +16,8 @@ static void print_usage(void) {
         "  shimback remove <name>\n"
         "  shimback init\n"
         "  shimback list\n"
+        "  shimback doctor\n"
+        "  shimback install [--prefix <dir>]\n"
         "  shimback --help | --version\n",
         SHIMBACK_VERSION);
 }
@@ -44,6 +46,12 @@ int cli_run(int argc, char **argv) {
     }
     if (strcmp(argv[1], "list") == 0) {
         return cmd_list(argc - 1, argv + 1);
+    }
+    if (strcmp(argv[1], "doctor") == 0) {
+        return cmd_doctor(argc - 1, argv + 1);
+    }
+    if (strcmp(argv[1], "install") == 0) {
+        return cmd_install(argc - 1, argv + 1);
     }
 
     fprintf(stderr, "shimback: unknown command '%s'\n", argv[1]);

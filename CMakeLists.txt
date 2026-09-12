@@ -35,6 +35,8 @@ add_executable(shimback
   src/commands/remove.c
   src/commands/init.c
   src/commands/list.c
+  src/commands/doctor.c
+  src/commands/install.c
 )
 
 target_include_directories(shimback PRIVATE
@@ -68,3 +70,7 @@ add_test(NAME test_add_remove
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_add_remove.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_init
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_init.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_doctor
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_doctor.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_install
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_install.sh $<TARGET_FILE:shimback>)
