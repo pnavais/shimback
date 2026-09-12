@@ -17,7 +17,6 @@
 #include "../util.h"
 #include "version.h"
 
-#define INSTALL_TAG "shimback-bin"
 #define MAN_PAGE_NAME "shimback.1"
 
 static const char *USAGE =
@@ -98,10 +97,16 @@ static void install_man_page(const char *prefix, const char *self_exe) {
     free(man_dir);
 }
 
-/* Applies both PATH blocks (shim dir + this binary's own dir) for `kind`. */
+/* Merges both the shim dir and this binary's own dir into the single
+ * "shimback"-tagged PATH block for `kind` (shell_ensure_path unions its
+ * directory into whatever's already there, so calling it twice combines
+ * both without either clobbering the other). Also removes the old separate
+ * "shimback-bin" block, a one-time migration for anyone who ran an earlier
+ * version of `install` that kept the two directories in separate blocks. */
 static void ensure_shell_path(ShellKind kind, const char *shim_dir, const char *bin_dir) {
     shell_ensure_path(kind, shim_dir);
-    shell_ensure_path_tagged(kind, bin_dir, INSTALL_TAG);
+    shell_ensure_path(kind, bin_dir);
+    shell_remove_path_tagged(kind, "shimback-bin");
 }
 
 int cmd_install(int argc, char **argv) {

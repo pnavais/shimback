@@ -24,20 +24,24 @@ const char *shell_kind_name(ShellKind kind);
  * else -- including "unknown", which is not a user-facing shell name. */
 bool shell_kind_from_name(const char *name, ShellKind *out);
 
-/* Ensures `shim_dir` is prepended to PATH for `kind`, via an idempotent
- * marker-block injection into that shell's usual startup file(s). For
- * SHELL_FISH, prints a note and touches nothing (unsupported in v0.1.0).
- * For SHELL_UNKNOWN, prints the line to add manually and touches nothing.
- * Returns false only on an actual I/O failure while writing.
+/* Ensures `dir` is prepended to PATH for `kind`, via an idempotent
+ * marker-block injection into that shell's usual startup file(s). If the
+ * block already exists (from an earlier add/init/install call, possibly for
+ * a different directory), `dir` is unioned into it rather than overwriting
+ * what's there -- so add, init, and install can run in any order, each
+ * contributing its own directory, and end up sharing a single block instead
+ * of one per caller. For SHELL_FISH, prints a note and touches nothing
+ * (unsupported in v0.1.0). For SHELL_UNKNOWN, prints the line to add
+ * manually and touches nothing. Returns false only on an actual I/O failure
+ * while writing.
  *
- * Equivalent to shell_ensure_path_tagged(kind, shim_dir, "shimback"). */
-bool shell_ensure_path(ShellKind kind, const char *shim_dir);
+ * Equivalent to shell_ensure_path_tagged(kind, dir, "shimback"). */
+bool shell_ensure_path(ShellKind kind, const char *dir);
 
 /* Same as shell_ensure_path, but files its marker block under `tag` instead
- * of the fixed "shimback" tag -- lets a second, independently-managed PATH
- * entry (e.g. shimback's own install directory, injected by `install`)
- * coexist in the same startup file without colliding markers with the
- * shim-dir block. */
+ * of the fixed "shimback" tag -- lets a second, independently-managed block
+ * (keyed on a different directory set) coexist in the same startup file
+ * without colliding markers with the default one. */
 bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag);
 
 /* Removes the marker block tagged `tag` (if present) from `kind`'s usual

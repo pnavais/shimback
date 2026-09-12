@@ -17,11 +17,14 @@
 #include "../shell.h"
 #include "../util.h"
 
-/* Must match add.c's/init.c's default tag and install.c's INSTALL_TAG --
- * shimback never writes any other marker block, so these two cover
- * everything `--full` needs to clean up. */
+/* The single tag every command shares (add/init/install all merge their
+ * directory into the same block -- see shell.c). "shimback-bin" was a
+ * separate tag install used before that merge existed; removing it too is
+ * a harmless no-op once install has migrated someone off it, and a real
+ * cleanup for anyone who upgrades straight to `uninstall --full` without
+ * ever re-running install first. */
 #define SHIM_DIR_TAG "shimback"
-#define INSTALL_TAG "shimback-bin"
+#define LEGACY_INSTALL_TAG "shimback-bin"
 
 static const char *USAGE = "usage: shimback uninstall [--prefix <dir>] [--full]\n";
 
@@ -81,7 +84,7 @@ static void remove_path_blocks(void) {
     for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
         if (shell_is_installed(kinds[i])) {
             shell_remove_path_tagged(kinds[i], SHIM_DIR_TAG);
-            shell_remove_path_tagged(kinds[i], INSTALL_TAG);
+            shell_remove_path_tagged(kinds[i], LEGACY_INSTALL_TAG);
         }
     }
 }
