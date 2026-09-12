@@ -4,14 +4,10 @@
  * add.c). */
 #include "add_wizard.h"
 
-#include <dirent.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 #include "../paths.h"
 #include "../tui.h"
@@ -272,172 +268,6 @@ static void pre_seed(WizardState *st, const WizardSeed *seed, History *hist) {
     }
 }
 
-/* ---- fzf integration (best-effort; a no-op wherever fzf isn't found) ---- */
-
-static char *build_temp_path(const char *suffix) {
-    const char *tmpdir = getenv("TMPDIR");
-    if (!tmpdir || tmpdir[0] == '\0') {
-        tmpdir = "/tmp";
-    }
-    return path_join(tmpdir, suffix);
-}
-
-/* Launches `fzf` interactively against `candidates`, via temp files (not
- * live pipes -- a large PATH-executable candidate list could otherwise
- * fill a pipe buffer and deadlock against a child that hasn't started
- * reading yet) for its stdin/stdout; fzf manages /dev/tty directly for its
- * own UI regardless. Returns the selected line (trimmed), or NULL if
- * nothing was selected (fzf not found, Esc inside fzf, or any I/O
- * failure). */
-static char *run_fzf(const char *const *candidates, size_t count, const char *prompt) {
-    char *fzf_path = path_search("fzf", NULL, NULL);
-    if (!fzf_path) {
-        return NULL;
-    }
-
-    char *in_path = build_temp_path("shimback_fzf_in_XXXXXX");
-    char *out_path = build_temp_path("shimback_fzf_out_XXXXXX");
-    int in_fd = mkstemp(in_path);
-    int out_fd = in_fd >= 0 ? mkstemp(out_path) : -1;
-    char *result = NULL;
-
-    if (in_fd >= 0 && out_fd >= 0) {
-        for (size_t i = 0; i < count; i++) {
-            dprintf(in_fd, "%s\n", candidates[i]);
-        }
-        lseek(in_fd, 0, SEEK_SET);
-
-        pid_t pid = fork();
-        if (pid == 0) {
-            dup2(in_fd, STDIN_FILENO);
-            dup2(out_fd, STDOUT_FILENO);
-            close(in_fd);
-            close(out_fd);
-            execl(fzf_path, fzf_path, "--height=~40%", "--reverse", "--prompt", prompt,
-                  (char *)NULL);
-            _exit(127);
-        } else if (pid > 0) {
-            int status;
-            waitpid(pid, &status, 0);
-
-            /* fzf saves/restores /dev/tty's termios itself around its own
-             * run, but re-assert our own raw mode defensively before the
-             * wizard's read loop resumes. */
-            tui_raw_mode_enter();
-
-            char buf[4096];
-            lseek(out_fd, 0, SEEK_SET);
-            ssize_t n = read(out_fd, buf, sizeof(buf) - 1);
-            if (n > 0) {
-                buf[n] = '\0';
-                char *newline = strchr(buf, '\n');
-                if (newline) {
-                    *newline = '\0';
-                }
-                if (buf[0] != '\0') {
-                    result = xstrdup(buf);
-                }
-            }
-        }
-    }
-
-    if (in_fd >= 0) {
-        close(in_fd);
-    }
-    if (out_fd >= 0) {
-        close(out_fd);
-    }
-    unlink(in_path);
-    unlink(out_path);
-    free(in_path);
-    free(out_path);
-    free(fzf_path);
-    return result;
-}
-
-/* Whether fzf is worth advertising on the current page at all -- checked
- * once per frame so the render can show a prominent, dedicated hint (not
- * just a footer mention easy to miss) wherever Tab actually does something. */
-static bool fzf_available(void) {
-    char *p = path_search("fzf", NULL, NULL);
-    bool found = p != NULL;
-    free(p);
-    return found;
-}
-
-static int fzf_pick_policy(void) {
-    char *picked = run_fzf(POLICY_NAMES, 5, "policy> ");
-    if (!picked) {
-        return -1;
-    }
-    int idx = -1;
-    for (int i = 0; i < 5; i++) {
-        if (strcmp(picked, POLICY_NAMES[i]) == 0) {
-            idx = i;
-            break;
-        }
-    }
-    free(picked);
-    return idx;
-}
-
-static void collect_dedup(StrVec *out, const char *full_path) {
-    for (size_t i = 0; i < out->count; i++) {
-        if (strcmp(out->items[i], full_path) == 0) {
-            return;
-        }
-    }
-    strvec_push(out, xstrdup(full_path));
-}
-
-/* Every regular, executable file found by scanning each directory on
- * $PATH, deduplicated by full path -- the candidate list for the wizard's
- * fzf-based binary picker. Silently skips directories it can't open,
- * mirroring how a shell tolerates a bogus PATH entry. */
-static StrVec list_path_executables(void) {
-    StrVec out;
-    strvec_init(&out);
-    const char *path_env = getenv("PATH");
-    if (!path_env) {
-        return out;
-    }
-    char *copy = xstrdup(path_env);
-    char *saveptr = NULL;
-    for (char *dir = strtok_r(copy, ":", &saveptr); dir != NULL;
-         dir = strtok_r(NULL, ":", &saveptr)) {
-        DIR *d = opendir(dir);
-        if (!d) {
-            continue;
-        }
-        struct dirent *ent;
-        while ((ent = readdir(d)) != NULL) {
-            if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
-                continue;
-            }
-            char *full = path_join(dir, ent->d_name);
-            struct stat st;
-            if (stat(full, &st) == 0 && S_ISREG(st.st_mode) && access(full, X_OK) == 0) {
-                collect_dedup(&out, full);
-            }
-            free(full);
-        }
-        closedir(d);
-    }
-    free(copy);
-    return out;
-}
-
-static char *fzf_pick_binary(void) {
-    StrVec execs = list_path_executables();
-    if (execs.count == 0) {
-        strvec_free(&execs);
-        return NULL;
-    }
-    char *picked = run_fzf((const char *const *)execs.items, execs.count, "binary> ");
-    strvec_free(&execs);
-    return picked;
-}
-
 /* ---- rendering ---- */
 
 static void print_breadcrumb(const WizardState *st, const History *hist, size_t hist_pos,
@@ -522,24 +352,21 @@ static void print_list_page(bool colorize, const char *label, const StrVec *list
  * leaves the terminal's own cursor wherever the last printf happened to end
  * up -- typically down in the footer, nowhere near the actual input. Since
  * the exact shape of everything printed above the input line is fully
- * determined by (hist_pos, page, whether the fzf hint line applies, and --
- * for the list pages -- how many items are already accumulated), the input
- * line's row can be computed analytically instead of tracking output as
- * it's printed. Returns 0 for PAGE_POLICY, which has no text input at all
- * (its own "> " marker already shows focus; the caller hides the terminal
- * cursor for it instead). */
-static size_t input_row(const WizardState *st, size_t hist_pos, PageId page, bool fzf_hint) {
+ * determined by (hist_pos, page, and -- for the list pages -- how many
+ * items are already accumulated), the input line's row can be computed
+ * analytically instead of tracking output as it's printed. Returns 0 for
+ * PAGE_POLICY, which has no text input at all (its own "> " marker already
+ * shows focus; the caller hides the terminal cursor for it instead). */
+static size_t input_row(const WizardState *st, size_t hist_pos, PageId page) {
     size_t row = 2; /* header line + the blank line under it */
     row += hist_pos;
     if (hist_pos > 0) {
         row += 1; /* blank line under the breadcrumb */
     }
     switch (page) {
+        case PAGE_NAME:
         case PAGE_SOURCE:
         case PAGE_FALLBACK:
-            /* one header line, an optional fzf-hint line, then the input line */
-            return row + 2 + (fzf_hint ? 1 : 0);
-        case PAGE_NAME:
         case PAGE_STRIP_MATCHED:
         case PAGE_DIAGNOSTIC:
             return row + 2; /* one header line, then the input line */
@@ -563,37 +390,25 @@ static size_t input_row(const WizardState *st, size_t hist_pos, PageId page, boo
  * place the user is actually typing. PAGE_POLICY has no text input, so its
  * cursor is hidden instead of parked somewhere meaningless. */
 static void position_cursor(const WizardState *st, size_t hist_pos, PageId page,
-                             const char *input, bool fzf_hint) {
+                             const char *input) {
     if (page == PAGE_POLICY) {
         fputs("\x1b[?25l", stdout);
         return;
     }
-    size_t row = input_row(st, hist_pos, page, fzf_hint);
+    size_t row = input_row(st, hist_pos, page);
     /* 1-indexed, right after the bar prefix + "> " + input. */
     size_t col = BAR_PREFIX_COLS + 3 + strlen(input);
     printf("\x1b[?25h\x1b[%zu;%zuH", row, col);
 }
 
-/* The fzf hint is deliberately its own bar line, not a footer aside -- Tab
- * is easy to miss buried among four other key hints in one line, and this
- * is the one feature here that isn't available to everyone. */
-static void print_fzf_hint(bool colorize, const char *what) {
-    bar_line(colorize, "%s(fzf detected -- press Tab to fuzzy-pick %s)%s",
-             colorize ? ANSI_CYAN : "", what, colorize ? ANSI_RESET : "");
-}
-
 static void render_page(const WizardState *st, const History *hist, size_t hist_pos, PageId page,
                          const char *input, int policy_highlight, const char *error_msg) {
     bool colorize = stdout_is_color();
-    bool fzf_on = fzf_available();
     const char *hdr = colorize ? ANSI_BOLD ANSI_YELLOW : "";
     const char *reset = colorize ? ANSI_RESET : "";
     const char *dim = colorize ? ANSI_DIM : "";
     const char *err_color = colorize ? ANSI_BOLD ANSI_RED : "";
     const char *hl_color = colorize ? ANSI_BOLD ANSI_GREEN : "";
-    /* Only PAGE_POLICY/PAGE_SOURCE/PAGE_FALLBACK actually wire up a Tab
-     * handler (see run_add_wizard) -- the hint only makes sense there. */
-    bool fzf_hint = fzf_on && (page == PAGE_POLICY || page == PAGE_SOURCE || page == PAGE_FALLBACK);
 
     tui_clear_screen();
     printf("%sshimback add -- interactive wizard%s\n\n", hdr, reset);
@@ -610,9 +425,6 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
             break;
         case PAGE_POLICY:
             bar_line(colorize, "%sPolicy:%s", hdr, reset);
-            if (fzf_hint) {
-                print_fzf_hint(colorize, "a policy");
-            }
             for (int i = 0; i < 5; i++) {
                 bool hl = (i == policy_highlight);
                 if (hl) {
@@ -629,9 +441,6 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
                      "%sSource command%s %s(optional -- blank means \"auto\", resolved from "
                      "$PATH at run time)%s:",
                      hdr, reset, dim, reset);
-            if (fzf_hint) {
-                print_fzf_hint(colorize, "a binary on $PATH");
-            }
             bar_line(colorize, "> %s", input);
             break;
         case PAGE_FALLBACK:
@@ -641,9 +450,6 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
                          hdr, reset, dim, reset);
             } else {
                 bar_line(colorize, "%sFallback command:%s", hdr, reset);
-            }
-            if (fzf_hint) {
-                print_fzf_hint(colorize, "a binary on $PATH");
             }
             bar_line(colorize, "> %s", input);
             break;
@@ -691,14 +497,9 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
     }
 
     printf("\n%senter confirm & continue  \xe2\x80\xa2  \xe2\x86\x90 back  \xe2\x80\xa2  "
-           "\xe2\x86\x92 forward",
-           dim);
-    if (fzf_hint) {
-        printf("  \xe2\x80\xa2  %stab fzf%s", colorize ? ANSI_BOLD ANSI_CYAN : "",
-               colorize ? ANSI_RESET ANSI_DIM : "");
-    }
-    printf("  \xe2\x80\xa2  esc/^c abort%s\n", reset);
-    position_cursor(st, hist_pos, page, input, fzf_hint);
+           "\xe2\x86\x92 forward  \xe2\x80\xa2  esc/^c abort%s\n",
+           dim, reset);
+    position_cursor(st, hist_pos, page, input);
     fflush(stdout);
 }
 
@@ -823,13 +624,6 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
                 policy_highlight = (policy_highlight + 1) % 5;
                 continue;
             }
-            if (key.type == TUI_KEY_TAB) {
-                int picked = fzf_pick_policy();
-                if (picked >= 0) {
-                    policy_highlight = picked;
-                }
-                continue;
-            }
             if (key.type == TUI_KEY_ENTER) {
                 Policy new_policy = (Policy)policy_highlight;
                 bool changed = st.policy_set && new_policy != st.policy;
@@ -843,16 +637,6 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
                     done = true;
                 }
                 continue;
-            }
-            continue;
-        }
-
-        if ((page == PAGE_SOURCE || page == PAGE_FALLBACK) && key.type == TUI_KEY_TAB) {
-            char *picked = fzf_pick_binary();
-            if (picked) {
-                snprintf(input, sizeof(input), "%s", picked);
-                input_len = strlen(input);
-                free(picked);
             }
             continue;
         }

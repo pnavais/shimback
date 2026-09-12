@@ -75,9 +75,6 @@ TuiKey tui_read_key(void) {
     if (c == 0x7f || c == 0x08) {
         return (TuiKey){.type = TUI_KEY_BACKSPACE, .ch = 0};
     }
-    if (c == '\t') {
-        return (TuiKey){.type = TUI_KEY_TAB, .ch = 0};
-    }
     if (c == 0x03) { /* Ctrl-C, read as a plain byte since ISIG is off */
         return (TuiKey){.type = TUI_KEY_ABORT, .ch = 0};
     }

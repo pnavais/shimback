@@ -141,6 +141,45 @@ assert_contains "did-you-mean: hint line comes second" "$hint_line" "did you mea
 "$SHIMBACK" rm rmtool >/dev/null
 assert_not_contains "rm: removed like remove would" "$("$SHIMBACK" list)" "rmtool"
 
+# --- -y auto-removes when the typo has exactly one unique close match ---
+"$SHIMBACK" add sed -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+outy="$("$SHIMBACK" remove -y shed)"
+assert_contains "remove -y: reports the auto-picked match" "$outy" \
+    "removing closest match 'sed' instead"
+assert_contains "remove -y: actually removed it" "$outy" "removed 'sed'"
+assert_not_contains "remove -y: gone from config" "$("$SHIMBACK" list)" "sed"
+
+# --- --yes is the long form of -y ---
+"$SHIMBACK" add sed -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+"$SHIMBACK" remove --yes shed >/dev/null
+assert_not_contains "remove --yes: gone from config" "$("$SHIMBACK" list)" "sed"
+
+# --- -y does NOT auto-remove when two configured names tie for closest
+# (an ambiguous typo target) -- falls back to just the plain hint ---
+"$SHIMBACK" add sed -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+"$SHIMBACK" add sad -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+outtie="$("$SHIMBACK" remove -y sxd 2>&1)"
+code_tie=$?
+if [ "$code_tie" -eq 0 ]; then
+    fail "remove -y: an ambiguous tie should not auto-remove anything"
+fi
+assert_not_contains "remove -y: no auto-pick message on a tie" "$outtie" "removing closest match"
+assert_contains "remove -y: sed still configured after an ambiguous tie" \
+    "$("$SHIMBACK" list)" "sed"
+assert_contains "remove -y: sad still configured after an ambiguous tie" \
+    "$("$SHIMBACK" list)" "sad"
+"$SHIMBACK" remove sed >/dev/null
+"$SHIMBACK" remove sad >/dev/null
+
+# --- -y with a genuinely unrelated name still just fails, same as without -y ---
+"$SHIMBACK" remove -y totally-unrelated-name-xyz >/dev/null 2>"$SANDBOX/err"
+code_unrelated=$?
+if [ "$code_unrelated" -eq 0 ]; then
+    fail "remove -y: an unrelated name should still fail"
+fi
+assert_contains "remove -y: plain error for an unrelated name" "$(cat "$SANDBOX/err")" \
+    "no shim configured"
+
 # --- when ~/.zshrc.local exists, the PATH block goes there instead of
 # ~/.zshrc (most zsh setups source .zshrc.local from .zshrc for
 # machine-local overrides kept out of a dotfiles repo) ---

@@ -1,6 +1,7 @@
 #include "commands.h"
 
 #include <errno.h>
+#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,13 +13,33 @@
 #include "../suggest.h"
 #include "../util.h"
 
+static const char *USAGE = "usage: shimback remove [-y] <name>\n";
+
 int cmd_remove(int argc, char **argv) {
-    if (argc < 2) {
-        die("remove: missing shim name (usage: shimback remove <name>)");
+    bool auto_yes = false;
+
+    static struct option long_opts[] = {
+        {"yes", no_argument, 0, 'y'},
+        {0, 0, 0, 0},
+    };
+
+    int opt;
+    while ((opt = getopt_long(argc, argv, "y", long_opts, NULL)) != -1) {
+        switch (opt) {
+            case 'y': auto_yes = true; break;
+            default:
+                fprintf(stderr, "%s", USAGE);
+                return 1;
+        }
     }
-    const char *name = argv[1];
-    if (argc > 2) {
-        die("remove: unexpected extra argument '%s'", argv[2]);
+
+    if (optind >= argc) {
+        fprintf(stderr, "%s", USAGE);
+        die("remove: missing shim name");
+    }
+    const char *name = argv[optind++];
+    if (optind < argc) {
+        die("remove: unexpected extra argument '%s'", argv[optind]);
     }
 
     char *cfg_path = config_file_path();
@@ -30,20 +51,40 @@ int cmd_remove(int argc, char **argv) {
     }
 
     if (!config_find(&cfg, name)) {
-        fprintf(stderr, "shimback: remove: no shim configured for '%s'\n", name);
+        const char **candidates = NULL;
         if (cfg.count > 0) {
-            const char **candidates = xmalloc(cfg.count * sizeof(char *));
+            candidates = xmalloc(cfg.count * sizeof(char *));
             for (size_t i = 0; i < cfg.count; i++) {
                 candidates[i] = cfg.shims[i].name;
             }
-            char *suggestion = fuzzy_suggest(name, candidates, cfg.count);
-            free(candidates);
-            if (suggestion) {
-                print_suggestion_hint(suggestion);
-                free(suggestion);
+        }
+
+        /* -y only ever auto-applies a suggestion that's the UNIQUE closest
+         * match (see fuzzy_suggest_unique) -- if two configured names are
+         * equally plausible typo targets, picking one without asking would
+         * be too risky for a destructive action. */
+        if (auto_yes && candidates) {
+            char *unique = fuzzy_suggest_unique(name, candidates, cfg.count);
+            if (unique) {
+                printf("shimback: '%s' not found -- removing closest match '%s' instead\n", name,
+                       unique);
+                name = unique;
             }
         }
-        exit(1);
+
+        if (!config_find(&cfg, name)) {
+            fprintf(stderr, "shimback: remove: no shim configured for '%s'\n", name);
+            if (candidates) {
+                char *hint = fuzzy_suggest(name, candidates, cfg.count);
+                if (hint) {
+                    print_suggestion_hint(hint);
+                    free(hint);
+                }
+            }
+            free(candidates);
+            exit(1);
+        }
+        free(candidates);
     }
 
     char *shim_dir = shim_bin_dir();
