@@ -20,7 +20,8 @@
 #define INSTALL_TAG "shimback-bin"
 #define MAN_PAGE_NAME "shimback.1"
 
-static const char *USAGE = "usage: shimback install [--prefix <dir>]\n";
+static const char *USAGE =
+    "usage: shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]\n";
 
 /* Downloads `url` to `dest` via `curl` (its resolved absolute path), atomically
  * via a temp-file-plus-rename in `dest`'s own directory. Returns false on any
@@ -97,18 +98,30 @@ static void install_man_page(const char *prefix, const char *self_exe) {
     free(man_dir);
 }
 
+/* Applies both PATH blocks (shim dir + this binary's own dir) for `kind`. */
+static void ensure_shell_path(ShellKind kind, const char *shim_dir, const char *bin_dir) {
+    shell_ensure_path(kind, shim_dir);
+    shell_ensure_path_tagged(kind, bin_dir, INSTALL_TAG);
+}
+
 int cmd_install(int argc, char **argv) {
     const char *prefix_arg = NULL;
+    const char *shell_arg = NULL;
+    bool all_shells = false;
 
     static struct option long_opts[] = {
         {"prefix", required_argument, 0, 'p'},
+        {"shell", required_argument, 0, 's'},
+        {"all", no_argument, 0, 'a'},
         {0, 0, 0, 0},
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "p:", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:s:a", long_opts, NULL)) != -1) {
         switch (opt) {
             case 'p': prefix_arg = optarg; break;
+            case 's': shell_arg = optarg; break;
+            case 'a': all_shells = true; break;
             default:
                 fprintf(stderr, "%s", USAGE);
                 return 1;
@@ -116,6 +129,34 @@ int cmd_install(int argc, char **argv) {
     }
     if (optind < argc) {
         die("install: unexpected extra argument '%s'", argv[optind]);
+    }
+    if (shell_arg && all_shells) {
+        die("install: --shell and --all are mutually exclusive");
+    }
+
+    /* Parse and validate --shell up front, before any filesystem writes --
+     * a typo here shouldn't leave a half-finished install (binary copied,
+     * then a die() on a bad shell name). */
+    ShellKind selected_shells[8];
+    size_t selected_count = 0;
+    if (shell_arg) {
+        char *copy = xstrdup(shell_arg);
+        char *saveptr = NULL;
+        char *tok = strtok_r(copy, ",", &saveptr);
+        while (tok) {
+            if (selected_count >= sizeof(selected_shells) / sizeof(selected_shells[0])) {
+                die("install: too many --shell values");
+            }
+            if (!shell_kind_from_name(tok, &selected_shells[selected_count])) {
+                die("install: unknown shell '%s' (expected zsh, bash, or fish)", tok);
+            }
+            selected_count++;
+            tok = strtok_r(NULL, ",", &saveptr);
+        }
+        free(copy);
+        if (selected_count == 0) {
+            die("install: --shell requires at least one shell name");
+        }
     }
 
     char *prefix;
@@ -145,15 +186,28 @@ int cmd_install(int argc, char **argv) {
 
     install_man_page(prefix, self_exe);
 
-    ShellKind shell = detect_current_shell();
     /* Ensures both PATH entries are set up even on a totally fresh install,
      * before any `add` has ever run: this binary's own location, and the
      * shim directory itself (normally add/init's job) -- redundant, and a
-     * harmless no-op, if add/init already wrote it. */
+     * harmless no-op, if add/init already wrote it. Defaults to the current
+     * shell only; --shell/--all broaden that, matching `init`'s "every
+     * installed shell" semantics for --all. */
     char *shim_dir = shim_bin_dir();
-    shell_ensure_path(shell, shim_dir);
+    if (all_shells) {
+        ShellKind kinds[] = {SHELL_ZSH, SHELL_BASH, SHELL_FISH};
+        for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+            if (shell_is_installed(kinds[i])) {
+                ensure_shell_path(kinds[i], shim_dir, bin_dir);
+            }
+        }
+    } else if (selected_count > 0) {
+        for (size_t i = 0; i < selected_count; i++) {
+            ensure_shell_path(selected_shells[i], shim_dir, bin_dir);
+        }
+    } else {
+        ensure_shell_path(detect_current_shell(), shim_dir, bin_dir);
+    }
     free(shim_dir);
-    shell_ensure_path_tagged(shell, bin_dir, INSTALL_TAG);
     printf("Restart your shell (or re-source its startup file) for the PATH change to take "
            "effect.\n");
 

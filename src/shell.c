@@ -46,6 +46,22 @@ const char *shell_kind_name(ShellKind kind) {
     }
 }
 
+bool shell_kind_from_name(const char *name, ShellKind *out) {
+    if (strcmp(name, "zsh") == 0) {
+        *out = SHELL_ZSH;
+        return true;
+    }
+    if (strcmp(name, "bash") == 0) {
+        *out = SHELL_BASH;
+        return true;
+    }
+    if (strcmp(name, "fish") == 0) {
+        *out = SHELL_FISH;
+        return true;
+    }
+    return false;
+}
+
 static char *read_file_or_empty(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) {

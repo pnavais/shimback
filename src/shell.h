@@ -19,6 +19,11 @@ bool shell_is_installed(ShellKind kind);
 
 const char *shell_kind_name(ShellKind kind);
 
+/* Parses "zsh"/"bash"/"fish" (case-sensitive, matching shell_kind_name's
+ * output) into *out. Returns false, leaving *out untouched, for anything
+ * else -- including "unknown", which is not a user-facing shell name. */
+bool shell_kind_from_name(const char *name, ShellKind *out);
+
 /* Ensures `shim_dir` is prepended to PATH for `kind`, via an idempotent
  * marker-block injection into that shell's usual startup file(s). For
  * SHELL_FISH, prints a note and touches nothing (unsupported in v0.1.0).
