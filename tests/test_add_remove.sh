@@ -141,12 +141,13 @@ assert_contains "did-you-mean: hint line comes second" "$hint_line" "did you mea
 "$SHIMBACK" rm rmtool >/dev/null
 assert_not_contains "rm: removed like remove would" "$("$SHIMBACK" list)" "rmtool"
 
-# --- -y auto-removes when the typo has exactly one unique close match ---
+# --- -y auto-removes when the typo has exactly one unique close match,
+# with no intermediate "not found, removing X instead" noise -- just the
+# final removal confirmation, naming the shim that was actually removed ---
 "$SHIMBACK" add sed -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
 outy="$("$SHIMBACK" remove -y shed)"
-assert_contains "remove -y: reports the auto-picked match" "$outy" \
-    "removing closest match 'sed' instead"
-assert_contains "remove -y: actually removed it" "$outy" "removed 'sed'"
+assert_eq "remove -y: prints only the final removal confirmation" \
+    "shimback: removed 'sed'" "$outy"
 assert_not_contains "remove -y: gone from config" "$("$SHIMBACK" list)" "sed"
 
 # --- --yes is the long form of -y ---

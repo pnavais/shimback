@@ -174,7 +174,12 @@ The same hint appears for an unrecognized top\-level command.
 skips the hint and acts on it automatically, but only when unambiguous:
 if exactly one configured name is the closest match, that one is removed
 instead; if two or more tie for closest, it falls back to the plain
-error and hint, same as without the flag.
+error and hint, same as without the flag. A successful removal always
+prints
+.IR "removed '<name>'" ,
+in green when stdout is a terminal and
+.B NO_COLOR
+is unset, naming whichever shim actually got removed.
 .RS
 .PP
 Example:
