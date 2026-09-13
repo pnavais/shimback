@@ -9,3 +9,4 @@ CTestTestfile.cmake
 Testing/
 compile_commands.json
 *.dSYM/
+.DS_Store
