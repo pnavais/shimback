@@ -452,6 +452,13 @@ int cmd_doctor(int argc, char **argv) {
                          "policy is route-args but no --route-arg is configured -- this shim "
                          "will always run its source");
         }
+        if (e->policy == POLICY_SPLIT_ARGS &&
+            (e->source_route_arg_count == 0 || e->fallback_route_arg_count == 0)) {
+            report_fail(&issues,
+                         "policy is split-args but needs at least one --split-source-arg and "
+                         "one --split-fallback-arg -- this shim can never fully match either "
+                         "side");
+        }
         if (e->policy == POLICY_REWRITE && e->rewrite_from_count == 0) {
             report_fail(&issues,
                          "policy is rewrite but no --rewrite rule is configured -- this shim "

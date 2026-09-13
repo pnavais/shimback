@@ -35,8 +35,8 @@ pair of commands.
    **policy** — see below), `shimback` transparently re-runs the same
    arguments against the **fallback** command instead. If the source
    succeeds, its output is passed through as if `shimback` weren't there at
-   all. (`route-args` and `rewrite` are exceptions to this "try source,
-   maybe fall back" shape — see below.)
+   all. (`route-args`, `split-args`, and `rewrite` are exceptions to this
+   "try source, maybe fall back" shape — see below.)
 
 A failed trial run of the source command is designed to be **invisible**:
 its stdout and stderr are captured, not streamed live, and are discarded
@@ -49,9 +49,10 @@ diagnostic (see `diagnostic` below).
 ```
 shimback add <name> [-s <source>] [--source-arg <arg>]...
                      -f <fallback> [--fallback-arg <arg>]...
-                     [--policy exit-code|heuristic|exit-code-match|route-args|rewrite]
+                     [--policy exit-code|heuristic|exit-code-match|route-args|rewrite|split-args]
                      [--error-pattern <p>]... [--exit-code <code>]...
                      [--route-arg <arg>]... [--strip-matched-args]
+                     [--split-source-arg <arg>]... [--split-fallback-arg <arg>]...
                      [--rewrite <from>=<to>]... [--diagnostic] [--force]
 shimback remove [-y] <name>
 shimback init
@@ -160,20 +161,23 @@ shimback add sed -f /usr/bin/sed
 
 Run `add` at an interactive terminal with required information missing
 (no name at all, or a name but no fallback, or a policy that needs
-`--error-pattern`/`--exit-code`/`--route-arg`/`--rewrite` and doesn't have
-one) and, instead of failing, a small step-by-step wizard walks you through
-filling it in: name, policy (picked from a list), source, source's extra
-args, fallback, fallback's extra args, then whatever the chosen policy
-still needs, then the diagnostic flag. The two extra-args pages are
-optional list pages, same as the policy-specific ones, except blank Enter
-finishes them with zero items just as happily as with several — and the
-fallback-args page is skipped entirely (not just left blank) when
-fallback itself was left blank, since there'd be nothing for it to attach
-to. Whatever was already given on the command line (e.g. `shimback add
-mytool -s /bin/ls`) is skipped straight past — the wizard starts right at
-the first page that's actually missing (`fallback`, in that example) —
-but every earlier page, including the ones filled in from the command
-line, is still reachable and editable.
+`--error-pattern`/`--exit-code`/`--route-arg`/(`--split-source-arg` and
+`--split-fallback-arg`)/`--rewrite` and doesn't have it) and, instead of
+failing, a small step-by-step wizard walks you through filling it in:
+name, policy (picked from a list), source, source's extra args, fallback,
+fallback's extra args, then whatever the chosen policy still needs (for
+`split-args`, that's two required list pages, one per side), then the
+diagnostic flag. The two extra-args pages are optional list pages, unlike
+the policy-specific ones (which, like `--route-arg`/`--split-source-arg`/
+`--split-fallback-arg` themselves, need at least one entry to finish) —
+blank Enter finishes an optional list with zero items just as happily as
+with several — and the fallback-args page is skipped entirely (not just
+left blank) when fallback itself was left blank, since there'd be nothing
+for it to attach to. Whatever was already given on the command line (e.g.
+`shimback add mytool -s /bin/ls`) is skipped straight past — the wizard
+starts right at the first page that's actually missing (`fallback`, in
+that example) — but every earlier page, including the ones filled in from
+the command line, is still reachable and editable.
 
 - **Enter** confirms the current page and moves to the next; on an optional
   field (source, or fallback under `--policy rewrite`), pressing it with
@@ -268,7 +272,7 @@ When stdout is a terminal (and [`NO_COLOR`](https://no-color.org/) isn't
 set): shim names are bold cyan; an explicit source is green and `auto` is
 dimmed; the fallback path is blue; the policy column is colored by kind
 (`heuristic` yellow, `exit-code-match` magenta, `route-args` cyan,
-`rewrite` green, `exit-code` uncolored as the baseline); `false`
+`rewrite` green, `split-args` red, `exit-code` uncolored as the baseline); `false`
 diagnostics are dimmed and `true` ones are green; column headers are bold
 yellow. Piping the output (e.g. to a file or another command) disables
 color automatically.
@@ -279,7 +283,8 @@ row: `source_args`/`fallback_args` (see `add`, above — independent of
 policy, so these can show up for any shim), then whatever's
 policy-specific — `error_patterns` for `heuristic`, the configured codes
 for `exit-code-match`, `route_args` and `strip_matched_args` for
-`route-args`, and each `<from> -> <to>` pair for `rewrite`. A shim with
+`route-args`, `source_route_args`/`fallback_route_args`/`strip_matched_args`
+for `split-args`, and each `<from> -> <to>` pair for `rewrite`. A shim with
 none of the above configured has nothing extra to show and gets no
 additional lines:
 
@@ -454,6 +459,34 @@ Safe to re-run: nothing left to remove is just reported as already gone.
   instead. Pass `--strip-matched-args` to drop the matched argument(s)
   before forwarding the rest — with it set, `cools x` above would run
   `eza` with no arguments at all.
+- **`split-args`**: also decides up front from the arguments alone rather
+  than reacting to failure, but two-sided: source and fallback each get
+  their *own* set of discriminating args (`--split-source-arg` /
+  `--split-fallback-arg`, each repeatable, at least one of each required).
+  A side only wins when *every one* of its own args is present in the
+  invocation — a full match, not just "any one of them." If both sides
+  fully match at once (one side's args are a subset of the other's), the
+  side needing *more* matched args — the more discriminating one — wins;
+  an exact tie in count favors source:
+
+  ```sh
+  shimback add release -s ./build-debug -f ./build-release \
+      --policy split-args \
+      --split-source-arg --debug --split-source-arg -g \
+      --split-fallback-arg --debug --split-fallback-arg -g --split-fallback-arg -O3
+  ```
+
+  Passing `--debug -g` matches source's two args exactly (and doesn't fully
+  match fallback's three) — source runs. Passing `--debug -g -O3` fully
+  matches *both* — fallback's three matched args outweigh source's two, so
+  fallback runs instead. If neither side fully matches (e.g. just `-g`
+  alone), there's nothing to decide up front, so `split-args` falls back to
+  the plain `exit-code` behavior instead: run source, and fall back on any
+  failure. Whichever side actually wins runs directly, with live/inherited
+  stdio (no invisible trial run) — the "neither matched" case is the only
+  one that goes through the normal captured trial run. `--strip-matched-args`
+  works the same way it does for `route-args`, removing whichever side's
+  own args actually matched before forwarding the rest.
 - **`rewrite`**: not a fallback-on-failure policy either, and unlike every
   other policy, **`-f`/`--fallback` is optional and never used** — this is
   an alias/argument-macro mechanism, not a retry mechanism. Each
@@ -474,17 +507,20 @@ Safe to re-run: nothing left to remove is just reported as already gone.
 
 > **Note:** `exit-code` is deliberately the least precise policy (any
 > failure triggers a retry) and needs no extra configuration. `heuristic`,
-> `exit-code-match`, `route-args`, and `rewrite` are more targeted — each
-> requires at least one `--error-pattern` / `--exit-code` / `--route-arg` /
+> `exit-code-match`, `route-args`, `split-args`, and `rewrite` are more
+> targeted — each requires at least one `--error-pattern` / `--exit-code` /
+> `--route-arg` / (`--split-source-arg` and `--split-fallback-arg`) /
 > `--rewrite` respectively, enforced both at `add` time and on every config
 > load, so a shim can never silently end up in a state where it's
 > configured to be selective but has nothing to select on (`shimback
 > doctor` also flags this if the config is hand-edited into that state).
 > The first three policies only ever affect *failed* runs — a source that
 > exits `0` always has its output passed through untouched, regardless of
-> policy. `route-args` and `rewrite` are the exceptions: both decide what
-> to run (or how to rewrite it) up front from the arguments alone, never
-> looking at the exit code at all.
+> policy. `route-args` and `rewrite` are unconditional exceptions: both
+> decide what to run (or how to rewrite it) up front from the arguments
+> alone, never looking at the exit code at all. `split-args` is a
+> conditional exception — up front from the arguments when one side fully
+> matches, exit-code-like otherwise.
 
 ### Diagnostics
 
@@ -529,6 +565,13 @@ fallback = "/usr/local/bin/eza"
 policy = "route-args"
 route_args = ["x"]
 strip_matched_args = true
+
+[shims.release]
+source = "./build-debug"
+fallback = "./build-release"
+policy = "split-args"
+source_route_args = ["--debug", "-g"]
+fallback_route_args = ["--debug", "-g", "-O3"]
 
 [shims.ls]
 source = "/bin/ls"

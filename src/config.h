@@ -17,8 +17,19 @@
  * corresponding rewrite_to (an alias/macro mechanism, e.g. "--full" ->
  * "-ltrah"), with live/inherited stdio. fallback is never used, and so is
  * the one policy where it's optional.
+ * POLICY_SPLIT_ARGS: also picks source or fallback up front rather than
+ * falling back on failure, but two-sided: source_route_args and
+ * fallback_route_args are separate sets, and a side only "wins" when every
+ * one of its own args is present in the invocation (a full match). If both
+ * sides fully match (one's args are a subset of the other's), the side
+ * requiring more matched args -- the more discriminating one -- wins;
+ * exactly tied counts favor source. If neither side fully matches, this
+ * behaves like POLICY_EXIT_CODE instead: run source, and on any failure,
+ * fall back. Runs with live/inherited stdio only when a side actually won
+ * outright; the "neither matched" case goes through the normal captured
+ * trial run like every fallback-on-failure policy.
  *
- * Independent of all five: source_args/fallback_args (see ShimEntry) let
+ * Independent of all six: source_args/fallback_args (see ShimEntry) let
  * any shim, under any policy, also work as a plain alias with flags baked
  * in -- e.g. source "ls" with source_args ["-ltrah"] always runs
  * "ls -ltrah <whatever else was typed>", the same way `alias cools='ls
@@ -29,6 +40,7 @@ typedef enum {
     POLICY_EXIT_CODE_MATCH,
     POLICY_ROUTE_ARGS,
     POLICY_REWRITE,
+    POLICY_SPLIT_ARGS,
 } Policy;
 
 typedef struct {
@@ -55,8 +67,16 @@ typedef struct {
     char **route_args;           /* owned array of owned strings; only meaningful for
                                    * POLICY_ROUTE_ARGS */
     size_t route_arg_count;
-    bool strip_matched_args;     /* only meaningful for POLICY_ROUTE_ARGS: remove a matched
-                                   * route arg before forwarding it to source/fallback */
+    char **source_route_args;    /* owned array of owned strings; only meaningful for
+                                   * POLICY_SPLIT_ARGS -- source's own discriminating args,
+                                   * separate from fallback_route_args below. */
+    size_t source_route_arg_count;
+    char **fallback_route_args;  /* owned array of owned strings; only meaningful for
+                                   * POLICY_SPLIT_ARGS -- fallback's own discriminating args. */
+    size_t fallback_route_arg_count;
+    bool strip_matched_args;     /* meaningful for POLICY_ROUTE_ARGS and POLICY_SPLIT_ARGS:
+                                   * remove whichever route args actually matched before
+                                   * forwarding to whichever of source/fallback won */
     char **rewrite_from;         /* owned array of owned strings; only meaningful for
                                    * POLICY_REWRITE. Parallel to rewrite_to: rewrite_from[i]
                                    * -> rewrite_to[i]. Tracked as two separate counts (not

@@ -109,6 +109,59 @@ static char **build_rewritten_argv(const ShimEntry *entry, const char *shim_name
     return out;
 }
 
+/* Builds shim_name + `extra` (baked-in args) + (forwarded args except any
+ * equal to one of `to_strip`) -- shared by POLICY_ROUTE_ARGS and
+ * POLICY_SPLIT_ARGS's strip_matched_args support: whichever route args
+ * actually decided where the invocation went are removed before forwarding,
+ * since a program that dispatches on a flag's mere presence rarely wants to
+ * also see it as a real argument. NULL-terminated, as execv expects. */
+static char **strip_matching_argv(const char *shim_name, char *const *extra, size_t extra_count,
+                                   char *const *to_strip, size_t to_strip_count, int argc,
+                                   char **argv) {
+    char **filtered = xmalloc((size_t)((size_t)argc + extra_count + 1) * sizeof(char *));
+    int fi = 0;
+    filtered[fi++] = (char *)shim_name;
+    for (size_t j = 0; j < extra_count; j++) {
+        filtered[fi++] = extra[j];
+    }
+    for (int i = 1; i < argc; i++) {
+        bool matched = false;
+        for (size_t j = 0; j < to_strip_count; j++) {
+            if (strcmp(argv[i], to_strip[j]) == 0) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            filtered[fi++] = argv[i];
+        }
+    }
+    filtered[fi] = NULL;
+    return filtered;
+}
+
+/* True if every one of `route_args` appears somewhere in argv[1..argc) --
+ * POLICY_SPLIT_ARGS's notion of a side "fully matching" the invocation. An
+ * empty `route_args` trivially "matches" anything, which is why add/config
+ * validation requires at least one entry on both sides for this policy --
+ * a side with nothing configured could otherwise never lose. */
+static bool route_args_fully_present(char *const *route_args, size_t route_arg_count, int argc,
+                                      char **argv) {
+    for (size_t j = 0; j < route_arg_count; j++) {
+        bool found = false;
+        for (int i = 1; i < argc; i++) {
+            if (strcmp(argv[i], route_args[j]) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* Runs `exe` with real inherited stdio (no capturing) -- used whenever a run
  * is meant to be the "real", user-visible attempt: the fallback, or the
  * source when it equals the fallback. */
@@ -288,25 +341,8 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         char **route_argv = matched ? fallback_argv : source_argv;
         char **filtered = NULL;
         if (entry->strip_matched_args) {
-            filtered = xmalloc((size_t)((size_t)argc + extra_count + 1) * sizeof(char *));
-            int fi = 0;
-            filtered[fi++] = (char *)shim_name;
-            for (size_t j = 0; j < extra_count; j++) {
-                filtered[fi++] = extra[j];
-            }
-            for (int i = 1; i < argc; i++) {
-                bool is_route_arg = false;
-                for (size_t j = 0; j < entry->route_arg_count; j++) {
-                    if (strcmp(argv[i], entry->route_args[j]) == 0) {
-                        is_route_arg = true;
-                        break;
-                    }
-                }
-                if (!is_route_arg) {
-                    filtered[fi++] = argv[i];
-                }
-            }
-            filtered[fi] = NULL;
+            filtered = strip_matching_argv(shim_name, extra, extra_count, entry->route_args,
+                                            entry->route_arg_count, argc, argv);
             route_argv = filtered;
         }
 
@@ -318,6 +354,57 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         run_inherited(target, route_argv, &status);
         free(filtered);
         return decode_exit_code(status);
+    }
+
+    if (entry->policy == POLICY_SPLIT_ARGS) {
+        bool source_full =
+            route_args_fully_present(entry->source_route_args, entry->source_route_arg_count,
+                                      argc, argv);
+        bool fallback_full =
+            route_args_fully_present(entry->fallback_route_args, entry->fallback_route_arg_count,
+                                      argc, argv);
+
+        bool decided = source_full || fallback_full;
+        /* Both sides fully matching means the invocation is a superset of
+         * both (one side's args are a subset of the other's, e.g. source's
+         * {-1,-2} and fallback's {-1,-2,-3} both fully match "-1 -2 -3") --
+         * the side needing more matched args is the more discriminating
+         * one and wins; an exact tie in count favors source. */
+        bool use_fallback =
+            fallback_full && (!source_full || entry->fallback_route_arg_count >
+                                                   entry->source_route_arg_count);
+
+        if (decided) {
+            const char *target = use_fallback ? resolved_fallback : resolved_source;
+            char *const *extra = use_fallback ? entry->fallback_args : entry->source_args;
+            size_t extra_count = use_fallback ? entry->fallback_arg_count : entry->source_arg_count;
+            char *const *matched_route_args =
+                use_fallback ? entry->fallback_route_args : entry->source_route_args;
+            size_t matched_route_arg_count =
+                use_fallback ? entry->fallback_route_arg_count : entry->source_route_arg_count;
+
+            char **split_argv = use_fallback ? fallback_argv : source_argv;
+            char **filtered = NULL;
+            if (entry->strip_matched_args) {
+                filtered = strip_matching_argv(shim_name, extra, extra_count, matched_route_args,
+                                                matched_route_arg_count, argc, argv);
+                split_argv = filtered;
+            }
+
+            if (use_fallback && entry->diagnostic) {
+                warn("'%s': split-args matched fallback's route args; running fallback %s",
+                     shim_name, resolved_fallback);
+            }
+
+            int status;
+            run_inherited(target, split_argv, &status);
+            free(filtered);
+            return decode_exit_code(status);
+        }
+        /* Neither side fully matched -- falls through to the normal
+         * captured trial/fallback flow below, which treats POLICY_SPLIT_ARGS
+         * like POLICY_EXIT_CODE (see the should_fallback switch further
+         * down): run source, fall back on any failure. */
     }
 
     /* Only truly a no-op (and so only worth short-circuiting) when
@@ -352,7 +439,10 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     }
 
     bool should_fallback;
-    if (entry->policy == POLICY_EXIT_CODE) {
+    if (entry->policy == POLICY_EXIT_CODE || entry->policy == POLICY_SPLIT_ARGS) {
+        /* SPLIT_ARGS only reaches here when neither side fully matched the
+         * invocation (see above) -- from here on it behaves exactly like
+         * EXIT_CODE: fall back on any failure. */
         should_fallback = true;
     } else if (entry->policy == POLICY_EXIT_CODE_MATCH) {
         should_fallback = false;

@@ -23,6 +23,8 @@ typedef struct {
     size_t exit_code_count;
     StrVec *route_args;
     bool strip_matched_args;
+    StrVec *split_source_args;
+    StrVec *split_fallback_args;
     StrVec *rewrite_from;
     StrVec *rewrite_to;
     bool diagnostic;
@@ -42,6 +44,8 @@ typedef struct {
     size_t exit_code_count;
     StrVec route_args;
     bool strip_matched_args;
+    StrVec split_source_args;
+    StrVec split_fallback_args;
     StrVec rewrite_from;
     StrVec rewrite_to;
     bool diagnostic;

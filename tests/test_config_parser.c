@@ -79,6 +79,21 @@ static void test_round_trip(void) {
     cfg.shims[cagao_idx].source_args[1] = xstrdup("-a");
     cfg.shims[cagao_idx].source_arg_count = 2;
 
+    size_t split_idx = config_upsert(&cfg, "spool");
+    cfg.shims[split_idx].source = xstrdup("/bin/foo");
+    cfg.shims[split_idx].fallback = xstrdup("/bin/bar");
+    cfg.shims[split_idx].policy = POLICY_SPLIT_ARGS;
+    cfg.shims[split_idx].strip_matched_args = true;
+    cfg.shims[split_idx].source_route_args = xmalloc(2 * sizeof(char *));
+    cfg.shims[split_idx].source_route_args[0] = xstrdup("-1");
+    cfg.shims[split_idx].source_route_args[1] = xstrdup("-2");
+    cfg.shims[split_idx].source_route_arg_count = 2;
+    cfg.shims[split_idx].fallback_route_args = xmalloc(3 * sizeof(char *));
+    cfg.shims[split_idx].fallback_route_args[0] = xstrdup("-1");
+    cfg.shims[split_idx].fallback_route_args[1] = xstrdup("-2");
+    cfg.shims[split_idx].fallback_route_args[2] = xstrdup("-3");
+    cfg.shims[split_idx].fallback_route_arg_count = 3;
+
     size_t ls_idx = config_upsert(&cfg, "ls");
     cfg.shims[ls_idx].source = xstrdup("/bin/ls");
     cfg.shims[ls_idx].fallback = NULL; /* optional, and unused, for rewrite */
@@ -102,7 +117,7 @@ static void test_round_trip(void) {
     st = config_load(path, &reloaded, errbuf, sizeof(errbuf));
     check(st == CONFIG_OK, "round-trip: config_load succeeds");
     check(reloaded.version == 1, "round-trip: version is 1");
-    check(reloaded.count == 5, "round-trip: shim count is 5");
+    check(reloaded.count == 6, "round-trip: shim count is 6");
 
     ShimEntry *sed = config_find(&reloaded, "sed");
     check(sed != NULL, "round-trip: sed entry found");
@@ -164,6 +179,24 @@ static void test_round_trip(void) {
             check_str_eq("cagao.source_args[1]", "-a", cagao->source_args[1]);
         }
         check(cagao->fallback_arg_count == 0, "cagao.fallback_arg_count == 0 (none configured)");
+    }
+
+    ShimEntry *spool = config_find(&reloaded, "spool");
+    check(spool != NULL, "round-trip: spool entry found");
+    if (spool) {
+        check(spool->policy == POLICY_SPLIT_ARGS, "spool.policy == split-args");
+        check(spool->strip_matched_args == true, "spool.strip_matched_args == true");
+        check(spool->source_route_arg_count == 2, "spool.source_route_arg_count == 2");
+        if (spool->source_route_arg_count == 2) {
+            check_str_eq("spool.source_route_args[0]", "-1", spool->source_route_args[0]);
+            check_str_eq("spool.source_route_args[1]", "-2", spool->source_route_args[1]);
+        }
+        check(spool->fallback_route_arg_count == 3, "spool.fallback_route_arg_count == 3");
+        if (spool->fallback_route_arg_count == 3) {
+            check_str_eq("spool.fallback_route_args[0]", "-1", spool->fallback_route_args[0]);
+            check_str_eq("spool.fallback_route_args[1]", "-2", spool->fallback_route_args[1]);
+            check_str_eq("spool.fallback_route_args[2]", "-3", spool->fallback_route_args[2]);
+        }
     }
 
     ShimEntry *ls = config_find(&reloaded, "ls");
@@ -231,6 +264,9 @@ static void test_validation_errors(void) {
         "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"exit-code-match\"\n";
     const char *missing_route_args =
         "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"route-args\"\n";
+    const char *missing_split_args =
+        "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"split-args\"\n"
+        "source_route_args = [\"-1\"]\n";
     const char *missing_rewrite_rules =
         "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"rewrite\"\n";
     const char *mismatched_rewrite_arrays =
@@ -273,6 +309,16 @@ static void test_validation_errors(void) {
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
     check(st == CONFIG_ERR_VALIDATION, "route-args without route_args is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(missing_split_args, 1, strlen(missing_split_args), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_VALIDATION,
+          "split-args with only source_route_args (no fallback_route_args) is rejected");
     if (st == CONFIG_OK) {
         config_free(&cfg);
     }

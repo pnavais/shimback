@@ -21,9 +21,11 @@
 static const char *USAGE =
     "usage: shimback add <name> [-s <source>] [--source-arg <arg>]...\n"
     "                    -f <fallback> [--fallback-arg <arg>]...\n"
-    "                    [--policy exit-code|heuristic|exit-code-match|route-args|rewrite]\n"
+    "                    [--policy exit-code|heuristic|exit-code-match|route-args|rewrite|\n"
+    "                              split-args]\n"
     "                    [--error-pattern <p>]... [--exit-code <code>]...\n"
     "                    [--route-arg <arg>]... [--strip-matched-args]\n"
+    "                    [--split-source-arg <arg>]... [--split-fallback-arg <arg>]...\n"
     "                    [--rewrite <from>=<to>]... [--diagnostic] [--force]\n"
     "-f/--fallback is required, except with --policy rewrite, where it's unused.\n"
     "--force allows source/fallback to point at a path (not a bare name) that doesn't\n"
@@ -33,6 +35,8 @@ static const char *USAGE =
 #define OPT_SOURCE_ARG 1001
 #define OPT_FALLBACK_ARG 1002
 #define OPT_FORCE 1003
+#define OPT_SPLIT_SOURCE_ARG 1004
+#define OPT_SPLIT_FALLBACK_ARG 1005
 
 static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
     if (*count == *cap) {
@@ -49,8 +53,9 @@ static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
 static int finish_add(const char *name, const char *source_arg, StrVec *source_args,
                        const char *fallback_arg, StrVec *fallback_args, Policy policy,
                        StrVec *patterns, int *exit_codes, size_t exit_code_count,
-                       StrVec *route_args, bool strip_matched_args, StrVec *rewrite_from,
-                       StrVec *rewrite_to, bool diagnostic, bool force) {
+                       StrVec *route_args, bool strip_matched_args, StrVec *split_source_args,
+                       StrVec *split_fallback_args, StrVec *rewrite_from, StrVec *rewrite_to,
+                       bool diagnostic, bool force) {
     if (name[0] == '\0' || strchr(name, '/') != NULL || strcmp(name, "shimback") == 0) {
         die("add: invalid shim name '%s'", name);
     }
@@ -208,6 +213,18 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     free(entry->route_args);
     entry->route_args = route_args->items; /* ownership transferred */
     entry->route_arg_count = route_args->count;
+    for (size_t i = 0; i < entry->source_route_arg_count; i++) {
+        free(entry->source_route_args[i]);
+    }
+    free(entry->source_route_args);
+    entry->source_route_args = split_source_args->items; /* ownership transferred */
+    entry->source_route_arg_count = split_source_args->count;
+    for (size_t i = 0; i < entry->fallback_route_arg_count; i++) {
+        free(entry->fallback_route_args[i]);
+    }
+    free(entry->fallback_route_args);
+    entry->fallback_route_args = split_fallback_args->items; /* ownership transferred */
+    entry->fallback_route_arg_count = split_fallback_args->count;
     entry->strip_matched_args = strip_matched_args;
     for (size_t i = 0; i < entry->rewrite_from_count; i++) {
         free(entry->rewrite_from[i]);
@@ -255,6 +272,10 @@ int cmd_add(int argc, char **argv) {
     strvec_init(&patterns);
     StrVec route_args;
     strvec_init(&route_args);
+    StrVec split_source_args;
+    strvec_init(&split_source_args);
+    StrVec split_fallback_args;
+    strvec_init(&split_fallback_args);
     StrVec rewrite_from;
     strvec_init(&rewrite_from);
     StrVec rewrite_to;
@@ -273,6 +294,8 @@ int cmd_add(int argc, char **argv) {
         {"exit-code", required_argument, 0, 'x'},
         {"route-arg", required_argument, 0, 'r'},
         {"strip-matched-args", no_argument, 0, OPT_STRIP_MATCHED_ARGS},
+        {"split-source-arg", required_argument, 0, OPT_SPLIT_SOURCE_ARG},
+        {"split-fallback-arg", required_argument, 0, OPT_SPLIT_FALLBACK_ARG},
         {"rewrite", required_argument, 0, 'w'},
         {"diagnostic", no_argument, 0, 'd'},
         {"force", no_argument, 0, OPT_FORCE},
@@ -300,6 +323,10 @@ int cmd_add(int argc, char **argv) {
             }
             case 'r': strvec_push(&route_args, xstrdup(optarg)); break;
             case OPT_STRIP_MATCHED_ARGS: strip_matched_args = true; break;
+            case OPT_SPLIT_SOURCE_ARG: strvec_push(&split_source_args, xstrdup(optarg)); break;
+            case OPT_SPLIT_FALLBACK_ARG:
+                strvec_push(&split_fallback_args, xstrdup(optarg));
+                break;
             case 'w': {
                 const char *eq = strchr(optarg, '=');
                 if (!eq || eq == optarg) {
@@ -332,7 +359,7 @@ int cmd_add(int argc, char **argv) {
     Policy policy;
     if (!policy_from_string(policy_arg, &policy)) {
         die("add: --policy must be \"exit-code\", \"heuristic\", \"exit-code-match\", "
-            "\"route-args\", or \"rewrite\"");
+            "\"route-args\", \"rewrite\", or \"split-args\"");
     }
 
     bool missing_name = (name == NULL);
@@ -340,9 +367,12 @@ int cmd_add(int argc, char **argv) {
     bool missing_patterns = (policy == POLICY_HEURISTIC && patterns.count == 0);
     bool missing_exit_codes = (policy == POLICY_EXIT_CODE_MATCH && exit_code_count == 0);
     bool missing_route_args = (policy == POLICY_ROUTE_ARGS && route_args.count == 0);
+    bool missing_split_args = (policy == POLICY_SPLIT_ARGS &&
+                                (split_source_args.count == 0 || split_fallback_args.count == 0));
     bool missing_rewrite = (policy == POLICY_REWRITE && rewrite_from.count == 0);
     bool something_missing = missing_name || missing_fallback || missing_patterns ||
-                              missing_exit_codes || missing_route_args || missing_rewrite;
+                              missing_exit_codes || missing_route_args || missing_split_args ||
+                              missing_rewrite;
 
     if (something_missing && !tui_supported()) {
         if (missing_name) {
@@ -362,6 +392,10 @@ int cmd_add(int argc, char **argv) {
         if (missing_route_args) {
             die("add: --policy route-args requires at least one --route-arg");
         }
+        if (missing_split_args) {
+            die("add: --policy split-args requires at least one --split-source-arg and one "
+                "--split-fallback-arg");
+        }
         die("add: --policy rewrite requires at least one --rewrite <from>=<to>");
     }
 
@@ -378,6 +412,8 @@ int cmd_add(int argc, char **argv) {
             .exit_code_count = exit_code_count,
             .route_args = &route_args,
             .strip_matched_args = strip_matched_args,
+            .split_source_args = &split_source_args,
+            .split_fallback_args = &split_fallback_args,
             .rewrite_from = &rewrite_from,
             .rewrite_to = &rewrite_to,
             .diagnostic = diagnostic,
@@ -390,11 +426,13 @@ int cmd_add(int argc, char **argv) {
         return finish_add(result.name, result.source_arg, &result.source_args,
                            result.fallback_arg, &result.fallback_args, result.policy,
                            &result.patterns, result.exit_codes, result.exit_code_count,
-                           &result.route_args, result.strip_matched_args, &result.rewrite_from,
-                           &result.rewrite_to, result.diagnostic, force);
+                           &result.route_args, result.strip_matched_args,
+                           &result.split_source_args, &result.split_fallback_args,
+                           &result.rewrite_from, &result.rewrite_to, result.diagnostic, force);
     }
 
     return finish_add(name, source_arg, &source_args, fallback_arg, &fallback_args, policy,
                        &patterns, exit_codes, exit_code_count, &route_args, strip_matched_args,
-                       &rewrite_from, &rewrite_to, diagnostic, force);
+                       &split_source_args, &split_fallback_args, &rewrite_from, &rewrite_to,
+                       diagnostic, force);
 }
