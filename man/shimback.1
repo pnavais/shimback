@@ -9,7 +9,7 @@ shimback \- run a primary command, transparently fall back to another
 [\fB\-\-policy\fR \fIexit\-code\fR|\fIheuristic\fR|\fIexit\-code\-match\fR|\fIroute\-args\fR|\fIrewrite\fR]
 [\fB\-\-error\-pattern\fR \fIp\fR]\|.\|.\|. [\fB\-\-exit\-code\fR \fIcode\fR]\|.\|.\|.
 [\fB\-\-route\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-strip\-matched\-args\fR]
-[\fB\-\-rewrite\fR \fIfrom\fR=\fIto\fR]\|.\|.\|. [\fB\-\-diagnostic\fR]
+[\fB\-\-rewrite\fR \fIfrom\fR=\fIto\fR]\|.\|.\|. [\fB\-\-diagnostic\fR] [\fB\-\-force\fR]
 .br
 .B shimback remove
 [\fB\-y\fR]
@@ -131,6 +131,29 @@ instead of
 .I ~/.zshrc
 when the former exists, since that's what most zsh setups source for
 machine\-local overrides).
+.IP
+.B \-\-force
+allows
+.B \-s
+/
+.B \-f
+to name a path (containing
+.IR / ,
+not a bare command name \(em there's nothing to search
+.B PATH
+for otherwise) that doesn't exist yet, instead of failing. Stored per\-shim
+in the config as
+.IR "force = true" ;
+once set,
+.B doctor
+skips its existence check for whichever of source/fallback is still
+missing, going back to checking it normally (cycle check included) as soon
+as it actually exists.
+.B force
+affects only that
+.B doctor
+check \(em dispatch always resolves and checks source/fallback for real
+every time the shim actually runs, regardless of it.
 .IP
 .B \-\-source\-arg
 and
@@ -290,7 +313,11 @@ exists and is on
 .BR PATH ,
 whether the config file parses, and, for each shim, whether its symlink is
 dead, whether its fallback/source still exist and are executable, and
-whether its policy has everything it needs to ever trigger. Exits
+whether its policy has everything it needs to ever trigger. A shim added
+with
+.B \-\-force
+whose source/fallback is still missing is reported as fine rather than
+broken, for that check only, until it actually exists. Exits
 .B 0
 if everything checks out,
 .B 1

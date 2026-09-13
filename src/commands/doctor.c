@@ -264,13 +264,21 @@ static void check_symlink(int *issues, const char *shim_dir, const char *name) {
  * the shimback binary itself -- a cycle -- since the resolved path is still
  * useful to the caller's source==fallback check. A NULL `fallback` (only
  * valid for POLICY_REWRITE, which never uses it) is reported as fine, not
- * checked at all, and returns NULL. */
-static char *check_fallback(int *issues, const char *fallback, const char *self_exe) {
+ * checked at all, and returns NULL. When `force` is set (the shim was added
+ * with `add --force`) and `fallback` still doesn't exist, that's reported as
+ * fine rather than a failure -- but only while it's actually still missing;
+ * once it exists, the full normal check below applies regardless of force. */
+static char *check_fallback(int *issues, const char *fallback, const char *self_exe, bool force) {
     if (!fallback) {
         report_ok("fallback: none (not used by policy rewrite)");
         return NULL;
     }
     if (!is_executable_file(fallback)) {
+        if (force) {
+            report_ok("fallback: %s (added with --force; not currently on disk, so not checked)",
+                        fallback);
+            return xstrdup(fallback);
+        }
         report_fail(issues, "fallback '%s' does not exist or is not executable", fallback);
         return NULL;
     }
@@ -288,12 +296,21 @@ static char *check_fallback(int *issues, const char *fallback, const char *self_
 
 /* Mirrors dispatch_run's source resolution (see dispatch.c) so doctor
  * reports exactly what a real invocation would see. `resolved_fallback` may
- * be NULL if the fallback check above already failed. */
+ * be NULL if the fallback check above already failed. `force` behaves as in
+ * check_fallback above: a still-missing source added with --force is
+ * reported as fine rather than a failure. */
 static void check_source(int *issues, const ShimEntry *e, const char *name, const char *shim_dir,
-                          const char *self_exe, const char *resolved_fallback) {
+                          const char *self_exe, const char *resolved_fallback, bool force) {
     char *resolved_source = NULL;
     if (e->source) {
         if (!is_executable_file(e->source)) {
+            if (force) {
+                report_ok(
+                    "source: %s (added with --force; not currently on disk, so not checked)",
+                    e->source);
+                resolved_source = xstrdup(e->source);
+                goto cross_check;
+            }
             report_fail(issues, "source '%s' does not exist or is not executable", e->source);
             return;
         }
@@ -316,10 +333,13 @@ static void check_source(int *issues, const ShimEntry *e, const char *name, cons
         report_ok("source: auto -> %s", resolved_source);
     }
 
-    if (resolved_fallback && resolved_source && strcmp(resolved_source, resolved_fallback) == 0) {
+cross_check:
+    if (resolved_fallback && resolved_source && strcmp(resolved_source, resolved_fallback) == 0 &&
+        str_array_eq(e->source_args, e->source_arg_count, e->fallback_args,
+                     e->fallback_arg_count)) {
         report_fail(issues,
-                     "source and fallback currently resolve to the same binary (%s) -- this "
-                     "shim is a no-op right now",
+                     "source and fallback currently resolve to the same binary (%s) with the "
+                     "same arguments -- this shim is a no-op right now",
                      resolved_source);
     }
     free(resolved_source);
@@ -413,8 +433,8 @@ int cmd_doctor(int argc, char **argv) {
             config_dirty = fix_cycle_if_needed(e, self_exe) || config_dirty;
         }
         check_symlink(&issues, shim_dir, e->name);
-        char *resolved_fallback = check_fallback(&issues, e->fallback, self_exe);
-        check_source(&issues, e, e->name, shim_dir, self_exe, resolved_fallback);
+        char *resolved_fallback = check_fallback(&issues, e->fallback, self_exe, e->force);
+        check_source(&issues, e, e->name, shim_dir, self_exe, resolved_fallback, e->force);
         free(resolved_fallback);
 
         if (e->policy == POLICY_HEURISTIC && e->error_pattern_count == 0) {

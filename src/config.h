@@ -71,6 +71,12 @@ typedef struct {
                                    * expanding to multiple forwarded arguments. */
     size_t rewrite_to_count;
     bool diagnostic;
+    bool force;                  /* set by `add --force`: source/fallback were allowed to not
+                                   * exist yet at add time. `doctor` skips its "does it exist
+                                   * and is executable" check for whichever of them still
+                                   * doesn't, rather than reporting it as broken; has no effect
+                                   * on dispatch, which always checks for real at invocation
+                                   * time regardless. */
 } ShimEntry;
 
 typedef struct {

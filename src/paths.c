@@ -271,3 +271,17 @@ char *resolve_binary_arg(const char *arg) {
     }
     return NULL;
 }
+
+char *force_resolve_binary_arg(const char *arg) {
+    if (strchr(arg, '/') == NULL) {
+        return NULL;
+    }
+    if (arg[0] == '/') {
+        return xstrdup(arg);
+    }
+    char cwd[4096];
+    if (!getcwd(cwd, sizeof(cwd))) {
+        return NULL;
+    }
+    return path_join(cwd, arg);
+}

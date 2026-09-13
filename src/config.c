@@ -524,6 +524,16 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                 status = CONFIG_ERR_PARSE;
                 break;
             }
+        } else if (strcmp(key, "force") == 0) {
+            if (strcmp(value_str, "true") == 0) {
+                entry->force = true;
+            } else if (strcmp(value_str, "false") == 0) {
+                entry->force = false;
+            } else {
+                snprintf(errbuf, errbuf_size, "line %d: 'force' must be true or false", line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
         } else if (strcmp(key, "rewrite_from") == 0) {
             StrVec vec;
             strvec_init(&vec);
@@ -743,6 +753,9 @@ static void render_config(const Config *cfg, DynBuf *out) {
 
         if (entry->diagnostic) {
             dynbuf_append_str(out, "diagnostic = true\n");
+        }
+        if (entry->force) {
+            dynbuf_append_str(out, "force = true\n");
         }
     }
 }
