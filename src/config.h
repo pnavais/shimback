@@ -16,7 +16,13 @@
  * after rewriting any argument matching one of rewrite_from into the
  * corresponding rewrite_to (an alias/macro mechanism, e.g. "--full" ->
  * "-ltrah"), with live/inherited stdio. fallback is never used, and so is
- * the one policy where it's optional. */
+ * the one policy where it's optional.
+ *
+ * Independent of all five: source_args/fallback_args (see ShimEntry) let
+ * any shim, under any policy, also work as a plain alias with flags baked
+ * in -- e.g. source "ls" with source_args ["-ltrah"] always runs
+ * "ls -ltrah <whatever else was typed>", the same way `alias cools='ls
+ * -ltrah'` would. */
 typedef enum {
     POLICY_EXIT_CODE,
     POLICY_HEURISTIC,
@@ -30,6 +36,18 @@ typedef struct {
     char *source;              /* owned; NULL means "auto" (resolve from PATH at dispatch time) */
     char *fallback;             /* owned; required, except NULL is allowed for POLICY_REWRITE */
     Policy policy;
+    char **source_args;         /* owned array of owned strings; fixed arguments, prepended
+                                  * before whatever the shim was actually invoked with, every
+                                  * time source runs -- e.g. source "ls" plus source_args
+                                  * ["-l","-t","-r","-a","-h"] makes the shim also work as a
+                                  * regular alias (like `alias cools='ls -ltrah'`), on top of
+                                  * whatever its policy already does. Independent of policy;
+                                  * NULL/0 if none configured. */
+    size_t source_arg_count;
+    char **fallback_args;       /* same, prepended before fallback's own invocation whenever
+                                  * fallback runs (meaningless -- and always empty -- for
+                                  * POLICY_REWRITE, which never runs fallback at all). */
+    size_t fallback_arg_count;
     char **error_patterns;      /* owned array of owned strings; NULL if none */
     size_t error_pattern_count;
     int *exit_codes;            /* owned array; only meaningful for POLICY_EXIT_CODE_MATCH */

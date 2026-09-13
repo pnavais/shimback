@@ -26,7 +26,9 @@ typedef enum {
     PAGE_NAME,
     PAGE_POLICY,
     PAGE_SOURCE,
+    PAGE_SOURCE_ARGS,
     PAGE_FALLBACK,
+    PAGE_FALLBACK_ARGS,
     PAGE_PATTERNS,
     PAGE_EXIT_CODES,
     PAGE_ROUTE_ARGS,
@@ -56,8 +58,12 @@ typedef struct {
     bool policy_set;
     char *source_arg; /* NULL means "auto" -- source_set tracks whether that's final */
     bool source_set;
+    StrVec source_args;
+    bool source_args_set;
     char *fallback_arg;
     bool fallback_set;
+    StrVec fallback_args;
+    bool fallback_args_set;
     StrVec patterns;
     bool patterns_set;
     int *exit_codes;
@@ -93,8 +99,10 @@ static PageId next_page(const WizardState *st, PageId current) {
     switch (current) {
         case PAGE_NAME: return PAGE_POLICY;
         case PAGE_POLICY: return PAGE_SOURCE;
-        case PAGE_SOURCE: return PAGE_FALLBACK;
-        case PAGE_FALLBACK:
+        case PAGE_SOURCE: return PAGE_SOURCE_ARGS;
+        case PAGE_SOURCE_ARGS: return PAGE_FALLBACK;
+        case PAGE_FALLBACK: return PAGE_FALLBACK_ARGS;
+        case PAGE_FALLBACK_ARGS:
             switch (st->policy) {
                 case POLICY_HEURISTIC: return PAGE_PATTERNS;
                 case POLICY_EXIT_CODE_MATCH: return PAGE_EXIT_CODES;
@@ -147,9 +155,15 @@ static void reset_after_policy_change(WizardState *st) {
     free(st->source_arg);
     st->source_arg = NULL;
     st->source_set = false;
+    strvec_free(&st->source_args);
+    strvec_init(&st->source_args);
+    st->source_args_set = false;
     free(st->fallback_arg);
     st->fallback_arg = NULL;
     st->fallback_set = false;
+    strvec_free(&st->fallback_args);
+    strvec_init(&st->fallback_args);
+    st->fallback_args_set = false;
     strvec_free(&st->patterns);
     strvec_init(&st->patterns);
     st->patterns_set = false;
@@ -177,7 +191,9 @@ static bool page_present(const WizardSeed *seed, const WizardState *st, PageId p
         case PAGE_NAME: return seed->name != NULL;
         case PAGE_POLICY: return true;
         case PAGE_SOURCE: return true;
+        case PAGE_SOURCE_ARGS: return true;
         case PAGE_FALLBACK: return seed->fallback_arg != NULL || st->policy == POLICY_REWRITE;
+        case PAGE_FALLBACK_ARGS: return true;
         case PAGE_PATTERNS: return seed->patterns->count > 0;
         case PAGE_EXIT_CODES: return seed->exit_code_count > 0;
         case PAGE_ROUTE_ARGS: return seed->route_args->count > 0;
@@ -203,10 +219,22 @@ static void auto_commit_page(WizardState *st, const WizardSeed *seed, PageId p) 
             st->source_arg = seed->source_arg ? xstrdup(seed->source_arg) : NULL;
             st->source_set = true;
             break;
+        case PAGE_SOURCE_ARGS:
+            for (size_t i = 0; i < seed->source_args->count; i++) {
+                strvec_push(&st->source_args, xstrdup(seed->source_args->items[i]));
+            }
+            st->source_args_set = true;
+            break;
         case PAGE_FALLBACK:
             free(st->fallback_arg);
             st->fallback_arg = seed->fallback_arg ? xstrdup(seed->fallback_arg) : NULL;
             st->fallback_set = true;
+            break;
+        case PAGE_FALLBACK_ARGS:
+            for (size_t i = 0; i < seed->fallback_args->count; i++) {
+                strvec_push(&st->fallback_args, xstrdup(seed->fallback_args->items[i]));
+            }
+            st->fallback_args_set = true;
             break;
         case PAGE_PATTERNS:
             for (size_t i = 0; i < seed->patterns->count; i++) {
@@ -286,9 +314,16 @@ static void print_breadcrumb(const WizardState *st, const History *hist, size_t 
                 printf("%s  source:     %s%s\n", dim, st->source_arg ? st->source_arg : "(auto)",
                        reset);
                 break;
+            case PAGE_SOURCE_ARGS:
+                printf("%s  source args: %zu configured%s\n", dim, st->source_args.count, reset);
+                break;
             case PAGE_FALLBACK:
                 printf("%s  fallback:   %s%s\n", dim,
                        st->fallback_arg ? st->fallback_arg : "(none)", reset);
+                break;
+            case PAGE_FALLBACK_ARGS:
+                printf("%s  fallback args: %zu configured%s\n", dim, st->fallback_args.count,
+                       reset);
                 break;
             case PAGE_PATTERNS:
                 printf("%s  patterns:   %zu configured%s\n", dim, st->patterns.count, reset);
@@ -338,10 +373,14 @@ static void bar_line(bool colorize, const char *fmt, ...) {
  * (3-byte UTF-8 glyph + 1) has nothing to do with its column width. */
 #define BAR_PREFIX_COLS 2
 
-static void print_list_page(bool colorize, const char *label, const StrVec *list,
+static void print_list_page(bool colorize, const char *label, bool required, const StrVec *list,
                              const char *input) {
-    bar_line(colorize, "%s (at least one required; blank line to finish once you have one):",
-              label);
+    if (required) {
+        bar_line(colorize, "%s (at least one required; blank line to finish once you have one):",
+                  label);
+    } else {
+        bar_line(colorize, "%s (optional; blank line to finish):", label);
+    }
     for (size_t i = 0; i < list->count; i++) {
         bar_line(colorize, "  %zu. %s", i + 1, list->items[i]);
     }
@@ -370,6 +409,10 @@ static size_t input_row(const WizardState *st, size_t hist_pos, PageId page) {
         case PAGE_STRIP_MATCHED:
         case PAGE_DIAGNOSTIC:
             return row + 2; /* one header line, then the input line */
+        case PAGE_SOURCE_ARGS:
+            return row + 2 + st->source_args.count;
+        case PAGE_FALLBACK_ARGS:
+            return row + 2 + st->fallback_args.count;
         case PAGE_PATTERNS:
             return row + 2 + st->patterns.count;
         case PAGE_ROUTE_ARGS:
@@ -443,6 +486,9 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
                      hdr, reset, dim, reset);
             bar_line(colorize, "> %s", input);
             break;
+        case PAGE_SOURCE_ARGS:
+            print_list_page(colorize, "Source args", false, &st->source_args, input);
+            break;
         case PAGE_FALLBACK:
             if (st->policy == POLICY_REWRITE) {
                 bar_line(colorize, "%sFallback command%s %s(optional -- unused by policy "
@@ -453,11 +499,14 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
             }
             bar_line(colorize, "> %s", input);
             break;
+        case PAGE_FALLBACK_ARGS:
+            print_list_page(colorize, "Fallback args", false, &st->fallback_args, input);
+            break;
         case PAGE_PATTERNS:
-            print_list_page(colorize, "Error patterns", &st->patterns, input);
+            print_list_page(colorize, "Error patterns", true, &st->patterns, input);
             break;
         case PAGE_ROUTE_ARGS:
-            print_list_page(colorize, "Route args", &st->route_args, input);
+            print_list_page(colorize, "Route args", true, &st->route_args, input);
             break;
         case PAGE_EXIT_CODES:
             bar_line(colorize,
@@ -507,6 +556,8 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
 
 bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
     WizardState st = {0};
+    strvec_init(&st.source_args);
+    strvec_init(&st.fallback_args);
     strvec_init(&st.patterns);
     strvec_init(&st.route_args);
     strvec_init(&st.rewrite_from);
@@ -518,6 +569,8 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
     size_t hist_pos = hist.count - 1;
 
     if (!tui_raw_mode_enter()) {
+        strvec_free(&st.source_args);
+        strvec_free(&st.fallback_args);
         strvec_free(&st.patterns);
         strvec_free(&st.route_args);
         strvec_free(&st.rewrite_from);
@@ -763,6 +816,26 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
                 break;
             }
 
+            case PAGE_SOURCE_ARGS:
+            case PAGE_FALLBACK_ARGS: {
+                StrVec *list = (page == PAGE_SOURCE_ARGS) ? &st.source_args : &st.fallback_args;
+                if (input_len == 0) {
+                    if (page == PAGE_SOURCE_ARGS) {
+                        st.source_args_set = true;
+                    } else {
+                        st.fallback_args_set = true;
+                    }
+                    if (advance_or_reuse(&st, &hist, &hist_pos)) {
+                        done = true;
+                    }
+                } else {
+                    strvec_push(list, xstrdup(input));
+                    input[0] = '\0';
+                    input_len = 0;
+                }
+                break;
+            }
+
             case PAGE_PATTERNS:
             case PAGE_ROUTE_ARGS: {
                 StrVec *list = (page == PAGE_PATTERNS) ? &st.patterns : &st.route_args;
@@ -869,6 +942,8 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
     free(hist.items);
 
     if (aborted) {
+        strvec_free(&st.source_args);
+        strvec_free(&st.fallback_args);
         strvec_free(&st.patterns);
         strvec_free(&st.route_args);
         strvec_free(&st.rewrite_from);
@@ -882,7 +957,9 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
 
     out->name = st.name;
     out->source_arg = st.source_arg;
+    out->source_args = st.source_args;
     out->fallback_arg = st.fallback_arg;
+    out->fallback_args = st.fallback_args;
     out->policy = st.policy;
     out->patterns = st.patterns;
     out->exit_codes = st.exit_codes;

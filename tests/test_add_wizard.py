@@ -8,6 +8,14 @@ subprocess + pty.openpty(), feeds scripted keystrokes (including raw ANSI
 escape sequences for arrow keys), and inspects the resulting
 config.toml/symlink in a sandboxed $HOME/$XDG_CONFIG_HOME/$XDG_DATA_HOME
 to verify each scenario.
+
+Page order (see add_wizard.c's next_page()): NAME -> POLICY -> SOURCE ->
+SOURCE_ARGS -> FALLBACK -> FALLBACK_ARGS -> <policy-specific> ->
+DIAGNOSTIC -> DONE. SOURCE_ARGS/FALLBACK_ARGS are always "present" (like
+SOURCE itself) -- an empty list is a valid, always-known default -- so
+they're silently auto-seeded (never a live/blocking page) whenever
+source/fallback themselves are already fully known, but still need their
+own blank Enter to pass through whenever the wizard reaches them live.
 """
 import os
 import select
@@ -134,7 +142,9 @@ try:
     sb.send(b"tool1" + ENTER)
     sb.send(ENTER)          # policy: exit-code (default)
     sb.send(ENTER)          # source: skip (auto)
+    sb.send(ENTER)          # source args: none
     sb.send(b"/bin/cat" + ENTER)  # fallback
+    sb.send(ENTER)          # fallback args: none
     sb.send(ENTER, 0.5)     # diagnostic: no
     code = sb.wait()
     assert_eq("1a exit code", 0, code)
@@ -155,7 +165,9 @@ try:
     sb.send(b"tool2" + ENTER)
     sb.send(DOWN + DOWN + DOWN + ENTER)  # exit-code -> heuristic -> exit-code-match -> route-args
     sb.send(ENTER)                # source: auto
+    sb.send(ENTER)                # source args: none
     sb.send(b"/bin/echo" + ENTER)  # fallback
+    sb.send(ENTER)                # fallback args: none
     sb.send(b"special" + ENTER)   # route-arg 1
     sb.send(ENTER)                # finish list
     sb.send(b"y" + ENTER)         # strip-matched-args: yes
@@ -170,7 +182,9 @@ finally:
     sb.cleanup()
 
 # --- 2: partial CLI args (name + source) resume at the first missing page
-# (fallback), and preserve the already-given name/source ---
+# (fallback, since SOURCE_ARGS is always auto-seeded as an empty, "already
+# known" default -- not a live page -- right along with SOURCE itself),
+# and preserve the already-given name/source ---
 sb = Sandbox(BIN)
 try:
     out = sb.spawn(["add", "seeded", "-s", "/bin/ls"])
@@ -178,6 +192,7 @@ try:
     assert_contains("2: name preserved in breadcrumb", out, "seeded")
     assert_contains("2: source preserved in breadcrumb", out, "/bin/ls")
     sb.send(b"/bin/cat" + ENTER)
+    sb.send(ENTER)       # fallback args: none
     sb.send(ENTER, 0.5)  # diagnostic: no
     code = sb.wait()
     assert_eq("2 exit code", 0, code)
@@ -195,13 +210,17 @@ try:
     sb.send(b"tool3" + ENTER)
     sb.send(ENTER)                  # policy: exit-code
     sb.send(b"/bin/ls" + ENTER)     # source
-    sb.send(b"/bin/cat" + ENTER)    # fallback -> now on diagnostic page
+    sb.send(ENTER)                  # source args: none -> now on fallback page
+    sb.send(b"/bin/cat" + ENTER)    # fallback -> now on fallback_args page
     sb.send(LEFT)                   # back to fallback
+    sb.send(LEFT)                   # back to source_args
     out = sb.send(LEFT)             # back to source
     assert_contains("3: back-nav shows previously typed source", out, "/bin/ls")
-    out = sb.send(RIGHT)            # forward to fallback again (unedited)
+    sb.send(RIGHT)                  # forward to source_args
+    out = sb.send(RIGHT)            # forward to fallback (unedited)
     assert_contains("3: forward-nav still shows fallback page with prior value", out, "/bin/cat")
-    sb.send(ENTER)                  # re-accept fallback unchanged -> advances to diagnostic
+    sb.send(ENTER)                  # re-accept fallback unchanged -> advances into fallback_args
+    sb.send(ENTER)                  # re-accept fallback_args unchanged (still empty) -> diagnostic
     sb.send(ENTER, 0.5)             # diagnostic: no
     code = sb.wait()
     assert_eq("3 exit code", 0, code)
@@ -218,13 +237,16 @@ try:
     sb.send(b"tool4" + ENTER)
     sb.send(ENTER)                  # policy: exit-code
     sb.send(ENTER)                  # source: auto
-    sb.send(b"/bin/cat" + ENTER)    # fallback -> now on diagnostic page
-    out = sb.send(LEFT + LEFT + LEFT)  # back to policy page
+    sb.send(ENTER)                  # source args: none
+    sb.send(b"/bin/cat" + ENTER)    # fallback -> now on fallback_args page
+    out = sb.send(LEFT + LEFT + LEFT + LEFT)  # back to policy page
     assert_contains("4: back-nav reaches policy page", out, "Policy:")
     out = sb.send(DOWN + ENTER)     # exit-code -> heuristic, commit (a real change)
     assert_contains("4: policy change resets to a fresh source page", out, "Source command")
     sb.send(ENTER)                  # source: auto (freshly re-asked)
+    sb.send(ENTER)                  # source args: none
     sb.send(b"/bin/ls" + ENTER)     # fallback (freshly re-asked, different value)
+    sb.send(ENTER)                  # fallback args: none
     sb.send(b"invalid option" + ENTER)  # pattern
     sb.send(ENTER)                  # finish list
     sb.send(ENTER, 0.5)             # diagnostic: no
@@ -273,7 +295,9 @@ try:
     sb.send(b"tool7" + ENTER)
     sb.send(ENTER)                # policy: exit-code
     sb.send(ENTER)                # source: blank -> skip/auto
+    sb.send(ENTER)                # source args: none
     sb.send(b"/bin/cat" + ENTER)  # fallback
+    sb.send(ENTER)                # fallback args: none
     sb.send(ENTER, 0.5)           # diagnostic: no
     code = sb.wait()
     assert_eq("7 exit code", 0, code)
@@ -283,7 +307,11 @@ try:
 finally:
     sb.cleanup()
 
-# --- 8: a list page refuses to finish with zero items ---
+# --- 8: a list page refuses to finish with zero items. Fully seeded except
+# --policy heuristic's required patterns, so SOURCE/SOURCE_ARGS/FALLBACK/
+# FALLBACK_ARGS are all silently auto-seeded and the wizard starts live
+# right on the (required) patterns page -- no extra keystrokes needed for
+# the new optional pages here at all. ---
 sb = Sandbox(BIN)
 try:
     out = sb.spawn(["add", "tool8", "-f", "/bin/cat", "--policy", "heuristic"])
@@ -310,7 +338,9 @@ try:
     sb.send(b"tool9" + ENTER)
     sb.send(DOWN + DOWN + DOWN + ENTER)  # exit-code -> ... -> route-args
     sb.send(ENTER)                # source: auto
+    sb.send(ENTER)                # source args: none
     sb.send(b"/bin/echo" + ENTER)  # fallback
+    sb.send(ENTER)                # fallback args: none
     sb.send(b"special" + ENTER)   # route-arg 1
     sb.send(ENTER)                # finish list
     sb.send(b"y" + ENTER)         # strip-matched-args: yes -> now on diagnostic page
@@ -323,6 +353,32 @@ try:
     cfg = sb.config_text()
     assert_contains("9: strip_matched_args stayed true after revisit", cfg,
                      "strip_matched_args = true")
+finally:
+    sb.cleanup()
+
+
+# --- 10: source_args/fallback_args let a shim double as a regular alias --
+# a fixed extra argument, entered on the new optional pages, ends up baked
+# into the stored config (this is the actual feature: e.g. source "ls"
+# plus source_args ["-ltrah"], so the shim always runs "ls -ltrah ..."). ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"cools" + ENTER)
+    sb.send(ENTER)                 # policy: exit-code
+    sb.send(b"/bin/ls" + ENTER)    # source
+    out = sb.send(b"-ltrah" + ENTER)  # source arg 1
+    assert_contains("10: source arg shows up in the accumulated list", out, "1. -ltrah")
+    sb.send(ENTER)                 # finish source args list (optional, one item is enough)
+    sb.send(b"/bin/cat" + ENTER)   # fallback
+    sb.send(b"-A" + ENTER)         # fallback arg 1
+    sb.send(ENTER)                 # finish fallback args list
+    sb.send(ENTER, 0.5)            # diagnostic: no
+    code = sb.wait()
+    assert_eq("10 exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("10: source_args stored", cfg, 'source_args = ["-ltrah"]')
+    assert_contains("10: fallback_args stored", cfg, 'fallback_args = ["-A"]')
 finally:
     sb.cleanup()
 

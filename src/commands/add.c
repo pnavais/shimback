@@ -19,7 +19,8 @@
 #include "add_wizard.h"
 
 static const char *USAGE =
-    "usage: shimback add <name> [-s <source>] -f <fallback>\n"
+    "usage: shimback add <name> [-s <source>] [--source-arg <arg>]...\n"
+    "                    -f <fallback> [--fallback-arg <arg>]...\n"
     "                    [--policy exit-code|heuristic|exit-code-match|route-args|rewrite]\n"
     "                    [--error-pattern <p>]... [--exit-code <code>]...\n"
     "                    [--route-arg <arg>]... [--strip-matched-args]\n"
@@ -27,6 +28,8 @@ static const char *USAGE =
     "-f/--fallback is required, except with --policy rewrite, where it's unused.\n";
 
 #define OPT_STRIP_MATCHED_ARGS 1000
+#define OPT_SOURCE_ARG 1001
+#define OPT_FALLBACK_ARG 1002
 
 static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
     if (*count == *cap) {
@@ -40,8 +43,9 @@ static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
  * writing the config entry -- shared by both the "everything was already
  * given on the command line" path and the "the interactive wizard filled
  * in what was missing" path, so the two can never drift apart. */
-static int finish_add(const char *name, const char *source_arg, const char *fallback_arg,
-                       Policy policy, StrVec *patterns, int *exit_codes, size_t exit_code_count,
+static int finish_add(const char *name, const char *source_arg, StrVec *source_args,
+                       const char *fallback_arg, StrVec *fallback_args, Policy policy,
+                       StrVec *patterns, int *exit_codes, size_t exit_code_count,
                        StrVec *route_args, bool strip_matched_args, StrVec *rewrite_from,
                        StrVec *rewrite_to, bool diagnostic) {
     if (name[0] == '\0' || strchr(name, '/') != NULL || strcmp(name, "shimback") == 0) {
@@ -135,8 +139,20 @@ static int finish_add(const char *name, const char *source_arg, const char *fall
      * already assume: a stable absolute path, not a bare name they'd have
      * to re-search $PATH for themselves. */
     entry->source = source_arg ? xstrdup(resolved_source_for_check) : NULL;
+    for (size_t i = 0; i < entry->source_arg_count; i++) {
+        free(entry->source_args[i]);
+    }
+    free(entry->source_args);
+    entry->source_args = source_args->items; /* ownership transferred */
+    entry->source_arg_count = source_args->count;
     free(entry->fallback);
     entry->fallback = resolved_fallback ? xstrdup(resolved_fallback) : NULL;
+    for (size_t i = 0; i < entry->fallback_arg_count; i++) {
+        free(entry->fallback_args[i]);
+    }
+    free(entry->fallback_args);
+    entry->fallback_args = fallback_args->items; /* ownership transferred */
+    entry->fallback_arg_count = fallback_args->count;
     entry->policy = policy;
     for (size_t i = 0; i < entry->error_pattern_count; i++) {
         free(entry->error_patterns[i]);
@@ -190,6 +206,10 @@ int cmd_add(int argc, char **argv) {
     const char *policy_arg = "exit-code";
     bool diagnostic = false;
     bool strip_matched_args = false;
+    StrVec source_args;
+    strvec_init(&source_args);
+    StrVec fallback_args;
+    strvec_init(&fallback_args);
     StrVec patterns;
     strvec_init(&patterns);
     StrVec route_args;
@@ -204,7 +224,9 @@ int cmd_add(int argc, char **argv) {
 
     static struct option long_opts[] = {
         {"source", required_argument, 0, 's'},
+        {"source-arg", required_argument, 0, OPT_SOURCE_ARG},
         {"fallback", required_argument, 0, 'f'},
+        {"fallback-arg", required_argument, 0, OPT_FALLBACK_ARG},
         {"policy", required_argument, 0, 'p'},
         {"error-pattern", required_argument, 0, 'e'},
         {"exit-code", required_argument, 0, 'x'},
@@ -219,7 +241,9 @@ int cmd_add(int argc, char **argv) {
     while ((opt = getopt_long(argc, argv, "s:f:p:e:x:r:w:d", long_opts, NULL)) != -1) {
         switch (opt) {
             case 's': source_arg = optarg; break;
+            case OPT_SOURCE_ARG: strvec_push(&source_args, xstrdup(optarg)); break;
             case 'f': fallback_arg = optarg; break;
+            case OPT_FALLBACK_ARG: strvec_push(&fallback_args, xstrdup(optarg)); break;
             case 'p': policy_arg = optarg; break;
             case 'e': strvec_push(&patterns, xstrdup(optarg)); break;
             case 'x': {
@@ -302,7 +326,9 @@ int cmd_add(int argc, char **argv) {
         WizardSeed seed = {
             .name = name,
             .source_arg = source_arg,
+            .source_args = &source_args,
             .fallback_arg = fallback_arg,
+            .fallback_args = &fallback_args,
             .policy = policy,
             .patterns = &patterns,
             .exit_codes = exit_codes,
@@ -318,13 +344,14 @@ int cmd_add(int argc, char **argv) {
             printf("Aborted -- no shim was created.\n");
             return 1;
         }
-        return finish_add(result.name, result.source_arg, result.fallback_arg, result.policy,
+        return finish_add(result.name, result.source_arg, &result.source_args,
+                           result.fallback_arg, &result.fallback_args, result.policy,
                            &result.patterns, result.exit_codes, result.exit_code_count,
                            &result.route_args, result.strip_matched_args, &result.rewrite_from,
                            &result.rewrite_to, result.diagnostic);
     }
 
-    return finish_add(name, source_arg, fallback_arg, policy, &patterns, exit_codes,
-                       exit_code_count, &route_args, strip_matched_args, &rewrite_from,
-                       &rewrite_to, diagnostic);
+    return finish_add(name, source_arg, &source_args, fallback_arg, &fallback_args, policy,
+                       &patterns, exit_codes, exit_code_count, &route_args, strip_matched_args,
+                       &rewrite_from, &rewrite_to, diagnostic);
 }

@@ -19,6 +19,12 @@ assert_not_contains "list: no detail lines without --full" "$out" "error pattern
     --policy route-args --route-arg special --strip-matched-args >/dev/null
 "$SHIMBACK" add rwtool -s "$FAKE_PRIMARY" --policy rewrite --rewrite "--full=-ltrah" >/dev/null
 
+# --- source_args/fallback_args are independent of policy: shown for a
+# plain exit-code shim too (this is exactly what lets a shim double as a
+# regular alias -- see README's "add" section) ---
+"$SHIMBACK" add atool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --source-arg "-ltrah" --fallback-arg "-la" >/dev/null
+
 full="$("$SHIMBACK" list --full)"
 assert_contains "list --full: heuristic shows error patterns" "$full" \
     "error patterns: invalid option, illegal option"
@@ -28,13 +34,18 @@ assert_contains "list --full: route-args shows strip matched args" "$full" \
     "strip matched args: true"
 assert_contains "list --full: rewrite shows rewrite rules" "$full" \
     "rewrite rules: --full -> -ltrah"
+assert_contains "list --full: source_args shown for a plain exit-code shim" "$full" \
+    "source args: -ltrah"
+assert_contains "list --full: fallback_args shown for a plain exit-code shim" "$full" \
+    "fallback args: -la"
 
-# --- list --full: a plain exit-code shim (sed) gets no extra lines at all --
-# every detail line is indented 8 spaces, and the only shims with anything to
-# show are htool (1 line), xtool (1), rtool (2), and rwtool (1) = 5 total, so
-# if sed contributed one too this count would be 6. ---
+# --- list --full: a shim with nothing configured beyond the basics (sed)
+# gets no extra lines at all -- every detail line is indented 8 spaces, and
+# the only shims with anything to show are htool (1 line), xtool (1),
+# rtool (2), rwtool (1), and atool (2) = 7 total, so if sed contributed
+# one too this count would be 8. ---
 detail_line_count="$(printf '%s\n' "$full" | grep -c '^        ')"
-assert_eq "list --full: exit-code policy contributes no detail lines" "5" "$detail_line_count"
+assert_eq "list --full: a bare shim contributes no detail lines" "7" "$detail_line_count"
 
 # --- ls --full is the same alias as list --full ---
 assert_eq "ls --full is an alias for list --full" "$full" "$("$SHIMBACK" ls --full)"
@@ -53,6 +64,7 @@ assert_contains "list: unexpected argument error" "$(cat "$SANDBOX/err")" "unexp
 "$SHIMBACK" remove xtool >/dev/null
 "$SHIMBACK" remove rtool >/dev/null
 "$SHIMBACK" remove rwtool >/dev/null
+"$SHIMBACK" remove atool >/dev/null
 out="$("$SHIMBACK" list --full)"
 assert_eq "list --full: empty config message" "No shims configured." "$out"
 

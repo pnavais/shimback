@@ -41,23 +41,34 @@ static void print_detail_line(bool colorize, const char *label, const char *valu
     printf("        %s%s:%s %s\n", dim, label, reset, value);
 }
 
-/* Everything the compact table leaves out: the policy-specific
+static void print_joined(bool colorize, const char *label, char *const *items, size_t count) {
+    if (count == 0) {
+        return;
+    }
+    DynBuf buf;
+    dynbuf_init(&buf);
+    for (size_t i = 0; i < count; i++) {
+        if (i > 0) {
+            dynbuf_append_str(&buf, ", ");
+        }
+        dynbuf_append_str(&buf, items[i]);
+    }
+    print_detail_line(colorize, label, dynbuf_cstr(&buf));
+    dynbuf_free(&buf);
+}
+
+/* Everything the compact table leaves out: source_args/fallback_args
+ * (independent of policy -- see add.c), and the policy-specific
  * configuration that actually drives a shim's behavior (which arguments
  * route it, which exit codes trigger a fallback, what gets rewritten into
  * what, ...). Prints nothing for a policy with no such configuration
  * (POLICY_EXIT_CODE), or for a field that's simply empty. */
 static void print_full_details(const ShimEntry *e, bool colorize) {
-    if (e->policy == POLICY_HEURISTIC && e->error_pattern_count > 0) {
-        DynBuf buf;
-        dynbuf_init(&buf);
-        for (size_t i = 0; i < e->error_pattern_count; i++) {
-            if (i > 0) {
-                dynbuf_append_str(&buf, ", ");
-            }
-            dynbuf_append_str(&buf, e->error_patterns[i]);
-        }
-        print_detail_line(colorize, "error patterns", dynbuf_cstr(&buf));
-        dynbuf_free(&buf);
+    print_joined(colorize, "source args", e->source_args, e->source_arg_count);
+    print_joined(colorize, "fallback args", e->fallback_args, e->fallback_arg_count);
+
+    if (e->policy == POLICY_HEURISTIC) {
+        print_joined(colorize, "error patterns", e->error_patterns, e->error_pattern_count);
     }
 
     if (e->policy == POLICY_EXIT_CODE_MATCH && e->exit_code_count > 0) {
@@ -73,18 +84,7 @@ static void print_full_details(const ShimEntry *e, bool colorize) {
     }
 
     if (e->policy == POLICY_ROUTE_ARGS) {
-        if (e->route_arg_count > 0) {
-            DynBuf buf;
-            dynbuf_init(&buf);
-            for (size_t i = 0; i < e->route_arg_count; i++) {
-                if (i > 0) {
-                    dynbuf_append_str(&buf, ", ");
-                }
-                dynbuf_append_str(&buf, e->route_args[i]);
-            }
-            print_detail_line(colorize, "route args", dynbuf_cstr(&buf));
-            dynbuf_free(&buf);
-        }
+        print_joined(colorize, "route args", e->route_args, e->route_arg_count);
         print_detail_line(colorize, "strip matched args", e->strip_matched_args ? "true" : "false");
     }
 

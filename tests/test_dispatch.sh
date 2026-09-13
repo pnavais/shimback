@@ -208,4 +208,50 @@ else
     assert_eq "large interleaved output: all 4000 lines replayed" "4000" "$got_lines"
 fi
 
+# --- source_args: fixed args prepended before source runs, every time --
+# lets a shim double as a regular alias (e.g. source "ls" + source_args
+# ["-ltrah"]). FAKE_FALLBACK is reused as *source* here purely because it
+# echoes its received argv, which is exactly what's needed to verify the
+# extra args actually landed (fallback is FAKE_PRIMARY so it's never
+# confused with what's being checked; source succeeds, so it never runs
+# anyway). ---
+"$SHIMBACK" add aliastool -s "$FAKE_FALLBACK" -f "$FAKE_PRIMARY" \
+    --source-arg "--extra1" --source-arg "--extra2" >/dev/null
+ALIASTOOL="$(shim_path aliastool)"
+out="$("$ALIASTOOL" own-arg)"
+assert_eq "source_args: prepended before source's own args" \
+    "FALLBACK_RAN:--extra1 --extra2 own-arg" "$out"
+
+# --- fallback_args: fixed args prepended before fallback runs, every time
+# fallback actually runs ---
+"$SHIMBACK" add aliasfb -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --fallback-arg "--fbextra" >/dev/null
+ALIASFB="$(shim_path aliasfb)"
+out="$(FAKE_EXIT_CODE=1 "$ALIASFB" own-arg)"
+assert_eq "fallback_args: prepended before fallback's own args" \
+    "FALLBACK_RAN:--fbextra own-arg" "$out"
+
+# --- route-args: source_args apply when source is the one picked ---
+"$SHIMBACK" add aliasroute1 -s "$FAKE_FALLBACK" -f "$FAKE_PRIMARY" \
+    --policy route-args --route-arg special --source-arg "--srcflag" >/dev/null
+ALIASROUTE1="$(shim_path aliasroute1)"
+out="$("$ALIASROUTE1" other)"
+assert_eq "route-args no-match: uses source_args" "FALLBACK_RAN:--srcflag other" "$out"
+
+# --- route-args: fallback_args apply when fallback is the one picked ---
+"$SHIMBACK" add aliasroute2 -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy route-args --route-arg special --fallback-arg "--fbflag" >/dev/null
+ALIASROUTE2="$(shim_path aliasroute2)"
+out="$("$ALIASROUTE2" special)"
+assert_eq "route-args match: uses fallback_args" "FALLBACK_RAN:--fbflag special" "$out"
+
+# --- rewrite: source_args are prepended before the (possibly rewritten)
+# user args, and are never themselves subject to rewriting ---
+"$SHIMBACK" add aliasrewrite -s "$FAKE_FALLBACK" --policy rewrite \
+    --rewrite "all=ls" --source-arg "--fixed" >/dev/null
+ALIASREWRITE="$(shim_path aliasrewrite)"
+out="$("$ALIASREWRITE" all)"
+assert_eq "rewrite: source_args prepended, then the rewritten arg" \
+    "FALLBACK_RAN:--fixed ls" "$out"
+
 finish
