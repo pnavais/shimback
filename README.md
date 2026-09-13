@@ -1,6 +1,6 @@
 # shimback
 
-![shimback banner](banner.jpg)
+![shimback banner](assets/banner2.png)
 
 `shimback` is a small, dependency-free command-line shim: it wraps a command
 name (e.g. `sed`) with a **source** binary to run and a **fallback** binary
