@@ -36,6 +36,8 @@ shimback \- run a primary command, transparently fall back to another
 .B shimback uninstall
 [\fB\-\-prefix\fR \fIdir\fR] [\fB\-\-full\fR]
 .br
+.B shimback edit
+.br
 .B shimback \-\-help
 |
 .B \-\-version
@@ -470,6 +472,45 @@ Example:
 .RS
 .nf
 shimback uninstall \-\-full
+.fi
+.RE
+.RE
+.TP
+.B edit
+Opens
+.I config.toml
+in
+.BR $EDITOR ,
+or, if that's unset (or empty), the first of
+.BR nvim ,
+.BR vim ,
+.BR vi ,
+.BR nano ,
+.B pico
+found on
+.BR PATH ,
+in that order. Fails with a clear error if
+.B $EDITOR
+isn't set and none of those five are found either. A multi\-word
+.B $EDITOR
+(e.g. set to
+.IR "code --wait" )
+works as expected \(em run through a shell so its own flags are honored,
+not treated as part of a single literal command name. The config's
+directory is created first if it doesn't exist yet, so this works even
+before the first
+.BR add .
+Once the editor exits, if it exited successfully but the file it left
+behind no longer parses, a warning is printed right away (without failing
+the command) rather than letting the next
+.BR add / list / doctor
+surface a confusing error far removed from the edit that caused it.
+.RS
+.PP
+Example:
+.RS
+.nf
+shimback edit
 .fi
 .RE
 .RE
