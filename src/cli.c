@@ -10,7 +10,7 @@
 #include "version.h"
 
 static const char *const KNOWN_COMMANDS[] = {
-    "add", "remove", "rm", "init", "list", "ls", "doctor", "install", "uninstall",
+    "add", "remove", "rm", "init", "list", "ls", "doctor", "install", "uninstall", "edit",
 };
 
 /* Renders `markup`: a span opened and closed with octal '\001' is a literal
@@ -81,6 +81,7 @@ static void print_usage(void) {
         "  \001shimback install\001 [\001--prefix\001 \002<dir>\002] "
         "[\001--shell\001 \002<shell>\002[,\002<shell>\002]... | \001--all\001]\n"
         "  \001shimback uninstall\001 [\001--prefix\001 \002<dir>\002] [\001--full\001]\n"
+        "  \001shimback edit\001\n"
         "  \001shimback --help\001 | \001--version\001\n"
         "\n"
         "\003COMMANDS:\003\n"
@@ -137,7 +138,13 @@ static void print_usage(void) {
         "  \001uninstall\001 Remove every shim symlink shimback created, the installed binary,\n"
         "            and the man page. \001--full\001 also clears the config file and the\n"
         "            PATH blocks in shell startup files (left alone by default).\n"
-        "              \004e.g. shimback uninstall --full\004\n");
+        "              \004e.g. shimback uninstall --full\004\n"
+        "\n"
+        "  \001edit\001      Open config.toml in \002$EDITOR\002, or, if unset, the first of \002nvim\002,\n"
+        "            \002vim\002, \002vi\002, \002nano\002, \002pico\002 found on \002PATH\002 -- fails if none of\n"
+        "            those are found either. Warns (without failing) if the file no\n"
+        "            longer parses once the editor exits successfully.\n"
+        "              \004e.g. shimback edit\004\n");
 }
 
 int cli_run(int argc, char **argv) {
@@ -173,6 +180,9 @@ int cli_run(int argc, char **argv) {
     }
     if (strcmp(argv[1], "uninstall") == 0) {
         return cmd_uninstall(argc - 1, argv + 1);
+    }
+    if (strcmp(argv[1], "edit") == 0) {
+        return cmd_edit(argc - 1, argv + 1);
     }
 
     fprintf(stderr, "shimback: unknown command '%s'\n", argv[1]);

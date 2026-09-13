@@ -60,6 +60,7 @@ shimback list [--full]
 shimback doctor [fix]
 shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]
 shimback uninstall [--prefix <dir>] [--full]
+shimback edit
 shimback --help | --version
 ```
 
@@ -415,6 +416,24 @@ and the man page installed alongside it. By default the config file and the
 `add`/`init` just picks up where things left off; pass `--full` to also
 delete the config file and remove those `PATH` blocks — a complete teardown.
 Safe to re-run: nothing left to remove is just reported as already gone.
+
+### `edit`
+
+```sh
+shimback edit
+```
+
+Opens `config.toml` in `$EDITOR`, or, if that's unset (or empty), the first
+of `nvim`, `vim`, `vi`, `nano`, `pico` found on `PATH` — in that order.
+Fails with a clear error if `$EDITOR` isn't set and none of those five are
+found either. A multi-word `$EDITOR` (e.g. `EDITOR="code --wait"`) works as
+expected — it's run through a shell so its own flags are honored, not
+treated as part of a single literal command name. The config's directory is
+created first if it doesn't exist yet, so editing works even before the
+first `add`. Once the editor exits, if it exited successfully but the file
+it left behind no longer parses, shimback warns about that right away
+(without failing the command) rather than letting the next `add`/`list`/
+`doctor` surface a confusing error far removed from the edit that caused it.
 
 ## Fallback policies
 
