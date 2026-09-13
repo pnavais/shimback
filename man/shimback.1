@@ -6,9 +6,10 @@ shimback \- run a primary command, transparently fall back to another
 .I name
 [\fB\-s\fR \fIsource\fR] [\fB\-\-source\-arg\fR \fIarg\fR]\|.\|.\|.
 \fB\-f\fR \fIfallback\fR [\fB\-\-fallback\-arg\fR \fIarg\fR]\|.\|.\|.
-[\fB\-\-policy\fR \fIexit\-code\fR|\fIheuristic\fR|\fIexit\-code\-match\fR|\fIroute\-args\fR|\fIrewrite\fR]
+[\fB\-\-policy\fR \fIexit\-code\fR|\fIheuristic\fR|\fIexit\-code\-match\fR|\fIroute\-args\fR|\fIrewrite\fR|\fIsplit\-args\fR]
 [\fB\-\-error\-pattern\fR \fIp\fR]\|.\|.\|. [\fB\-\-exit\-code\fR \fIcode\fR]\|.\|.\|.
 [\fB\-\-route\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-strip\-matched\-args\fR]
+[\fB\-\-split\-source\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-split\-fallback\-arg\fR \fIarg\fR]\|.\|.\|.
 [\fB\-\-rewrite\fR \fIfrom\fR=\fIto\fR]\|.\|.\|. [\fB\-\-diagnostic\fR] [\fB\-\-force\fR]
 .br
 .B shimback remove
@@ -290,6 +291,8 @@ the configured codes for
 .IR exit\-code\-match ,
 route args and strip\-matched\-args for
 .IR route\-args ,
+source/fallback route args and strip\-matched\-args for
+.IR split\-args ,
 and each
 .I from
 ->
@@ -474,6 +477,46 @@ inherited stdio \(em no captured trial run, no retry on failure. Pass
 to drop the matched argument(s) before forwarding the rest. Requires at
 least one
 .BR \-\-route\-arg .
+.TP
+.B split\-args
+Also decides up front from the arguments alone, but two\-sided: source and
+fallback each get their own set of discriminating args,
+.B \-\-split\-source\-arg
+and
+.B \-\-split\-fallback\-arg
+(each repeatable; at least one of each required). A side wins only when
+.I every
+one of its own args is present in the invocation (a full match, not just
+any one of them). If both sides fully match at once (one side's args are a
+subset of the other's), the side needing more matched args \(em the more
+discriminating one \(em wins; an exact tie in count favors source. If
+neither side fully matches, there is nothing to decide up front, so this
+falls back to plain
+.B exit\-code
+behavior instead: run source, and fall back on any failure. Whichever side
+wins outright runs directly with live, inherited stdio (no captured trial
+run) \(em the "neither matched" case is the only one that goes through the
+normal captured trial run.
+.B \-\-strip\-matched\-args
+works the same as for
+.IR route\-args ,
+removing whichever side's own args actually matched before forwarding the
+rest. Requires at least one
+.B \-\-split\-source\-arg
+and one
+.BR \-\-split\-fallback\-arg .
+.RS
+.PP
+Example:
+.RS
+.nf
+shimback add release \-s ./build\-debug \-f ./build\-release \e
+    \-\-policy split\-args \e
+    \-\-split\-source\-arg \-\-debug \-\-split\-source\-arg \-g \e
+    \-\-split\-fallback\-arg \-\-debug \-\-split\-fallback\-arg \-g \-\-split\-fallback\-arg \-O3
+.fi
+.RE
+.RE
 .TP
 .B rewrite
 Not a fallback\-on\-failure policy either, and unlike every other policy,

@@ -24,6 +24,7 @@ const char *policy_to_string(Policy p) {
         case POLICY_EXIT_CODE_MATCH: return "exit-code-match";
         case POLICY_ROUTE_ARGS: return "route-args";
         case POLICY_REWRITE: return "rewrite";
+        case POLICY_SPLIT_ARGS: return "split-args";
         case POLICY_EXIT_CODE:
         default: return "exit-code";
     }
@@ -48,6 +49,10 @@ bool policy_from_string(const char *s, Policy *out) {
     }
     if (strcmp(s, "rewrite") == 0) {
         *out = POLICY_REWRITE;
+        return true;
+    }
+    if (strcmp(s, "split-args") == 0) {
+        *out = POLICY_SPLIT_ARGS;
         return true;
     }
     return false;
@@ -115,6 +120,14 @@ void shim_entry_free(ShimEntry *entry) {
         free(entry->route_args[i]);
     }
     free(entry->route_args);
+    for (size_t i = 0; i < entry->source_route_arg_count; i++) {
+        free(entry->source_route_args[i]);
+    }
+    free(entry->source_route_args);
+    for (size_t i = 0; i < entry->fallback_route_arg_count; i++) {
+        free(entry->fallback_route_args[i]);
+    }
+    free(entry->fallback_route_args);
     for (size_t i = 0; i < entry->rewrite_from_count; i++) {
         free(entry->rewrite_from[i]);
     }
@@ -514,6 +527,38 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             free(entry->route_args);
             entry->route_args = vec.items;
             entry->route_arg_count = vec.count;
+        } else if (strcmp(key, "source_route_args") == 0) {
+            StrVec vec;
+            strvec_init(&vec);
+            if (!parse_string_array(&cursor, &vec)) {
+                strvec_free(&vec);
+                snprintf(errbuf, errbuf_size, "line %d: malformed 'source_route_args' array",
+                         line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+            for (size_t i = 0; i < entry->source_route_arg_count; i++) {
+                free(entry->source_route_args[i]);
+            }
+            free(entry->source_route_args);
+            entry->source_route_args = vec.items;
+            entry->source_route_arg_count = vec.count;
+        } else if (strcmp(key, "fallback_route_args") == 0) {
+            StrVec vec;
+            strvec_init(&vec);
+            if (!parse_string_array(&cursor, &vec)) {
+                strvec_free(&vec);
+                snprintf(errbuf, errbuf_size, "line %d: malformed 'fallback_route_args' array",
+                         line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+            for (size_t i = 0; i < entry->fallback_route_arg_count; i++) {
+                free(entry->fallback_route_args[i]);
+            }
+            free(entry->fallback_route_args);
+            entry->fallback_route_args = vec.items;
+            entry->fallback_route_arg_count = vec.count;
         } else if (strcmp(key, "diagnostic") == 0) {
             if (strcmp(value_str, "true") == 0) {
                 entry->diagnostic = true;
@@ -615,6 +660,14 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
         if (entry->policy == POLICY_ROUTE_ARGS && entry->route_arg_count == 0) {
             snprintf(errbuf, errbuf_size,
                      "shim '%s' uses policy \"route-args\" but has no route_args", entry->name);
+            return CONFIG_ERR_VALIDATION;
+        }
+        if (entry->policy == POLICY_SPLIT_ARGS &&
+            (entry->source_route_arg_count == 0 || entry->fallback_route_arg_count == 0)) {
+            snprintf(errbuf, errbuf_size,
+                     "shim '%s' uses policy \"split-args\" but needs at least one "
+                     "source_route_args and one fallback_route_args entry",
+                     entry->name);
             return CONFIG_ERR_VALIDATION;
         }
         if (entry->policy == POLICY_REWRITE && entry->rewrite_from_count == 0) {
@@ -722,6 +775,28 @@ static void render_config(const Config *cfg, DynBuf *out) {
                     dynbuf_append_str(out, ", ");
                 }
                 append_escaped_string(out, entry->route_args[j]);
+            }
+            dynbuf_append_str(out, "]\n");
+        }
+
+        if (entry->source_route_arg_count > 0) {
+            dynbuf_append_str(out, "source_route_args = [");
+            for (size_t j = 0; j < entry->source_route_arg_count; j++) {
+                if (j > 0) {
+                    dynbuf_append_str(out, ", ");
+                }
+                append_escaped_string(out, entry->source_route_args[j]);
+            }
+            dynbuf_append_str(out, "]\n");
+        }
+
+        if (entry->fallback_route_arg_count > 0) {
+            dynbuf_append_str(out, "fallback_route_args = [");
+            for (size_t j = 0; j < entry->fallback_route_arg_count; j++) {
+                if (j > 0) {
+                    dynbuf_append_str(out, ", ");
+                }
+                append_escaped_string(out, entry->fallback_route_args[j]);
             }
             dynbuf_append_str(out, "]\n");
         }

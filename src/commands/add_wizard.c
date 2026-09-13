@@ -47,21 +47,26 @@ typedef enum {
     PAGE_PATTERNS,
     PAGE_EXIT_CODES,
     PAGE_ROUTE_ARGS,
+    PAGE_SPLIT_SOURCE_ARGS,
+    PAGE_SPLIT_FALLBACK_ARGS,
     PAGE_STRIP_MATCHED,
     PAGE_REWRITE,
     PAGE_DIAGNOSTIC,
     PAGE_DONE,
 } PageId;
 
-static const char *const POLICY_NAMES[5] = {
-    "exit-code", "heuristic", "exit-code-match", "route-args", "rewrite",
+#define POLICY_COUNT 6
+
+static const char *const POLICY_NAMES[POLICY_COUNT] = {
+    "exit-code", "heuristic", "exit-code-match", "route-args", "rewrite", "split-args",
 };
-static const char *const POLICY_DESCRIPTIONS[5] = {
+static const char *const POLICY_DESCRIPTIONS[POLICY_COUNT] = {
     "Fall back whenever source exits non-zero (the default).",
     "Fall back only when source's stderr matches a configured error pattern.",
     "Fall back only when source exits with one of the configured codes.",
     "Pick source or fallback up front, based on the invocation's arguments.",
     "Always run source, rewriting matched arguments first; no fallback used.",
+    "Pick source or fallback up front, from each side's own most-discriminating args.",
 };
 
 /* Working state for the whole wizard: one field (plus a "committed yet"
@@ -87,6 +92,10 @@ typedef struct {
     bool exit_codes_set;
     StrVec route_args;
     bool route_args_set;
+    StrVec split_source_args;
+    bool split_source_args_set;
+    StrVec split_fallback_args;
+    bool split_fallback_args_set;
     bool strip_matched_args;
     bool strip_matched_set;
     StrVec rewrite_from;
@@ -120,6 +129,7 @@ static PageId after_fallback(Policy policy) {
         case POLICY_EXIT_CODE_MATCH: return PAGE_EXIT_CODES;
         case POLICY_ROUTE_ARGS: return PAGE_ROUTE_ARGS;
         case POLICY_REWRITE: return PAGE_REWRITE;
+        case POLICY_SPLIT_ARGS: return PAGE_SPLIT_SOURCE_ARGS;
         case POLICY_EXIT_CODE:
         default: return PAGE_DIAGNOSTIC;
     }
@@ -141,6 +151,8 @@ static PageId next_page(const WizardState *st, PageId current) {
         case PAGE_PATTERNS: return PAGE_DIAGNOSTIC;
         case PAGE_EXIT_CODES: return PAGE_DIAGNOSTIC;
         case PAGE_ROUTE_ARGS: return PAGE_STRIP_MATCHED;
+        case PAGE_SPLIT_SOURCE_ARGS: return PAGE_SPLIT_FALLBACK_ARGS;
+        case PAGE_SPLIT_FALLBACK_ARGS: return PAGE_STRIP_MATCHED;
         case PAGE_STRIP_MATCHED: return PAGE_DIAGNOSTIC;
         case PAGE_REWRITE: return PAGE_DIAGNOSTIC;
         case PAGE_DIAGNOSTIC:
@@ -202,6 +214,12 @@ static void reset_after_policy_change(WizardState *st) {
     strvec_free(&st->route_args);
     strvec_init(&st->route_args);
     st->route_args_set = false;
+    strvec_free(&st->split_source_args);
+    strvec_init(&st->split_source_args);
+    st->split_source_args_set = false;
+    strvec_free(&st->split_fallback_args);
+    strvec_init(&st->split_fallback_args);
+    st->split_fallback_args_set = false;
     st->strip_matched_args = false;
     st->strip_matched_set = false;
     strvec_free(&st->rewrite_from);
@@ -224,6 +242,8 @@ static bool page_present(const WizardSeed *seed, const WizardState *st, PageId p
         case PAGE_PATTERNS: return seed->patterns->count > 0;
         case PAGE_EXIT_CODES: return seed->exit_code_count > 0;
         case PAGE_ROUTE_ARGS: return seed->route_args->count > 0;
+        case PAGE_SPLIT_SOURCE_ARGS: return seed->split_source_args->count > 0;
+        case PAGE_SPLIT_FALLBACK_ARGS: return seed->split_fallback_args->count > 0;
         case PAGE_STRIP_MATCHED: return true;
         case PAGE_REWRITE: return seed->rewrite_from->count > 0;
         case PAGE_DIAGNOSTIC: return true;
@@ -280,6 +300,19 @@ static void auto_commit_page(WizardState *st, const WizardSeed *seed, PageId p) 
                 strvec_push(&st->route_args, xstrdup(seed->route_args->items[i]));
             }
             st->route_args_set = true;
+            break;
+        case PAGE_SPLIT_SOURCE_ARGS:
+            for (size_t i = 0; i < seed->split_source_args->count; i++) {
+                strvec_push(&st->split_source_args, xstrdup(seed->split_source_args->items[i]));
+            }
+            st->split_source_args_set = true;
+            break;
+        case PAGE_SPLIT_FALLBACK_ARGS:
+            for (size_t i = 0; i < seed->split_fallback_args->count; i++) {
+                strvec_push(&st->split_fallback_args,
+                             xstrdup(seed->split_fallback_args->items[i]));
+            }
+            st->split_fallback_args_set = true;
             break;
         case PAGE_STRIP_MATCHED:
             st->strip_matched_args = seed->strip_matched_args;
@@ -360,6 +393,14 @@ static void print_breadcrumb(const WizardState *st, const History *hist, size_t 
                 break;
             case PAGE_ROUTE_ARGS:
                 printf("%s  route args: %zu configured%s\n", dim, st->route_args.count, reset);
+                break;
+            case PAGE_SPLIT_SOURCE_ARGS:
+                printf("%s  source route args: %zu configured%s\n", dim,
+                       st->split_source_args.count, reset);
+                break;
+            case PAGE_SPLIT_FALLBACK_ARGS:
+                printf("%s  fallback route args: %zu configured%s\n", dim,
+                       st->split_fallback_args.count, reset);
                 break;
             case PAGE_STRIP_MATCHED:
                 printf("%s  strip matched args: %s%s\n", dim,
@@ -444,6 +485,10 @@ static size_t input_row(const WizardState *st, size_t hist_pos, PageId page) {
             return row + 2 + st->patterns.count;
         case PAGE_ROUTE_ARGS:
             return row + 2 + st->route_args.count;
+        case PAGE_SPLIT_SOURCE_ARGS:
+            return row + 2 + st->split_source_args.count;
+        case PAGE_SPLIT_FALLBACK_ARGS:
+            return row + 2 + st->split_fallback_args.count;
         case PAGE_EXIT_CODES:
             return row + 2 + st->exit_code_count;
         case PAGE_REWRITE:
@@ -495,7 +540,7 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
             break;
         case PAGE_POLICY:
             bar_line(colorize, "%sPolicy:%s", hdr, reset);
-            for (int i = 0; i < 5; i++) {
+            for (int i = 0; i < POLICY_COUNT; i++) {
                 bool hl = (i == policy_highlight);
                 if (hl) {
                     bar_line(colorize, "> %s%s%s", hl_color, POLICY_NAMES[i], reset);
@@ -534,6 +579,13 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
             break;
         case PAGE_ROUTE_ARGS:
             print_list_page(colorize, "Route args", true, &st->route_args, input);
+            break;
+        case PAGE_SPLIT_SOURCE_ARGS:
+            print_list_page(colorize, "Source route args", true, &st->split_source_args, input);
+            break;
+        case PAGE_SPLIT_FALLBACK_ARGS:
+            print_list_page(colorize, "Fallback route args", true, &st->split_fallback_args,
+                             input);
             break;
         case PAGE_EXIT_CODES:
             bar_line(colorize,
@@ -587,6 +639,8 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
     strvec_init(&st.fallback_args);
     strvec_init(&st.patterns);
     strvec_init(&st.route_args);
+    strvec_init(&st.split_source_args);
+    strvec_init(&st.split_fallback_args);
     strvec_init(&st.rewrite_from);
     strvec_init(&st.rewrite_to);
     st.policy = seed->policy;
@@ -600,6 +654,8 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
         strvec_free(&st.fallback_args);
         strvec_free(&st.patterns);
         strvec_free(&st.route_args);
+        strvec_free(&st.split_source_args);
+        strvec_free(&st.split_fallback_args);
         strvec_free(&st.rewrite_from);
         strvec_free(&st.rewrite_to);
         free(st.exit_codes);
@@ -697,11 +753,11 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
 
         if (page == PAGE_POLICY) {
             if (key.type == TUI_KEY_UP) {
-                policy_highlight = (policy_highlight + 4) % 5;
+                policy_highlight = (policy_highlight + POLICY_COUNT - 1) % POLICY_COUNT;
                 continue;
             }
             if (key.type == TUI_KEY_DOWN) {
-                policy_highlight = (policy_highlight + 1) % 5;
+                policy_highlight = (policy_highlight + 1) % POLICY_COUNT;
                 continue;
             }
             if (key.type == TUI_KEY_ENTER) {
@@ -883,16 +939,25 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
             }
 
             case PAGE_PATTERNS:
-            case PAGE_ROUTE_ARGS: {
-                StrVec *list = (page == PAGE_PATTERNS) ? &st.patterns : &st.route_args;
+            case PAGE_ROUTE_ARGS:
+            case PAGE_SPLIT_SOURCE_ARGS:
+            case PAGE_SPLIT_FALLBACK_ARGS: {
+                StrVec *list;
+                switch (page) {
+                    case PAGE_PATTERNS: list = &st.patterns; break;
+                    case PAGE_ROUTE_ARGS: list = &st.route_args; break;
+                    case PAGE_SPLIT_SOURCE_ARGS: list = &st.split_source_args; break;
+                    default: list = &st.split_fallback_args; break;
+                }
                 if (input_len == 0) {
                     if (list->count == 0) {
                         snprintf(error_msg, sizeof(error_msg), "At least one is required.");
                     } else {
-                        if (page == PAGE_PATTERNS) {
-                            st.patterns_set = true;
-                        } else {
-                            st.route_args_set = true;
+                        switch (page) {
+                            case PAGE_PATTERNS: st.patterns_set = true; break;
+                            case PAGE_ROUTE_ARGS: st.route_args_set = true; break;
+                            case PAGE_SPLIT_SOURCE_ARGS: st.split_source_args_set = true; break;
+                            default: st.split_fallback_args_set = true; break;
                         }
                         if (advance_or_reuse(&st, &hist, &hist_pos)) {
                             done = true;
@@ -992,6 +1057,8 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
         strvec_free(&st.fallback_args);
         strvec_free(&st.patterns);
         strvec_free(&st.route_args);
+        strvec_free(&st.split_source_args);
+        strvec_free(&st.split_fallback_args);
         strvec_free(&st.rewrite_from);
         strvec_free(&st.rewrite_to);
         free(st.exit_codes);
@@ -1012,6 +1079,8 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
     out->exit_code_count = st.exit_code_count;
     out->route_args = st.route_args;
     out->strip_matched_args = st.strip_matched_args;
+    out->split_source_args = st.split_source_args;
+    out->split_fallback_args = st.split_fallback_args;
     out->rewrite_from = st.rewrite_from;
     out->rewrite_to = st.rewrite_to;
     out->diagnostic = st.diagnostic;

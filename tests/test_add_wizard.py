@@ -439,6 +439,44 @@ finally:
     sb.cleanup()
 
 
+# --- 13: split-args policy through the wizard -- both route-arg-list pages
+# (source's own and fallback's own) are required, at least one entry each,
+# then the shared strip-matched-args page. ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"sptool" + ENTER)
+    sb.send(DOWN * 5 + ENTER)      # exit-code -> ... -> split-args
+    sb.send(ENTER)                 # source: auto
+    sb.send(ENTER)                 # source args: none
+    sb.send(b"/bin/echo" + ENTER)  # fallback
+    sb.send(ENTER)                 # fallback args: none
+    out = sb.send(ENTER)           # source route args: blank -> at least one required
+    assert_contains("13: source route args require at least one", out, "At least one is required.")
+    sb.send(b"-1" + ENTER)         # source route arg 1
+    sb.send(b"-2" + ENTER)         # source route arg 2
+    sb.send(ENTER)                 # finish source route args list
+    out = sb.send(ENTER)           # fallback route args: blank -> at least one required
+    assert_contains("13: fallback route args require at least one", out,
+                     "At least one is required.")
+    sb.send(b"-1" + ENTER)
+    sb.send(b"-2" + ENTER)
+    sb.send(b"-3" + ENTER)
+    sb.send(ENTER)                 # finish fallback route args list
+    sb.send(b"y" + ENTER)          # strip-matched-args: yes
+    sb.send(ENTER, 0.5)            # diagnostic: no
+    code = sb.wait()
+    assert_eq("13 exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("13: policy is split-args", cfg, 'policy = "split-args"')
+    assert_contains("13: source_route_args stored", cfg, 'source_route_args = ["-1", "-2"]')
+    assert_contains("13: fallback_route_args stored", cfg,
+                     'fallback_route_args = ["-1", "-2", "-3"]')
+    assert_contains("13: strip_matched_args stored", cfg, "strip_matched_args = true")
+finally:
+    sb.cleanup()
+
+
 if FAILURES:
     print(f"{len(FAILURES)} assertion(s) failed", file=sys.stderr)
     sys.exit(1)

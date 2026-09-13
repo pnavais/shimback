@@ -115,6 +115,97 @@ fi
 assert_not_contains "route-args without route args: nothing written to config" \
     "$("$SHIMBACK" list)" "badroute"
 
+# --- split-args policy: two separate route-arg sets, one per side; a side
+# only wins on a full match of its own args, and the more-discriminating
+# (larger) full match wins a tie between both sides; source wins an exact
+# tie in count. ---
+"$SHIMBACK" add sptool -s "$FAKE_ECHO" -f "$FAKE_FALLBACK" --policy split-args \
+    --split-source-arg -1 --split-source-arg -2 \
+    --split-fallback-arg -1 --split-fallback-arg -2 --split-fallback-arg -3 >/dev/null
+SPTOOL="$(shim_path sptool)"
+
+out="$("$SPTOOL" -1 -2)"
+code=$?
+assert_eq "split-args exact source match: exit 0" "0" "$code"
+assert_contains "split-args exact source match: source ran" "$out" "ECHO_RAN:-1 -2"
+assert_not_contains "split-args exact source match: fallback did not run" "$out" "FALLBACK_RAN"
+
+out="$("$SPTOOL" -1 -2 -3)"
+code=$?
+assert_eq "split-args more-discriminating fallback wins: exit 0" "0" "$code"
+assert_contains "split-args more-discriminating fallback wins: fallback ran" "$out" \
+    "FALLBACK_RAN:-1 -2 -3"
+
+# --- split-args: neither side fully matches -> falls through to
+# exit-code-style behavior (run source, fall back on any failure) ---
+out="$("$SPTOOL" -1)"
+code=$?
+assert_eq "split-args no full match, source succeeds: exit 0" "0" "$code"
+assert_contains "split-args no full match, source succeeds: source's real output surfaces" \
+    "$out" "ECHO_RAN:-1"
+assert_not_contains "split-args no full match, source succeeds: fallback did not run" "$out" \
+    "FALLBACK_RAN"
+
+out="$(FAKE_EXIT_CODE=1 "$SPTOOL" -1)"
+code=$?
+assert_eq "split-args no full match, source fails: falls back to exit 0" "0" "$code"
+assert_not_contains "split-args no full match, source fails: source output is invisible" "$out" \
+    "ECHO_RAN"
+assert_contains "split-args no full match, source fails: fallback ran" "$out" "FALLBACK_RAN:-1"
+
+# --- split-args: both sides fully match with equal counts -> source wins ---
+"$SHIMBACK" add sptietool -s "$FAKE_ECHO" -f "$FAKE_FALLBACK" --policy split-args \
+    --split-source-arg -1 --split-source-arg -2 \
+    --split-fallback-arg -3 --split-fallback-arg -4 >/dev/null
+SPTIETOOL="$(shim_path sptietool)"
+
+out="$("$SPTIETOOL" -1 -2 -3 -4)"
+assert_contains "split-args tie: source wins" "$out" "ECHO_RAN:-1 -2 -3 -4"
+assert_not_contains "split-args tie: fallback did not run" "$out" "FALLBACK_RAN"
+
+# --- split-args with --strip-matched-args removes only the winning side's
+# own matched route args, not the other side's ---
+"$SHIMBACK" add spstriptool -s "$FAKE_ECHO" -f "$FAKE_FALLBACK" --policy split-args \
+    --split-source-arg -1 --split-fallback-arg -9 --strip-matched-args >/dev/null
+SPSTRIPTOOL="$(shim_path spstriptool)"
+
+out="$("$SPSTRIPTOOL" -1 keep-me)"
+assert_eq "split-args strip: source ran without its matched route arg" "ECHO_RAN:keep-me" "$out"
+
+# --- split-args: source_args/fallback_args (baked-in) apply to whichever
+# side actually wins ---
+"$SHIMBACK" add spextra -s "$FAKE_ECHO" -f "$FAKE_FALLBACK" --policy split-args \
+    --split-source-arg -1 --split-fallback-arg -1 --split-fallback-arg -2 \
+    --source-arg "--srcflag" --fallback-arg "--fbflag" >/dev/null
+SPEXTRA="$(shim_path spextra)"
+
+out="$("$SPEXTRA" -1)"
+assert_contains "split-args source wins: source_args prepended" "$out" "ECHO_RAN:--srcflag -1"
+out="$("$SPEXTRA" -1 -2)"
+assert_contains "split-args fallback wins: fallback_args prepended" "$out" \
+    "FALLBACK_RAN:--fbflag -1 -2"
+
+# --- split-args diagnostic opt-in only fires when fallback wins ---
+"$SHIMBACK" add spdiag -s "$FAKE_ECHO" -f "$FAKE_FALLBACK" --policy split-args \
+    --split-source-arg -1 --split-fallback-arg -1 --split-fallback-arg -2 --diagnostic >/dev/null
+SPDIAG="$(shim_path spdiag)"
+"$SPDIAG" -1 -2 >/dev/null 2>"$SANDBOX/err"
+assert_contains "split-args diagnostic: prints a note when fallback wins" \
+    "$(cat "$SANDBOX/err")" "shimback:"
+"$SPDIAG" -1 >/dev/null 2>"$SANDBOX/err"
+assert_eq "split-args diagnostic: silent when source wins outright" "" "$(cat "$SANDBOX/err")"
+
+# --- split-args requires at least one --split-source-arg and one
+# --split-fallback-arg -- rejected at add time otherwise ---
+"$SHIMBACK" add badsplit -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --policy split-args \
+    --split-source-arg -1 >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add with policy split-args and no --split-fallback-arg should have failed"
+fi
+assert_not_contains "split-args missing one side: nothing written to config" \
+    "$("$SHIMBACK" list)" "badsplit"
+
 # --- rewrite policy: an alias/argument-macro mechanism, not a fallback one.
 # fake_fallback.sh (which just echoes its own args as "FALLBACK_RAN:$*") is
 # reused here as the *source* -- rewrite never touches fallback at all, so

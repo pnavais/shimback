@@ -30,6 +30,7 @@ static const char *policy_color(Policy p) {
         case POLICY_EXIT_CODE_MATCH: return ANSI_MAGENTA;
         case POLICY_ROUTE_ARGS: return ANSI_CYAN;
         case POLICY_REWRITE: return ANSI_GREEN;
+        case POLICY_SPLIT_ARGS: return ANSI_RED;
         case POLICY_EXIT_CODE:
         default: return NULL;
     }
@@ -85,6 +86,14 @@ static void print_full_details(const ShimEntry *e, bool colorize) {
 
     if (e->policy == POLICY_ROUTE_ARGS) {
         print_joined(colorize, "route args", e->route_args, e->route_arg_count);
+        print_detail_line(colorize, "strip matched args", e->strip_matched_args ? "true" : "false");
+    }
+
+    if (e->policy == POLICY_SPLIT_ARGS) {
+        print_joined(colorize, "source route args", e->source_route_args,
+                     e->source_route_arg_count);
+        print_joined(colorize, "fallback route args", e->fallback_route_args,
+                     e->fallback_route_arg_count);
         print_detail_line(colorize, "strip matched args", e->strip_matched_args ? "true" : "false");
     }
 
