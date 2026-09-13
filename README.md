@@ -1,6 +1,6 @@
 # shimback
 
-![shimback banner](assets/banner2.png)
+![shimback banner](assets/banner.png)
 
 `shimback` is a small, dependency-free command-line shim: it wraps a command
 name (e.g. `sed`) with a **source** binary to run and a **fallback** binary
@@ -36,7 +36,8 @@ diagnostic (see `diagnostic` below).
 ## Usage
 
 ```
-shimback add <name> [-s <source>] -f <fallback>
+shimback add <name> [-s <source>] [--source-arg <arg>]...
+                     -f <fallback> [--fallback-arg <arg>]...
                      [--policy exit-code|heuristic|exit-code-match|route-args|rewrite]
                      [--error-pattern <p>]... [--exit-code <code>]...
                      [--route-arg <arg>]... [--strip-matched-args]
@@ -78,6 +79,24 @@ shimback add sed -f /usr/bin/sed
   looked up on `PATH` (skipping nothing, unlike auto-resolved `-s`) exactly
   once, the same way a shell would find it, and that resolved path is what
   gets stored.
+- `--source-arg <arg>`/`--fallback-arg <arg>` (each repeatable) attach
+  fixed, baked-in arguments to source/fallback, independent of policy and
+  independent of each other — whichever one actually runs gets its own
+  extra arguments prepended *before* whatever the shim was invoked with,
+  every time. This is what lets a shim double as a regular alias with
+  flags built in, on top of whatever its policy already does:
+
+  ```sh
+  shimback add cools -s /bin/ls --source-arg -l --source-arg -t \
+      --source-arg -r --source-arg -a --source-arg -h -f /usr/local/bin/eza
+  ```
+
+  Running `cools` runs `ls -l -t -r -a -h`; `cools somedir` runs
+  `ls -l -t -r -a -h somedir` — the same shape as a shell alias like
+  `alias cools='ls -ltrah'`, just resolved once at `add` time like
+  everything else here. Under `--policy rewrite`, `source_args` land
+  before the (possibly rewritten) invocation arguments, and are never
+  themselves subject to rewriting.
 - `add` refuses to create a shim where source and fallback resolve to the
   same binary (nothing would ever change), and never writes anything if
   validation fails.
@@ -111,8 +130,11 @@ Run `add` at an interactive terminal with required information missing
 (no name at all, or a name but no fallback, or a policy that needs
 `--error-pattern`/`--exit-code`/`--route-arg`/`--rewrite` and doesn't have
 one) and, instead of failing, a small step-by-step wizard walks you through
-filling it in: name, policy (picked from a list), source, fallback, then
-whatever the chosen policy still needs, then the diagnostic flag. Whatever
+filling it in: name, policy (picked from a list), source, source's extra
+args, fallback, fallback's extra args, then whatever the chosen policy
+still needs, then the diagnostic flag. The two extra-args pages are
+optional list pages, same as the policy-specific ones, except blank Enter
+finishes them with zero items just as happily as with several. Whatever
 was already given on the command line (e.g. `shimback add mytool -s
 /bin/ls`) is skipped straight past — the wizard starts right at the first
 page that's actually missing (`fallback`, in that example) — but every
@@ -127,9 +149,9 @@ reachable and editable.
   session — it can't skip ahead into territory you haven't reached yet
   ("forth" means the last page you'd gotten to, not further).
 - Changing the **policy** after having already gone further resets
-  everything after it (source, fallback, and whatever that policy's own
-  page had collected), since a different policy needs different follow-up
-  pages — you just re-enter them.
+  everything after it (source, its extra args, fallback, its extra args,
+  and whatever that policy's own page had collected), since a different
+  policy needs different follow-up pages — you just re-enter them.
 - **Esc** or **Ctrl-C** aborts at any point; nothing is written (no
   symlink, no config entry) unless the wizard runs all the way through.
 
@@ -218,18 +240,23 @@ yellow. Piping the output (e.g. to a file or another command) disables
 color automatically.
 
 `shimback list --full` (or `ls --full`) additionally prints whatever the
-table's columns leave out: the policy-specific configuration that actually
-drives each shim's behavior, as extra indented lines right under its row —
-`error_patterns` for `heuristic`, the configured codes for
-`exit-code-match`, `route_args` and `strip_matched_args` for `route-args`,
-and each `<from> -> <to>` pair for `rewrite`. A shim on the plain
-`exit-code` policy has nothing extra to show and gets no additional lines:
+table's columns leave out, as extra indented lines right under a shim's
+row: `source_args`/`fallback_args` (see `add`, above — independent of
+policy, so these can show up for any shim), then whatever's
+policy-specific — `error_patterns` for `heuristic`, the configured codes
+for `exit-code-match`, `route_args` and `strip_matched_args` for
+`route-args`, and each `<from> -> <to>` pair for `rewrite`. A shim with
+none of the above configured has nothing extra to show and gets no
+additional lines:
 
 ```
 NAME   SOURCE     FALLBACK      POLICY           DIAGNOSTIC
 sed    auto       /usr/bin/sed  exit-code        false
 awk    /opt/.../gawk   /usr/bin/awk  heuristic   true
         error patterns: invalid option, illegal option
+ll     /bin/ls    /usr/local/bin/eza  exit-code  false
+        source args: -l, -t, -r, -a, -h
+        fallback args: -la
 ```
 
 ### `doctor`
@@ -474,6 +501,13 @@ source = "/bin/ls"
 policy = "rewrite"
 rewrite_from = ["--full"]
 rewrite_to = ["-ltrah"]
+
+[shims.ll]
+source = "/bin/ls"
+source_args = ["-l", "-t", "-r", "-a", "-h"]
+fallback = "/usr/local/bin/eza"
+fallback_args = ["-la"]
+policy = "exit-code"
 ```
 
 The file is managed by `add`/`remove`, but is plain, hand-editable TOML (a
