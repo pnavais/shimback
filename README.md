@@ -2,28 +2,6 @@
 
 ![shimback banner](assets/banner.png)
 
-## Index
-
-| Section | Link |
-| --- | --- |
-| How it works | [How it works](#how-it-works) |
-| Usage | [Usage](#usage) |
-| `add` | [`add`](#add) |
-| Interactive wizard | [Interactive wizard](#interactive-wizard) |
-| `remove` / `rm` | [`remove` / `rm`](#remove-alias-rm) |
-| `init` | [`init`](#init) |
-| `list` / `ls` | [`list` / `ls`](#list-alias-ls) |
-| `doctor` | [`doctor`](#doctor) |
-| `install` | [`install`](#install) |
-| `uninstall` | [`uninstall`](#uninstall) |
-| Fallback policies | [Fallback policies](#fallback-policies) |
-| Diagnostics | [Diagnostics](#diagnostics) |
-| Configuration | [Configuration](#configuration) |
-| Exit codes | [Exit codes](#exit-codes) |
-| Building | [Building](#building) |
-| Platform support | [Platform support](#platform-support) |
-| License | [License](#license) |
-
 `shimback` is a small, dependency-free command-line shim: it wraps a command
 name (e.g. `sed`) with a **source** binary to run and a **fallback** binary
 to transparently retry with if the source doesn't work out. It was born out
