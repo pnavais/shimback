@@ -48,6 +48,9 @@ static void test_round_trip(void) {
     cfg.shims[awk_idx].fallback = xstrdup("/usr/bin/awk");
     cfg.shims[awk_idx].policy = POLICY_HEURISTIC;
     cfg.shims[awk_idx].diagnostic = true;
+    cfg.shims[awk_idx].fallback_args = xmalloc(1 * sizeof(char *));
+    cfg.shims[awk_idx].fallback_args[0] = xstrdup("--posix");
+    cfg.shims[awk_idx].fallback_arg_count = 1;
     cfg.shims[awk_idx].error_patterns = xmalloc(3 * sizeof(char *));
     cfg.shims[awk_idx].error_patterns[0] = xstrdup("invalid option");
     cfg.shims[awk_idx].error_patterns[1] = xstrdup("illegal option");
@@ -70,6 +73,10 @@ static void test_round_trip(void) {
     cfg.shims[cagao_idx].route_args = xmalloc(1 * sizeof(char *));
     cfg.shims[cagao_idx].route_args[0] = xstrdup("x");
     cfg.shims[cagao_idx].route_arg_count = 1;
+    cfg.shims[cagao_idx].source_args = xmalloc(2 * sizeof(char *));
+    cfg.shims[cagao_idx].source_args[0] = xstrdup("-l");
+    cfg.shims[cagao_idx].source_args[1] = xstrdup("-a");
+    cfg.shims[cagao_idx].source_arg_count = 2;
 
     size_t ls_idx = config_upsert(&cfg, "ls");
     cfg.shims[ls_idx].source = xstrdup("/bin/ls");
@@ -119,6 +126,11 @@ static void test_round_trip(void) {
             check_str_eq("awk.error_patterns[2]", "unrecognized option", awk->error_patterns[2]);
         }
         check(awk->diagnostic == true, "awk.diagnostic == true");
+        check(awk->fallback_arg_count == 1, "awk.fallback_arg_count == 1");
+        if (awk->fallback_arg_count == 1) {
+            check_str_eq("awk.fallback_args[0]", "--posix", awk->fallback_args[0]);
+        }
+        check(awk->source_arg_count == 0, "awk.source_arg_count == 0 (none configured)");
     }
 
     ShimEntry *grep = config_find(&reloaded, "grep");
@@ -143,6 +155,12 @@ static void test_round_trip(void) {
         if (cagao->route_arg_count == 1) {
             check_str_eq("cagao.route_args[0]", "x", cagao->route_args[0]);
         }
+        check(cagao->source_arg_count == 2, "cagao.source_arg_count == 2");
+        if (cagao->source_arg_count == 2) {
+            check_str_eq("cagao.source_args[0]", "-l", cagao->source_args[0]);
+            check_str_eq("cagao.source_args[1]", "-a", cagao->source_args[1]);
+        }
+        check(cagao->fallback_arg_count == 0, "cagao.fallback_arg_count == 0 (none configured)");
     }
 
     ShimEntry *ls = config_find(&reloaded, "ls");

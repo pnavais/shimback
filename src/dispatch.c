@@ -27,38 +27,54 @@ static bool child_succeeded(int status) {
 }
 
 /* Builds the argv to pass to exec: argv[0] = the shim's invoked name (so the
- * wrapped program sees the same identity the user typed), followed by the
- * original forwarded arguments. */
-static char **build_argv(const char *name, int argc, char **argv) {
-    char **fwd = xmalloc((size_t)(argc + 1) * sizeof(char *));
-    fwd[0] = (char *)name;
-    for (int i = 1; i < argc; i++) {
-        fwd[i] = argv[i];
+ * wrapped program sees the same identity the user typed), then `extra`
+ * (the source's or fallback's own fixed, baked-in arguments -- see
+ * ShimEntry.source_args/fallback_args -- empty for a shim that doesn't use
+ * this), then the original forwarded arguments. This is what lets a shim
+ * double as a regular alias: source "ls" with extra ["-ltrah"] always runs
+ * "ls -ltrah <whatever else was typed>". */
+static char **build_argv(const char *name, char *const *extra, size_t extra_count, int argc,
+                          char **argv) {
+    char **fwd = xmalloc((size_t)((size_t)argc + extra_count + 1) * sizeof(char *));
+    size_t n = 0;
+    fwd[n++] = (char *)name;
+    for (size_t i = 0; i < extra_count; i++) {
+        fwd[n++] = extra[i];
     }
-    fwd[argc] = NULL;
+    for (int i = 1; i < argc; i++) {
+        fwd[n++] = argv[i];
+    }
+    fwd[n] = NULL;
     return fwd;
 }
 
-/* Builds the argv for a POLICY_REWRITE shim: argv[0] is `shim_name`; each of
- * argv[1..argc) is checked for an exact match against entry->rewrite_from,
- * and on a match is replaced by the corresponding entry->rewrite_to value,
- * split on spaces into one or more tokens (so "-l -a -h" becomes three
- * arguments, while "-ltrah" stays one; an empty replacement drops the
- * argument entirely). Anything that doesn't match passes through
- * unchanged. NULL-terminated, as execv expects. Caller frees the returned
- * array itself (its elements are all owned by `argv` or newly allocated
- * split tokens -- see the note below on why only the array is freed). */
+/* Builds the argv for a POLICY_REWRITE shim: argv[0] is `shim_name`,
+ * followed by entry->source_args (fixed, baked-in arguments -- see
+ * build_argv), then each of argv[1..argc), checked for an exact match
+ * against entry->rewrite_from and, on a match, replaced by the
+ * corresponding entry->rewrite_to value, split on spaces into one or more
+ * tokens (so "-l -a -h" becomes three arguments, while "-ltrah" stays one;
+ * an empty replacement drops the argument entirely). Anything that doesn't
+ * match passes through unchanged. source_args itself is never subject to
+ * rewriting -- it's fixed, not part of what the user typed. NULL-terminated,
+ * as execv expects. Caller frees the returned array itself (its elements
+ * are all owned by `argv`/`entry` or newly allocated split tokens -- see
+ * the note below on why only the array is freed). */
 static char **build_rewritten_argv(const ShimEntry *entry, const char *shim_name, int argc,
                                     char **argv) {
-    /* Elements borrowed from `argv`/`shim_name` are never freed (they
-     * outlive this call in the caller's own argv); only genuinely new
-     * strings -- the split-out replacement tokens -- are allocated, and
-     * this process is about to exec or exit either way, so those are left
-     * for the OS to reclaim rather than tracked and freed individually. */
-    size_t cap = (size_t)argc + 1;
+    /* Elements borrowed from `argv`/`shim_name`/`entry` are never freed
+     * (they outlive this call in the caller's own argv or the still-live
+     * Config); only genuinely new strings -- the split-out replacement
+     * tokens -- are allocated, and this process is about to exec or exit
+     * either way, so those are left for the OS to reclaim rather than
+     * tracked and freed individually. */
+    size_t cap = (size_t)argc + entry->source_arg_count + 1;
     char **out = xmalloc(cap * sizeof(char *));
     size_t n = 0;
     out[n++] = (char *)shim_name;
+    for (size_t i = 0; i < entry->source_arg_count; i++) {
+        out[n++] = entry->source_args[i];
+    }
 
     for (int i = 1; i < argc; i++) {
         const char *replacement = NULL;
@@ -250,7 +266,10 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         return 127;
     }
 
-    char **fwd_argv = build_argv(shim_name, argc, argv);
+    char **source_argv =
+        build_argv(shim_name, entry->source_args, entry->source_arg_count, argc, argv);
+    char **fallback_argv =
+        build_argv(shim_name, entry->fallback_args, entry->fallback_arg_count, argc, argv);
 
     if (entry->policy == POLICY_ROUTE_ARGS) {
         bool matched = false;
@@ -263,13 +282,18 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
             }
         }
         const char *target = matched ? resolved_fallback : resolved_source;
+        char *const *extra = matched ? entry->fallback_args : entry->source_args;
+        size_t extra_count = matched ? entry->fallback_arg_count : entry->source_arg_count;
 
-        char **route_argv = fwd_argv;
+        char **route_argv = matched ? fallback_argv : source_argv;
         char **filtered = NULL;
         if (entry->strip_matched_args) {
-            filtered = xmalloc((size_t)(argc + 1) * sizeof(char *));
+            filtered = xmalloc((size_t)((size_t)argc + extra_count + 1) * sizeof(char *));
             int fi = 0;
             filtered[fi++] = (char *)shim_name;
+            for (size_t j = 0; j < extra_count; j++) {
+                filtered[fi++] = extra[j];
+            }
             for (int i = 1; i < argc; i++) {
                 bool is_route_arg = false;
                 for (size_t j = 0; j < entry->route_arg_count; j++) {
@@ -300,7 +324,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         warn("'%s': source and fallback resolve to the same binary; running it directly",
              shim_name);
         int status;
-        run_inherited(resolved_source, fwd_argv, &status);
+        run_inherited(resolved_source, source_argv, &status);
         return decode_exit_code(status);
     }
 
@@ -309,7 +333,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     dynbuf_init(&out);
     dynbuf_init(&err);
     int status;
-    run_captured(resolved_source, fwd_argv, &out, &err, &status);
+    run_captured(resolved_source, source_argv, &out, &err, &status);
 
     if (child_succeeded(status)) {
         replay(&out, &err);
@@ -348,7 +372,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
             warn("'%s' failed; falling back to %s", shim_name, resolved_fallback);
         }
         int fb_status;
-        run_inherited(resolved_fallback, fwd_argv, &fb_status);
+        run_inherited(resolved_fallback, fallback_argv, &fb_status);
         return decode_exit_code(fb_status);
     }
 

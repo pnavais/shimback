@@ -14,7 +14,9 @@
 typedef struct {
     const char *name;
     const char *source_arg;
+    StrVec *source_args;
     const char *fallback_arg;
+    StrVec *fallback_args;
     Policy policy; /* whatever cmd_add already resolved (default POLICY_EXIT_CODE) */
     StrVec *patterns;
     int *exit_codes;
@@ -31,7 +33,9 @@ typedef struct {
 typedef struct {
     char *name;
     char *source_arg;   /* raw string as typed/accepted, or NULL for "auto" */
+    StrVec source_args;
     char *fallback_arg; /* raw string as typed/accepted, or NULL (POLICY_REWRITE only) */
+    StrVec fallback_args;
     Policy policy;
     StrVec patterns;
     int *exit_codes;

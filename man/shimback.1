@@ -4,7 +4,8 @@ shimback \- run a primary command, transparently fall back to another
 .SH SYNOPSIS
 .B shimback add
 .I name
-[\fB\-s\fR \fIsource\fR] \fB\-f\fR \fIfallback\fR
+[\fB\-s\fR \fIsource\fR] [\fB\-\-source\-arg\fR \fIarg\fR]\|.\|.\|.
+\fB\-f\fR \fIfallback\fR [\fB\-\-fallback\-arg\fR \fIarg\fR]\|.\|.\|.
 [\fB\-\-policy\fR \fIexit\-code\fR|\fIheuristic\fR|\fIexit\-code\-match\fR|\fIroute\-args\fR|\fIrewrite\fR]
 [\fB\-\-error\-pattern\fR \fIp\fR]\|.\|.\|. [\fB\-\-exit\-code\fR \fIcode\fR]\|.\|.\|.
 [\fB\-\-route\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-strip\-matched\-args\fR]
@@ -127,12 +128,35 @@ instead of
 when the former exists, since that's what most zsh setups source for
 machine\-local overrides).
 .IP
+.B \-\-source\-arg
+and
+.B \-\-fallback\-arg
+(each repeatable) attach fixed, baked\-in arguments to source/fallback,
+independent of policy and of each other \(em whichever one actually runs
+gets its own extra arguments prepended before whatever the shim was
+invoked with, every time. This lets a shim double as a regular alias with
+flags built in, e.g.
+.B \-\-source\-arg\ \-l\ \-\-source\-arg\ \-t\ \-\-source\-arg\ \-r\ \-\-source\-arg\ \-a\ \-\-source\-arg\ \-h
+on a shim wrapping
+.IR ls ,
+the same shape as a shell alias like
+.IR "alias cools='ls -ltrah'" .
+Under
+.IR rewrite ,
+.B \-\-source\-arg
+values land before the (possibly rewritten) invocation arguments, and are
+never themselves subject to rewriting.
+.IP
 Run at an interactive terminal with required information missing (no
 .IR name ,
 or no
 .IR fallback ,
 or a policy missing the option it needs), an interactive wizard fills it
-in instead of failing: one page per field, Enter to confirm and continue
+in instead of failing: one page per field (including
+.B \-\-source\-arg
+/
+.B \-\-fallback\-arg
+as their own optional list pages), Enter to confirm and continue
 (skipping an optional one if left blank), Left/Right arrows to revisit
 and edit earlier pages (Right only as far as a page already reached),
 Esc or Ctrl\-C to abort without writing anything. Whatever was already
@@ -222,8 +246,9 @@ is unset.
 .IP
 .B \-\-full
 also prints, as extra indented lines right under each shim's row,
-whatever the table's columns leave out: the policy\-specific
-configuration that actually drives its behavior (error patterns for
+whatever the table's columns leave out: source_args/fallback_args
+(independent of policy \(em can show up for any shim), then whatever's
+policy\-specific (error patterns for
 .IR heuristic ,
 the configured codes for
 .IR exit\-code\-match ,
@@ -235,9 +260,7 @@ and each
 .I to
 pair for
 .IR rewrite ).
-A shim on the plain
-.I exit\-code
-policy has nothing extra to show.
+A shim with none of the above configured has nothing extra to show.
 .RS
 .PP
 Example:

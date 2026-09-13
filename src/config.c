@@ -98,6 +98,14 @@ void shim_entry_free(ShimEntry *entry) {
     free(entry->name);
     free(entry->source);
     free(entry->fallback);
+    for (size_t i = 0; i < entry->source_arg_count; i++) {
+        free(entry->source_args[i]);
+    }
+    free(entry->source_args);
+    for (size_t i = 0; i < entry->fallback_arg_count; i++) {
+        free(entry->fallback_args[i]);
+    }
+    free(entry->fallback_args);
     for (size_t i = 0; i < entry->error_pattern_count; i++) {
         free(entry->error_patterns[i]);
     }
@@ -421,6 +429,36 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             }
             free(entry->fallback);
             entry->fallback = v;
+        } else if (strcmp(key, "source_args") == 0) {
+            StrVec vec;
+            strvec_init(&vec);
+            if (!parse_string_array(&cursor, &vec)) {
+                strvec_free(&vec);
+                snprintf(errbuf, errbuf_size, "line %d: malformed 'source_args' array", line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+            for (size_t i = 0; i < entry->source_arg_count; i++) {
+                free(entry->source_args[i]);
+            }
+            free(entry->source_args);
+            entry->source_args = vec.items;
+            entry->source_arg_count = vec.count;
+        } else if (strcmp(key, "fallback_args") == 0) {
+            StrVec vec;
+            strvec_init(&vec);
+            if (!parse_string_array(&cursor, &vec)) {
+                strvec_free(&vec);
+                snprintf(errbuf, errbuf_size, "line %d: malformed 'fallback_args' array", line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+            for (size_t i = 0; i < entry->fallback_arg_count; i++) {
+                free(entry->fallback_args[i]);
+            }
+            free(entry->fallback_args);
+            entry->fallback_args = vec.items;
+            entry->fallback_arg_count = vec.count;
         } else if (strcmp(key, "policy") == 0) {
             char *v = parse_quoted_string(&cursor);
             if (!v || !policy_from_string(v, &entry->policy)) {
@@ -612,11 +650,31 @@ static void render_config(const Config *cfg, DynBuf *out) {
             append_escaped_string(out, entry->source);
             dynbuf_append_char(out, '\n');
         }
+        if (entry->source_arg_count > 0) {
+            dynbuf_append_str(out, "source_args = [");
+            for (size_t j = 0; j < entry->source_arg_count; j++) {
+                if (j > 0) {
+                    dynbuf_append_str(out, ", ");
+                }
+                append_escaped_string(out, entry->source_args[j]);
+            }
+            dynbuf_append_str(out, "]\n");
+        }
 
         if (entry->fallback) {
             dynbuf_append_str(out, "fallback = ");
             append_escaped_string(out, entry->fallback);
             dynbuf_append_char(out, '\n');
+        }
+        if (entry->fallback_arg_count > 0) {
+            dynbuf_append_str(out, "fallback_args = [");
+            for (size_t j = 0; j < entry->fallback_arg_count; j++) {
+                if (j > 0) {
+                    dynbuf_append_str(out, ", ");
+                }
+                append_escaped_string(out, entry->fallback_args[j]);
+            }
+            dynbuf_append_str(out, "]\n");
         }
 
         dynbuf_append_str(out, "policy = ");
