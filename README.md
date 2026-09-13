@@ -107,7 +107,13 @@ shimback add sed -f /usr/bin/sed
   `alias cools='ls -ltrah'`, just resolved once at `add` time like
   everything else here. Under `--policy rewrite`, `source_args` land
   before the (possibly rewritten) invocation arguments, and are never
-  themselves subject to rewriting.
+  themselves subject to rewriting. `--fallback-arg` has nothing to attach
+  to without a fallback (only possible under `--policy rewrite`, the one
+  policy where `-f`/`--fallback` is optional) — given without one, it's
+  discarded with a yellow warning rather than kept around uselessly or
+  treated as a hard failure. The [wizard](#interactive-wizard) goes a step
+  further and just never offers the fallback-args page at all when
+  fallback is left blank.
 - `add` refuses to create a shim where source and fallback resolve to the
   same binary (nothing would ever change), and never writes anything if
   validation fails.
@@ -145,12 +151,14 @@ filling it in: name, policy (picked from a list), source, source's extra
 args, fallback, fallback's extra args, then whatever the chosen policy
 still needs, then the diagnostic flag. The two extra-args pages are
 optional list pages, same as the policy-specific ones, except blank Enter
-finishes them with zero items just as happily as with several. Whatever
-was already given on the command line (e.g. `shimback add mytool -s
-/bin/ls`) is skipped straight past — the wizard starts right at the first
-page that's actually missing (`fallback`, in that example) — but every
-earlier page, including the ones filled in from the command line, is still
-reachable and editable.
+finishes them with zero items just as happily as with several — and the
+fallback-args page is skipped entirely (not just left blank) when
+fallback itself was left blank, since there'd be nothing for it to attach
+to. Whatever was already given on the command line (e.g. `shimback add
+mytool -s /bin/ls`) is skipped straight past — the wizard starts right at
+the first page that's actually missing (`fallback`, in that example) —
+but every earlier page, including the ones filled in from the command
+line, is still reachable and editable.
 
 - **Enter** confirms the current page and moves to the next; on an optional
   field (source, or fallback under `--policy rewrite`), pressing it with

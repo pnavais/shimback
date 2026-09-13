@@ -383,6 +383,31 @@ finally:
     sb.cleanup()
 
 
+# --- 11: under --policy rewrite (the one policy where fallback is
+# optional), leaving fallback blank must skip the Fallback args page
+# entirely -- there's no fallback for it to attach to -- landing straight
+# on the policy-specific page instead. ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"rwtool2" + ENTER)
+    sb.send(DOWN + DOWN + DOWN + DOWN + ENTER)  # exit-code -> ... -> rewrite
+    sb.send(ENTER)                # source: auto
+    sb.send(ENTER)                # source args: none
+    out = sb.send(ENTER)          # fallback: blank -> should skip straight to rewrite rules
+    assert_contains("11: skips straight to the rewrite rules page", out, "Rewrite rules")
+    assert_not_contains("11: fallback args page never shown", out, "Fallback args")
+    sb.send(b"all=ls" + ENTER)    # rewrite rule
+    sb.send(ENTER)                # finish list
+    sb.send(ENTER, 0.5)           # diagnostic: no
+    code = sb.wait()
+    assert_eq("11 exit code", 0, code)
+    cfg = sb.config_text()
+    assert_not_contains("11: no fallback_args key stored at all", cfg, "fallback_args")
+finally:
+    sb.cleanup()
+
+
 if FAILURES:
     print(f"{len(FAILURES)} assertion(s) failed", file=sys.stderr)
     sys.exit(1)

@@ -67,6 +67,18 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                 "another shim, or to this one?)",
                 fallback_arg);
         }
+    } else if (fallback_args->count > 0) {
+        /* --fallback-arg is meaningless without a fallback to attach it to
+         * (only reachable at all with --policy rewrite, the one policy
+         * where -f/--fallback is optional) -- warn and discard rather than
+         * silently keep dead config around or hard-fail over something
+         * this easy to just drop. */
+        bool colorize = stderr_is_color();
+        fprintf(stderr,
+                "%sshimback: --fallback-arg given without a fallback -- discarding it%s\n",
+                colorize ? ANSI_YELLOW : "", colorize ? ANSI_RESET : "");
+        strvec_free(fallback_args);
+        strvec_init(fallback_args);
     }
 
     char *shim_dir = shim_bin_dir();
