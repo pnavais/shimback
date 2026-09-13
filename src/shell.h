@@ -34,16 +34,22 @@ bool shell_kind_from_name(const char *name, ShellKind *out);
  * `tag`.fish snippet dropped into fish's conf.d (auto-sourced at startup,
  * so no markers needed -- shimback owns the whole file), unioned the same
  * way. For SHELL_UNKNOWN, prints the line to add manually and touches
- * nothing. Returns false only on an actual I/O failure while writing.
+ * nothing (always -- that message is the only way the user finds out, so
+ * it ignores `verbose`). Returns false only on an actual I/O failure while
+ * writing.
  *
- * Equivalent to shell_ensure_path_tagged(kind, dir, "shimback"). */
-bool shell_ensure_path(ShellKind kind, const char *dir);
+ * `verbose` gates only the informational "PATH updated in <file>" line
+ * printed on success for SHELL_ZSH/SHELL_BASH/SHELL_FISH -- a failure still
+ * always warns, regardless of `verbose`.
+ *
+ * Equivalent to shell_ensure_path_tagged(kind, dir, "shimback", verbose). */
+bool shell_ensure_path(ShellKind kind, const char *dir, bool verbose);
 
 /* Same as shell_ensure_path, but files its marker block (or, for
  * SHELL_FISH, its conf.d snippet) under `tag` instead of the fixed
  * "shimback" tag -- lets a second, independently-managed one (keyed on a
  * different directory set) coexist without colliding with the default. */
-bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag);
+bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, bool verbose);
 
 /* Removes the marker block (or, for SHELL_FISH, the conf.d snippet file)
  * tagged `tag`, if present, from `kind`'s usual startup file(s) -- the

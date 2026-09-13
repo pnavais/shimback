@@ -16,6 +16,7 @@ void config_init(Config *cfg) {
     cfg->shims = NULL;
     cfg->count = 0;
     cfg->cap = 0;
+    cfg->verbose = false;
 }
 
 const char *policy_to_string(Policy p) {
@@ -56,6 +57,18 @@ bool policy_from_string(const char *s, Policy *out) {
         return true;
     }
     return false;
+}
+
+const char *policy_color(Policy p) {
+    switch (p) {
+        case POLICY_HEURISTIC: return ANSI_YELLOW;
+        case POLICY_EXIT_CODE_MATCH: return ANSI_MAGENTA;
+        case POLICY_ROUTE_ARGS: return ANSI_CYAN;
+        case POLICY_REWRITE: return ANSI_GREEN;
+        case POLICY_SPLIT_ARGS: return ANSI_RED;
+        case POLICY_EXIT_CODE:
+        default: return NULL;
+    }
 }
 
 ShimEntry *config_find(Config *cfg, const char *name) {
@@ -414,6 +427,16 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
         if (current_index < 0) {
             if (strcmp(key, "version") == 0) {
                 cfg->version = (int)strtol(value_str, NULL, 10);
+            } else if (strcmp(key, "verbose") == 0) {
+                if (strcmp(value_str, "true") == 0) {
+                    cfg->verbose = true;
+                } else if (strcmp(value_str, "false") == 0) {
+                    cfg->verbose = false;
+                } else {
+                    snprintf(errbuf, errbuf_size, "line %d: 'verbose' must be true or false",
+                             line_no);
+                    status = CONFIG_ERR_PARSE;
+                }
             } else {
                 warn("config: line %d: unknown top-level key '%s', ignoring", line_no, key);
             }
@@ -700,6 +723,9 @@ static void render_config(const Config *cfg, DynBuf *out) {
     char line[64];
     snprintf(line, sizeof(line), "version = %d\n", cfg->version);
     dynbuf_append_str(out, line);
+    if (cfg->verbose) {
+        dynbuf_append_str(out, "verbose = true\n");
+    }
 
     for (size_t i = 0; i < cfg->count; i++) {
         const ShimEntry *entry = &cfg->shims[i];

@@ -23,7 +23,7 @@ int cmd_init(int argc, char **argv) {
         if (shell_is_installed(kinds[i])) {
             any_installed = true;
             printf("Detected %s\n", shell_kind_name(kinds[i]));
-            shell_ensure_path(kinds[i], shim_dir);
+            shell_ensure_path(kinds[i], shim_dir, true);
         }
     }
 

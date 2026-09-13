@@ -24,18 +24,6 @@ static void print_cell(const char *text, size_t width, const char *color, bool c
     }
 }
 
-static const char *policy_color(Policy p) {
-    switch (p) {
-        case POLICY_HEURISTIC: return ANSI_YELLOW;
-        case POLICY_EXIT_CODE_MATCH: return ANSI_MAGENTA;
-        case POLICY_ROUTE_ARGS: return ANSI_CYAN;
-        case POLICY_REWRITE: return ANSI_GREEN;
-        case POLICY_SPLIT_ARGS: return ANSI_RED;
-        case POLICY_EXIT_CODE:
-        default: return NULL;
-    }
-}
-
 static void print_detail_line(bool colorize, const char *label, const char *value) {
     const char *dim = colorize ? ANSI_DIM : "";
     const char *reset = colorize ? ANSI_RESET : "";

@@ -38,6 +38,7 @@ static void test_round_trip(void) {
     Config cfg;
     config_init(&cfg);
     cfg.version = 1;
+    cfg.verbose = true;
 
     size_t sed_idx = config_upsert(&cfg, "sed");
     cfg.shims[sed_idx].fallback = xstrdup("/usr/bin/sed");
@@ -117,6 +118,7 @@ static void test_round_trip(void) {
     st = config_load(path, &reloaded, errbuf, sizeof(errbuf));
     check(st == CONFIG_OK, "round-trip: config_load succeeds");
     check(reloaded.version == 1, "round-trip: version is 1");
+    check(reloaded.verbose == true, "round-trip: verbose == true");
     check(reloaded.count == 6, "round-trip: shim count is 6");
 
     ShimEntry *sed = config_find(&reloaded, "sed");
@@ -353,6 +355,7 @@ static void test_missing_file_is_empty_config(void) {
                                    sizeof(errbuf));
     check(st == CONFIG_OK, "missing config file is not an error");
     check(cfg.count == 0, "missing config file yields zero shims");
+    check(cfg.verbose == false, "missing config file defaults verbose to false");
     config_free(&cfg);
 }
 

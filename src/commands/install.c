@@ -104,8 +104,8 @@ static void install_man_page(const char *prefix, const char *self_exe) {
  * "shimback-bin" block, a one-time migration for anyone who ran an earlier
  * version of `install` that kept the two directories in separate blocks. */
 static void ensure_shell_path(ShellKind kind, const char *shim_dir, const char *bin_dir) {
-    shell_ensure_path(kind, shim_dir);
-    shell_ensure_path(kind, bin_dir);
+    shell_ensure_path(kind, shim_dir, true);
+    shell_ensure_path(kind, bin_dir, true);
     shell_remove_path_tagged(kind, "shimback-bin");
 }
 

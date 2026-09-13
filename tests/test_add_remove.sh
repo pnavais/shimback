@@ -18,6 +18,28 @@ assert_eq "ls is an alias for list" "$("$SHIMBACK" list)" "$("$SHIMBACK" ls)"
 marker_count="$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
 assert_eq "add: exactly one marker block after first add" "1" "$marker_count"
 
+# --- add's shell-startup-file PATH-update notices are silent by default,
+# shown with --verbose, and shown by the config's own global default too ---
+out="$("$SHIMBACK" add verbosetool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK")"
+assert_not_contains "add: PATH notice hidden by default" "$out" "PATH updated"
+assert_not_contains "add: restart notice hidden by default" "$out" "Restart your shell"
+
+out="$("$SHIMBACK" add verbosetool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --verbose)"
+assert_contains "add --verbose: PATH notice shown" "$out" "PATH updated"
+assert_contains "add --verbose: restart notice shown" "$out" "Restart your shell"
+
+CFG="$(config_file)"
+{
+    printf 'version = 1\nverbose = true\n'
+    tail -n +2 "$CFG"
+} >"$CFG.tmp" && mv "$CFG.tmp" "$CFG"
+
+out="$("$SHIMBACK" add verbosetool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK")"
+assert_contains "add: global verbose=true default shows the PATH notice" "$out" "PATH updated"
+assert_contains "add: global verbose=true default shows the restart notice" "$out" \
+    "Restart your shell"
+assert_contains "add: global verbose=true persists across saves" "$(cat "$CFG")" "verbose = true"
+
 # --- re-running add is idempotent: no duplicate marker block ---
 "$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
 marker_count="$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"

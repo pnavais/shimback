@@ -104,6 +104,10 @@ typedef struct {
     ShimEntry *shims;   /* owned dynamic array */
     size_t count;
     size_t cap;
+    bool verbose;       /* global default (top-level `verbose = true/false` in config.toml,
+                          * default false) for whether `add` prints the shell-startup-file
+                          * PATH-update notices; `add --verbose` overrides this to true for
+                          * that one invocation regardless of the config default. */
 } Config;
 
 typedef enum {
@@ -145,5 +149,10 @@ void config_free(Config *cfg);
 
 const char *policy_to_string(Policy p);
 bool policy_from_string(const char *s, Policy *out);
+
+/* ANSI color escape (see util.h) associated with `p` for colored output in
+ * `list` and `add`'s confirmation line -- NULL for POLICY_EXIT_CODE, which
+ * is left uncolored as the baseline default policy. */
+const char *policy_color(Policy p);
 
 #endif /* SHIMBACK_CONFIG_H */

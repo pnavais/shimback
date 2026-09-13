@@ -497,7 +497,7 @@ static void build_fish_body(DynBuf *body, const StrVec *dirs) {
  * snippet is entirely shimback's own file (unlike the zsh/bash marker
  * block, which shares a file with everything else in someone's rc), it's
  * simply rewritten in full each time rather than patched in place. */
-static bool ensure_fish(const char *dir, const char *tag) {
+static bool ensure_fish(const char *dir, const char *tag, bool verbose) {
     char *path = fish_snippet_path(tag);
     char *confd_dir = dir_of(path);
     if (!mkdir_p(confd_dir)) {
@@ -525,7 +525,9 @@ static bool ensure_fish(const char *dir, const char *tag) {
     dynbuf_free(&desired);
 
     if (ok) {
-        printf("fish: PATH updated in %s\n", path);
+        if (verbose) {
+            printf("fish: PATH updated in %s\n", path);
+        }
     } else {
         warn("failed to update %s", path);
     }
@@ -550,12 +552,14 @@ static bool remove_fish(const char *tag) {
     return ok;
 }
 
-static bool ensure_zsh(const char *dir, const char *tag) {
+static bool ensure_zsh(const char *dir, const char *tag, bool verbose) {
     char *home = home_dir();
     char *rc = zsh_rc_path(home);
     bool ok = ensure_dir_in_block(rc, tag, dir, true);
     if (ok) {
-        printf("zsh: PATH updated in %s\n", rc);
+        if (verbose) {
+            printf("zsh: PATH updated in %s\n", rc);
+        }
     } else {
         warn("failed to update %s", rc);
     }
@@ -564,7 +568,7 @@ static bool ensure_zsh(const char *dir, const char *tag) {
     return ok;
 }
 
-static bool ensure_bash(const char *dir, const char *tag) {
+static bool ensure_bash(const char *dir, const char *tag, bool verbose) {
     static const char *candidates[] = {".bashrc", ".bash_profile", ".profile"};
     char *home = home_dir();
     bool any_exists = false;
@@ -576,7 +580,9 @@ static bool ensure_bash(const char *dir, const char *tag) {
             any_exists = true;
             bool ok = ensure_dir_in_block(path, tag, dir, false);
             if (ok) {
-                printf("bash: PATH updated in %s\n", path);
+                if (verbose) {
+                    printf("bash: PATH updated in %s\n", path);
+                }
             } else {
                 warn("failed to update %s", path);
             }
@@ -589,7 +595,9 @@ static bool ensure_bash(const char *dir, const char *tag) {
         char *path = path_join(home, ".bashrc");
         bool ok = ensure_dir_in_block(path, tag, dir, false);
         if (ok) {
-            printf("bash: created %s with PATH update\n", path);
+            if (verbose) {
+                printf("bash: created %s with PATH update\n", path);
+            }
         } else {
             warn("failed to create %s", path);
         }
@@ -634,14 +642,14 @@ static bool remove_bash(const char *tag) {
     return all_ok;
 }
 
-bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag) {
+bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, bool verbose) {
     switch (kind) {
         case SHELL_ZSH:
-            return ensure_zsh(dir, tag);
+            return ensure_zsh(dir, tag, verbose);
         case SHELL_BASH:
-            return ensure_bash(dir, tag);
+            return ensure_bash(dir, tag, verbose);
         case SHELL_FISH:
-            return ensure_fish(dir, tag);
+            return ensure_fish(dir, tag, verbose);
         case SHELL_UNKNOWN:
         default:
             printf("could not detect a supported shell; add this to your shell's startup file "
@@ -651,8 +659,8 @@ bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag) 
     }
 }
 
-bool shell_ensure_path(ShellKind kind, const char *dir) {
-    return shell_ensure_path_tagged(kind, dir, DEFAULT_TAG);
+bool shell_ensure_path(ShellKind kind, const char *dir, bool verbose) {
+    return shell_ensure_path_tagged(kind, dir, DEFAULT_TAG, verbose);
 }
 
 bool shell_remove_path_tagged(ShellKind kind, const char *tag) {
