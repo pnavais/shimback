@@ -52,7 +52,7 @@ shimback add <name> [-s <source>] [--source-arg <arg>]...
                      [--policy exit-code|heuristic|exit-code-match|route-args|rewrite]
                      [--error-pattern <p>]... [--exit-code <code>]...
                      [--route-arg <arg>]... [--strip-matched-args]
-                     [--rewrite <from>=<to>]... [--diagnostic]
+                     [--rewrite <from>=<to>]... [--diagnostic] [--force]
 shimback remove [-y] <name>
 shimback init
 shimback list [--full]
@@ -128,6 +128,19 @@ shimback add sed -f /usr/bin/sed
   this as well (in case a cycle ever ends up in a hand-edited config), and
   `shimback doctor fix` repairs it by prompting for a replacement — see
   below.
+- `--force` allows `-s`/`-f` to name a **path** (something containing `/`) that
+  doesn't exist yet, instead of dying with "does not exist, is not
+  executable, or isn't on $PATH" — useful for configuring a shim ahead of
+  installing the thing it points at. It's stored per-shim in `config.toml`
+  (`force = true`) and, once set, `shimback doctor` skips its existence
+  check for whichever of source/fallback is *still* missing, reporting it
+  as fine rather than broken — as soon as either one actually exists,
+  `doctor` goes back to checking it normally (cycle check included), `force`
+  or not. `force` only affects that one `doctor` check: dispatch always
+  resolves and checks source/fallback for real every time the shim
+  actually runs, regardless of `force`. Since there's nothing to search
+  `PATH` for something that doesn't exist anywhere yet, `--force` requires
+  a path, not a bare command name.
 - `add` also ensures the shim directory is on `PATH`, by injecting an
   idempotent, clearly marked block into your current shell's startup file
   (detected from `$SHELL`) — or, on fish, a dedicated snippet file instead

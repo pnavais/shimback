@@ -24,12 +24,15 @@ static const char *USAGE =
     "                    [--policy exit-code|heuristic|exit-code-match|route-args|rewrite]\n"
     "                    [--error-pattern <p>]... [--exit-code <code>]...\n"
     "                    [--route-arg <arg>]... [--strip-matched-args]\n"
-    "                    [--rewrite <from>=<to>]... [--diagnostic]\n"
-    "-f/--fallback is required, except with --policy rewrite, where it's unused.\n";
+    "                    [--rewrite <from>=<to>]... [--diagnostic] [--force]\n"
+    "-f/--fallback is required, except with --policy rewrite, where it's unused.\n"
+    "--force allows source/fallback to point at a path (not a bare name) that doesn't\n"
+    "exist yet; doctor skips its existence check for whichever of them still doesn't.\n";
 
 #define OPT_STRIP_MATCHED_ARGS 1000
 #define OPT_SOURCE_ARG 1001
 #define OPT_FALLBACK_ARG 1002
+#define OPT_FORCE 1003
 
 static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
     if (*count == *cap) {
@@ -47,7 +50,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                        const char *fallback_arg, StrVec *fallback_args, Policy policy,
                        StrVec *patterns, int *exit_codes, size_t exit_code_count,
                        StrVec *route_args, bool strip_matched_args, StrVec *rewrite_from,
-                       StrVec *rewrite_to, bool diagnostic) {
+                       StrVec *rewrite_to, bool diagnostic, bool force) {
     if (name[0] == '\0' || strchr(name, '/') != NULL || strcmp(name, "shimback") == 0) {
         die("add: invalid shim name '%s'", name);
     }
@@ -57,7 +60,16 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     char *resolved_fallback = NULL;
     if (fallback_arg) {
         resolved_fallback = resolve_binary_arg(fallback_arg);
+        if (!resolved_fallback && force) {
+            resolved_fallback = force_resolve_binary_arg(fallback_arg);
+        }
         if (!resolved_fallback) {
+            if (force) {
+                die("add: --force still needs a path for fallback (containing '/'), not a bare "
+                    "name -- there's nothing to resolve '%s' against if it doesn't exist "
+                    "anywhere yet",
+                    fallback_arg);
+            }
             die("add: fallback '%s' does not exist, is not executable, or isn't on $PATH",
                 fallback_arg);
         }
@@ -86,7 +98,16 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     char *resolved_source_for_check = NULL;
     if (source_arg) {
         resolved_source_for_check = resolve_binary_arg(source_arg);
+        if (!resolved_source_for_check && force) {
+            resolved_source_for_check = force_resolve_binary_arg(source_arg);
+        }
         if (!resolved_source_for_check) {
+            if (force) {
+                die("add: --force still needs a path for source (containing '/'), not a bare "
+                    "name -- there's nothing to resolve '%s' against if it doesn't exist "
+                    "anywhere yet",
+                    source_arg);
+            }
             die("add: source '%s' does not exist, is not executable, or isn't on $PATH",
                 source_arg);
         }
@@ -201,6 +222,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     entry->rewrite_to = rewrite_to->items; /* ownership transferred */
     entry->rewrite_to_count = rewrite_to->count;
     entry->diagnostic = diagnostic;
+    entry->force = force;
 
     ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
     if (save_st != CONFIG_OK) {
@@ -224,6 +246,7 @@ int cmd_add(int argc, char **argv) {
     const char *policy_arg = "exit-code";
     bool diagnostic = false;
     bool strip_matched_args = false;
+    bool force = false;
     StrVec source_args;
     strvec_init(&source_args);
     StrVec fallback_args;
@@ -252,6 +275,7 @@ int cmd_add(int argc, char **argv) {
         {"strip-matched-args", no_argument, 0, OPT_STRIP_MATCHED_ARGS},
         {"rewrite", required_argument, 0, 'w'},
         {"diagnostic", no_argument, 0, 'd'},
+        {"force", no_argument, 0, OPT_FORCE},
         {0, 0, 0, 0},
     };
 
@@ -286,6 +310,7 @@ int cmd_add(int argc, char **argv) {
                 break;
             }
             case 'd': diagnostic = true; break;
+            case OPT_FORCE: force = true; break;
             default:
                 fprintf(stderr, "%s", USAGE);
                 return 1;
@@ -366,10 +391,10 @@ int cmd_add(int argc, char **argv) {
                            result.fallback_arg, &result.fallback_args, result.policy,
                            &result.patterns, result.exit_codes, result.exit_code_count,
                            &result.route_args, result.strip_matched_args, &result.rewrite_from,
-                           &result.rewrite_to, result.diagnostic);
+                           &result.rewrite_to, result.diagnostic, force);
     }
 
     return finish_add(name, source_arg, &source_args, fallback_arg, &fallback_args, policy,
                        &patterns, exit_codes, exit_code_count, &route_args, strip_matched_args,
-                       &rewrite_from, &rewrite_to, diagnostic);
+                       &rewrite_from, &rewrite_to, diagnostic, force);
 }

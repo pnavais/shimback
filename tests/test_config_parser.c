@@ -48,6 +48,7 @@ static void test_round_trip(void) {
     cfg.shims[awk_idx].fallback = xstrdup("/usr/bin/awk");
     cfg.shims[awk_idx].policy = POLICY_HEURISTIC;
     cfg.shims[awk_idx].diagnostic = true;
+    cfg.shims[awk_idx].force = true;
     cfg.shims[awk_idx].fallback_args = xmalloc(1 * sizeof(char *));
     cfg.shims[awk_idx].fallback_args[0] = xstrdup("--posix");
     cfg.shims[awk_idx].fallback_arg_count = 1;
@@ -111,6 +112,7 @@ static void test_round_trip(void) {
         check(sed->policy == POLICY_EXIT_CODE, "sed.policy == exit-code");
         check(sed->error_pattern_count == 0, "sed.error_pattern_count == 0");
         check(sed->diagnostic == false, "sed.diagnostic == false");
+        check(sed->force == false, "sed.force == false");
     }
 
     ShimEntry *awk = config_find(&reloaded, "awk");
@@ -126,6 +128,7 @@ static void test_round_trip(void) {
             check_str_eq("awk.error_patterns[2]", "unrecognized option", awk->error_patterns[2]);
         }
         check(awk->diagnostic == true, "awk.diagnostic == true");
+        check(awk->force == true, "awk.force == true");
         check(awk->fallback_arg_count == 1, "awk.fallback_arg_count == 1");
         if (awk->fallback_arg_count == 1) {
             check_str_eq("awk.fallback_args[0]", "--posix", awk->fallback_args[0]);

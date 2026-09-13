@@ -180,4 +180,52 @@ out5="$("$SHIMBACK" doctor)"
 assert_not_contains "doctor: no more migration warning once moved" "$out5" \
     "zshrc.local exists"
 
+# --- add --force: allows a path that doesn't exist yet ---
+GHOST_SRC="$SANDBOX/ghost-source.sh"
+GHOST_FB="$SANDBOX/ghost-fallback.sh"
+out="$("$SHIMBACK" add ghosttool -s "$GHOST_SRC" -f "$GHOST_FB" --force)"
+code=$?
+assert_eq "add --force: succeeds even though source/fallback don't exist yet" "0" "$code"
+assert_contains "add --force: stores force = true in config" "$(cat "$CFG")" "force = true"
+
+# --- add --force: still requires a path, not a bare name ---
+"$SHIMBACK" add ghosttool2 -s ghost-bare-name -f "$GHOST_FB" --force >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add --force: a bare source name with nothing to resolve against should be rejected"
+fi
+assert_contains "add --force: bare-name error explains why" "$(cat "$SANDBOX/err")" \
+    "needs a path"
+
+# --- add without --force still rejects a nonexistent path outright ---
+"$SHIMBACK" add noforcetool -s "$SANDBOX/still-missing.sh" -f "$GHOST_FB" \
+    >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add: a nonexistent source without --force should still be rejected"
+fi
+assert_contains "add: nonexistent-source error unchanged without --force" \
+    "$(cat "$SANDBOX/err")" "does not exist, is not executable, or isn't on \$PATH"
+
+# --- doctor: a forced-but-still-missing source/fallback is reported ok, not fail ---
+out="$("$SHIMBACK" doctor)"
+assert_contains "doctor: forced-missing source reported ok" "$out" \
+    "[ok]   source: $GHOST_SRC (added with --force; not currently on disk, so not checked)"
+assert_contains "doctor: forced-missing fallback reported ok" "$out" \
+    "[ok]   fallback: $GHOST_FB (added with --force; not currently on disk, so not checked)"
+
+# --- doctor: once the forced binary actually exists, the full normal check applies ---
+cp "$FAKE_PRIMARY" "$GHOST_SRC"
+cp "$FAKE_FALLBACK" "$GHOST_FB"
+chmod +x "$GHOST_SRC" "$GHOST_FB"
+out="$("$SHIMBACK" doctor)"
+assert_contains "doctor: forced source now checked normally once it exists" "$out" \
+    "[ok]   source: $GHOST_SRC"
+assert_not_contains "doctor: no --force note once source actually exists" "$out" \
+    "source: $GHOST_SRC (added with --force"
+assert_contains "doctor: forced fallback now checked normally once it exists" "$out" \
+    "[ok]   fallback: $GHOST_FB"
+assert_not_contains "doctor: no --force note once fallback actually exists" "$out" \
+    "fallback: $GHOST_FB (added with --force"
+
 finish

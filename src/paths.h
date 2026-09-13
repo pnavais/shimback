@@ -65,6 +65,16 @@ char *path_search(const char *name, const char *exclude_dir,
  * NULL if neither works. */
 char *resolve_binary_arg(const char *arg);
 
+/* Best-effort resolution for `add --force`: makes a path-shaped `arg`
+ * (one containing '/') absolute without requiring it to exist yet -- a
+ * relative path is joined with the current working directory, an already
+ * absolute one is returned as-is. Purely lexical (no symlink resolution,
+ * no collapsing of "." / ".."), unlike canonicalize(), which needs the
+ * full path to already exist. Returns NULL for a bare name (no '/'):
+ * there's no $PATH to search against something that doesn't exist
+ * anywhere yet, so there's nothing meaningful to resolve it to. */
+char *force_resolve_binary_arg(const char *arg);
+
 /* mkdir -p equivalent. Returns true on success (including "already exists
  * as a directory"). */
 bool mkdir_p(const char *dir);
