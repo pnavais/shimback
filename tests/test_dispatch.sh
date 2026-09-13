@@ -254,4 +254,17 @@ out="$("$ALIASREWRITE" all)"
 assert_eq "rewrite: source_args prepended, then the rewritten arg" \
     "FALLBACK_RAN:--fixed ls" "$out"
 
+# --- --fallback-arg without a fallback (only reachable under --policy
+# rewrite, the one policy where -f/--fallback is optional) is discarded
+# with a warning rather than silently kept around or a hard failure ---
+out="$("$SHIMBACK" add aliasnofallback -s "$FAKE_FALLBACK" --policy rewrite \
+    --rewrite "all=ls" --fallback-arg "--orphan" 2>&1)"
+code=$?
+assert_eq "fallback_args without fallback: add still succeeds" "0" "$code"
+assert_contains "fallback_args without fallback: warns" "$out" \
+    "--fallback-arg given without a fallback -- discarding it"
+shim_section="$(awk '/^\[shims\.aliasnofallback\]/{f=1; next} /^\[shims\./{f=0} f' "$(config_file)")"
+assert_not_contains "fallback_args without fallback: discarded, not stored" "$shim_section" \
+    "fallback_args"
+
 finish

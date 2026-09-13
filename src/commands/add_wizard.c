@@ -95,22 +95,34 @@ static void history_push(History *h, PageId p) {
     h->items[h->count++] = p;
 }
 
+/* Where to go once fallback (and its extra args, if it has any) are
+ * settled -- shared by PAGE_FALLBACK (when it's skipping straight past
+ * PAGE_FALLBACK_ARGS, see below) and PAGE_FALLBACK_ARGS itself, so the two
+ * can't drift apart. */
+static PageId after_fallback(Policy policy) {
+    switch (policy) {
+        case POLICY_HEURISTIC: return PAGE_PATTERNS;
+        case POLICY_EXIT_CODE_MATCH: return PAGE_EXIT_CODES;
+        case POLICY_ROUTE_ARGS: return PAGE_ROUTE_ARGS;
+        case POLICY_REWRITE: return PAGE_REWRITE;
+        case POLICY_EXIT_CODE:
+        default: return PAGE_DIAGNOSTIC;
+    }
+}
+
 static PageId next_page(const WizardState *st, PageId current) {
     switch (current) {
         case PAGE_NAME: return PAGE_POLICY;
         case PAGE_POLICY: return PAGE_SOURCE;
         case PAGE_SOURCE: return PAGE_SOURCE_ARGS;
         case PAGE_SOURCE_ARGS: return PAGE_FALLBACK;
-        case PAGE_FALLBACK: return PAGE_FALLBACK_ARGS;
-        case PAGE_FALLBACK_ARGS:
-            switch (st->policy) {
-                case POLICY_HEURISTIC: return PAGE_PATTERNS;
-                case POLICY_EXIT_CODE_MATCH: return PAGE_EXIT_CODES;
-                case POLICY_ROUTE_ARGS: return PAGE_ROUTE_ARGS;
-                case POLICY_REWRITE: return PAGE_REWRITE;
-                case POLICY_EXIT_CODE:
-                default: return PAGE_DIAGNOSTIC;
-            }
+        case PAGE_FALLBACK:
+            /* fallback is only ever left unset for --policy rewrite (the
+             * one policy where it's optional) -- --fallback-arg would then
+             * have nothing to attach to, so skip straight past asking for
+             * it instead of offering a page that can't do anything. */
+            return st->fallback_arg != NULL ? PAGE_FALLBACK_ARGS : after_fallback(st->policy);
+        case PAGE_FALLBACK_ARGS: return after_fallback(st->policy);
         case PAGE_PATTERNS: return PAGE_DIAGNOSTIC;
         case PAGE_EXIT_CODES: return PAGE_DIAGNOSTIC;
         case PAGE_ROUTE_ARGS: return PAGE_STRIP_MATCHED;

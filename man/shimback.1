@@ -146,6 +146,15 @@ Under
 .B \-\-source\-arg
 values land before the (possibly rewritten) invocation arguments, and are
 never themselves subject to rewriting.
+.B \-\-fallback\-arg
+has nothing to attach to without a fallback (only possible under
+.IR rewrite ,
+the one policy where
+.B \-f
+is optional) \(em given without one, it's discarded with a yellow warning
+rather than kept around uselessly. The interactive wizard (below) goes a
+step further and never offers the fallback\-args page at all when
+fallback is left blank.
 .IP
 Run at an interactive terminal with required information missing (no
 .IR name ,
