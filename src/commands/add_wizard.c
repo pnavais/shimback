@@ -22,6 +22,21 @@ bool is_valid_shim_name(const char *name) {
     return name[0] != '\0' && strchr(name, '/') == NULL && strcmp(name, "shimback") != 0;
 }
 
+/* Mirrors finish_add's own source resolution (see add.c) so the wizard's
+ * inline "would this be a no-op" check (PAGE_FALLBACK_ARGS, below) sees
+ * exactly the same value finish_add's authoritative one would -- including
+ * for "auto" source, resolved fresh from $PATH the same way dispatch does. */
+static char *wizard_resolve_source(const char *source_arg, const char *name,
+                                    const char *self_exe) {
+    if (source_arg) {
+        return resolve_binary_arg(source_arg);
+    }
+    char *shim_dir = shim_bin_dir();
+    char *resolved = path_search(name, shim_dir, self_exe);
+    free(shim_dir);
+    return resolved;
+}
+
 typedef enum {
     PAGE_NAME,
     PAGE_POLICY,
@@ -805,19 +820,14 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
                     input_len = 0;
                     break;
                 }
-                if (st.source_arg) {
-                    char *resolved_source = resolve_binary_arg(st.source_arg);
-                    if (resolved_source && strcmp(resolved_source, resolved) == 0) {
-                        snprintf(error_msg, sizeof(error_msg),
-                                 "Source and fallback both resolve to '%s'.", resolved);
-                        free(resolved_source);
-                        free(resolved);
-                        input[0] = '\0';
-                        input_len = 0;
-                        break;
-                    }
-                    free(resolved_source);
-                }
+                /* Same resolved binary as source isn't necessarily a no-op
+                 * -- source_args/fallback_args could still make them
+                 * behave differently, but fallback_args hasn't been asked
+                 * for yet at this point in the sequence (it's the very
+                 * next page), so the only place that can make the
+                 * authoritative "would this be a no-op" call is once
+                 * fallback_args itself is settled -- see PAGE_FALLBACK_ARGS
+                 * below. */
                 free(resolved);
                 free(st.fallback_arg);
                 st.fallback_arg = xstrdup(input);
@@ -832,6 +842,30 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
             case PAGE_FALLBACK_ARGS: {
                 StrVec *list = (page == PAGE_SOURCE_ARGS) ? &st.source_args : &st.fallback_args;
                 if (input_len == 0) {
+                    /* Now that fallback_args is fully known too, this is
+                     * the first point the wizard can actually tell whether
+                     * source and fallback would be truly indistinguishable
+                     * -- same resolved binary AND the same extra args (see
+                     * finish_add's identical, authoritative check). */
+                    if (page == PAGE_FALLBACK_ARGS && st.fallback_arg) {
+                        char *resolved_source =
+                            wizard_resolve_source(st.source_arg, st.name, self_exe);
+                        char *resolved_fallback = resolve_binary_arg(st.fallback_arg);
+                        bool same_binary = resolved_source && resolved_fallback &&
+                                            strcmp(resolved_source, resolved_fallback) == 0;
+                        bool same_args =
+                            str_array_eq(st.source_args.items, st.source_args.count,
+                                         st.fallback_args.items, st.fallback_args.count);
+                        free(resolved_source);
+                        free(resolved_fallback);
+                        if (same_binary && same_args) {
+                            snprintf(error_msg, sizeof(error_msg),
+                                     "Source and fallback resolve to the same binary with the "
+                                     "same arguments -- add one here to tell them apart, or go "
+                                     "back and change fallback.");
+                            break;
+                        }
+                    }
                     if (page == PAGE_SOURCE_ARGS) {
                         st.source_args_set = true;
                     } else {

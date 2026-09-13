@@ -408,6 +408,37 @@ finally:
     sb.cleanup()
 
 
+# --- 12: the wizard refuses to finish the fallback-args page when source
+# and fallback would be truly indistinguishable (same resolved binary, same
+# extra args) -- but a differentiating fallback arg fixes it, matching
+# finish_add's own authoritative "no-op shim" check. ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"samebintool" + ENTER)
+    sb.send(ENTER)                 # policy: exit-code
+    sb.send(b"/bin/ls" + ENTER)    # source
+    sb.send(b"-x" + ENTER)         # source arg
+    sb.send(ENTER)                 # finish source args
+    sb.send(b"/bin/ls" + ENTER)    # fallback: same binary as source
+    out = sb.send(b"-x" + ENTER)   # fallback arg: same as source's -- try to finish
+    out = sb.send(ENTER)           # blank -> attempt to finish the list
+    assert_contains("12: refuses to finish with identical source/fallback", out,
+                     "same arguments")
+    assert_contains("12: still on the fallback args page", out, "Fallback args")
+    sb.send(b"-y" + ENTER)         # add a differentiating fallback arg
+    sb.send(ENTER)                 # now blank-finish is allowed
+    sb.send(ENTER, 0.5)            # diagnostic: no
+    code = sb.wait()
+    assert_eq("12 exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("12: source_args stored", cfg, 'source_args = ["-x"]')
+    assert_contains("12: fallback_args stored (differentiated)", cfg,
+                     'fallback_args = ["-x", "-y"]')
+finally:
+    sb.cleanup()
+
+
 if FAILURES:
     print(f"{len(FAILURES)} assertion(s) failed", file=sys.stderr)
     sys.exit(1)

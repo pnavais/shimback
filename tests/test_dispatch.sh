@@ -192,6 +192,33 @@ fi
 listing="$("$SHIMBACK" list)"
 assert_not_contains "source==fallback: nothing written to config" "$listing" "sametool"
 
+# --- source == fallback is still rejected even with matching (including
+# both empty) source_args/fallback_args -- truly indistinguishable ---
+"$SHIMBACK" add sameargstool -s "$FAKE_PRIMARY" --source-arg "-x" \
+    -f "$FAKE_PRIMARY" --fallback-arg "-x" >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add with source==fallback and identical extra args should have failed"
+fi
+assert_contains "same binary, same args: rejected" "$(cat "$SANDBOX/err")" "no-op shim"
+
+# --- but source == fallback with DIFFERENT source_args/fallback_args is
+# not a no-op -- allowed at add time, and dispatch treats them as genuinely
+# different invocations rather than short-circuiting to just one run ---
+"$SHIMBACK" add samebindiffargs -s "$FAKE_FALLBACK" --source-arg "--srcflag" \
+    -f "$FAKE_FALLBACK" --fallback-arg "--fbflag" >/dev/null
+code=$?
+assert_eq "same binary, different args: add succeeds" "0" "$code"
+SAMEBINDIFFARGS="$(shim_path samebindiffargs)"
+
+out="$("$SAMEBINDIFFARGS" ownarg)"
+assert_eq "same binary, different args: source's own args used on success" \
+    "FALLBACK_RAN:--srcflag ownarg" "$out"
+
+out="$(FAKE_FALLBACK_EXIT_CODE=1 "$SAMEBINDIFFARGS" ownarg)"
+assert_eq "same binary, different args: fallback's own (different) args used on failure" \
+    "FALLBACK_RAN:--fbflag ownarg" "$out"
+
 # --- large interleaved stdout/stderr: no pipe-capture deadlock ---
 "$SHIMBACK" add bigtool -s "$FAKE_INTERLEAVED" -f "$FAKE_FALLBACK" >/dev/null
 BIGTOOL="$(shim_path bigtool)"

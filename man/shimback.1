@@ -113,8 +113,12 @@ once, at
 .B add
 time, the same way a shell would find it); either way the resolved absolute
 path is what gets frozen into the config. Refuses to create a shim where
-source and fallback resolve to the same binary, or where either resolves
-back to the
+source and fallback resolve to the same binary with the same extra
+arguments (same binary with
+.B different
+.BR \-\-source\-arg / \-\-fallback\-arg
+is fine \(em two distinct invocations of one command, not a no\-op), or
+where either resolves back to the
 .B shimback
 binary itself (a cycle \(em since every shim symlink points at the same
 binary, this also catches a bare name that happens to resolve to another

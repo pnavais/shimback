@@ -76,4 +76,12 @@ void strvec_free(StrVec *v);
  * strcasestr's availability/feature-test-macro quirks across platforms. */
 const char *str_casestr(const char *haystack, const char *needle);
 
+/* True if both arrays have the same length and, pairwise, byte-identical
+ * strings in the same order -- used to tell "source and fallback are truly
+ * indistinguishable" (same resolved binary, same extra arguments) apart
+ * from "same binary, different arguments" (a legitimate way to use two
+ * variants of one command as source/fallback), both in `add`'s own
+ * no-op-shim check and in dispatch's matching runtime shortcut. */
+bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count);
+
 #endif /* SHIMBACK_UTIL_H */

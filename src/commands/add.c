@@ -100,9 +100,15 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         resolved_source_for_check = path_search(name, shim_dir, self_exe);
     }
 
+    /* Same binary alone isn't a no-op if source_args/fallback_args make
+     * them behave differently (e.g. source "ls" -la vs. fallback "ls" -lh)
+     * -- only reject when they'd be truly indistinguishable. */
     if (resolved_source_for_check && resolved_fallback &&
-        strcmp(resolved_source_for_check, resolved_fallback) == 0) {
-        die("add: source and fallback both resolve to '%s' -- refusing to add a no-op shim",
+        strcmp(resolved_source_for_check, resolved_fallback) == 0 &&
+        str_array_eq(source_args->items, source_args->count, fallback_args->items,
+                     fallback_args->count)) {
+        die("add: source and fallback both resolve to '%s' with the same arguments -- refusing "
+            "to add a no-op shim",
             resolved_fallback);
     }
 

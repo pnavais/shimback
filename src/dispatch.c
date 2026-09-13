@@ -320,8 +320,17 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         return decode_exit_code(status);
     }
 
-    if (strcmp(resolved_source, resolved_fallback) == 0) {
-        warn("'%s': source and fallback resolve to the same binary; running it directly",
+    /* Only truly a no-op (and so only worth short-circuiting) when
+     * source_args/fallback_args also match -- otherwise they're the same
+     * binary invoked two different ways, and the normal trial/fallback
+     * flow below still make sense. `add` already refuses to create a
+     * fully-identical shim like this, but a hand-edited config could still
+     * end up here. */
+    if (strcmp(resolved_source, resolved_fallback) == 0 &&
+        str_array_eq(entry->source_args, entry->source_arg_count, entry->fallback_args,
+                     entry->fallback_arg_count)) {
+        warn("'%s': source and fallback resolve to the same binary with the same arguments; "
+             "running it directly",
              shim_name);
         int status;
         run_inherited(resolved_source, source_argv, &status);
