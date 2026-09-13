@@ -160,12 +160,14 @@ typo that's literally containable, in order, within the real name.
 
 Pass `-y`/`--yes` to skip the hint and act on it automatically — but only
 when it's *unambiguous*: if exactly one configured name is the closest
-match, that one gets removed instead (with a line saying so); if two or
-more configured names tie for closest, `-y` doesn't guess between them —
-it falls back to the plain error and hint, exactly as without the flag.
+match, that one gets removed instead, with the usual `removed 'X'`
+confirmation (in green, under the same terminal/`NO_COLOR` conditions)
+naming whichever shim actually got removed; if two or more configured
+names tie for closest, `-y` doesn't guess between them — it falls back to
+the plain error and hint, exactly as without the flag.
 
 ```sh
-shimback remove -y shed   # -> "'shed' not found -- removing closest match 'sed' instead"
+shimback remove -y shed   # -> "removed 'sed'"
 ```
 
 ### `init`

@@ -66,8 +66,6 @@ int cmd_remove(int argc, char **argv) {
         if (auto_yes && candidates) {
             char *unique = fuzzy_suggest_unique(name, candidates, cfg.count);
             if (unique) {
-                printf("shimback: '%s' not found -- removing closest match '%s' instead\n", name,
-                       unique);
                 name = unique;
             }
         }
@@ -109,6 +107,8 @@ int cmd_remove(int argc, char **argv) {
         die("remove: failed to save config: %s", errbuf);
     }
 
-    printf("shimback: removed '%s'\n", name);
+    bool colorize = stdout_is_color();
+    printf("shimback: %sremoved '%s'%s\n", colorize ? ANSI_GREEN : "", name,
+           colorize ? ANSI_RESET : "");
     return 0;
 }
