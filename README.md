@@ -53,7 +53,7 @@ shimback add <name> [-s <source>] [--source-arg <arg>]...
                      [--error-pattern <p>]... [--exit-code <code>]...
                      [--route-arg <arg>]... [--strip-matched-args]
                      [--split-source-arg <arg>]... [--split-fallback-arg <arg>]...
-                     [--rewrite <from>=<to>]... [--diagnostic] [--force]
+                     [--rewrite <from>=<to>]... [--diagnostic] [--force] [-v|--verbose]
 shimback remove [-y] <name>
 shimback init
 shimback list [--full]
@@ -156,6 +156,15 @@ shimback add sed -f /usr/bin/sed
   PATH-mutating activation (for faster prompt startup) would clobber the
   shim dir's position on `PATH` after the rc file finishes sourcing,
   regardless of where the shimback block sits in the file.
+- The confirmation line printed on success (`shimback: 'name' -> path
+  (fallback: ..., policy: ...)`) is colored when stdout is a terminal and
+  `NO_COLOR` isn't set, matching `list`'s conventions. The shell-startup-file
+  notices right after it (`zsh: PATH updated in ...`, `Restart your shell
+  ...`) are **silent by default** — pass `-v`/`--verbose` to print them for
+  this one invocation, or set `verbose = true` at the top level of
+  `config.toml` (see [Configuration](#configuration)) to make that the
+  default for every `add`. `-v`/`--verbose` only ever turns them on; it
+  can't override a config default of `true` back to silent for one call.
 
 #### Interactive wizard
 
@@ -539,6 +548,10 @@ Config lives at `$XDG_CONFIG_HOME/shimback/config.toml`, falling back to
 honored even on macOS, not overridden by platform-native paths. The shim
 symlinks themselves live at `$XDG_DATA_HOME/shimback/bin` (fallback
 `$HOME/.local/share/shimback/bin`).
+
+A top-level `verbose = true` sets the default for `add`'s shell-startup-file
+PATH-update notices (see `add`, above); omitted or `false` keeps them silent
+unless `-v`/`--verbose` is passed on that particular `add`.
 
 ```toml
 version = 1

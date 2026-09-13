@@ -11,6 +11,7 @@ shimback \- run a primary command, transparently fall back to another
 [\fB\-\-route\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-strip\-matched\-args\fR]
 [\fB\-\-split\-source\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-split\-fallback\-arg\fR \fIarg\fR]\|.\|.\|.
 [\fB\-\-rewrite\fR \fIfrom\fR=\fIto\fR]\|.\|.\|. [\fB\-\-diagnostic\fR] [\fB\-\-force\fR]
+[\fB\-v\fR|\fB\-\-verbose\fR]
 .br
 .B shimback remove
 [\fB\-y\fR]
@@ -155,6 +156,32 @@ affects only that
 .B doctor
 check \(em dispatch always resolves and checks source/fallback for real
 every time the shim actually runs, regardless of it.
+.IP
+The confirmation line printed on success is colored when stdout is a
+terminal and
+.B NO_COLOR
+is unset, matching
+.BR list 's
+conventions. The shell\-startup\-file notices right after it (
+.IR "zsh: PATH updated in ..." ,
+.IR "Restart your shell ..." )
+are silent by default \(em pass
+.B \-v
+/
+.B \-\-verbose
+to print them for this one invocation, or set
+.I "verbose = true"
+at the top level of the config to make that the default for every
+.B add
+(see
+.B FILES
+below).
+.B \-v
+/
+.B \-\-verbose
+only ever turns them on; it cannot override a config default of
+.I true
+back to silent for one call.
 .IP
 .B \-\-source\-arg
 and
@@ -569,6 +596,18 @@ is unset). Plain, hand\-editable TOML, managed by
 .B add
 and
 .BR remove .
+A top\-level
+.I "verbose = true"
+sets the default for
+.BR add 's
+shell\-startup\-file PATH\-update notices; omitted or
+.I false
+keeps them silent unless
+.B \-v
+/
+.B \-\-verbose
+is passed on that particular
+.BR add .
 .TP
 .I $XDG_DATA_HOME/shimback/bin
 The shim directory: every shim's symlink lives here (falls back to

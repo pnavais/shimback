@@ -26,10 +26,12 @@ static const char *USAGE =
     "                    [--error-pattern <p>]... [--exit-code <code>]...\n"
     "                    [--route-arg <arg>]... [--strip-matched-args]\n"
     "                    [--split-source-arg <arg>]... [--split-fallback-arg <arg>]...\n"
-    "                    [--rewrite <from>=<to>]... [--diagnostic] [--force]\n"
+    "                    [--rewrite <from>=<to>]... [--diagnostic] [--force] [-v|--verbose]\n"
     "-f/--fallback is required, except with --policy rewrite, where it's unused.\n"
     "--force allows source/fallback to point at a path (not a bare name) that doesn't\n"
-    "exist yet; doctor skips its existence check for whichever of them still doesn't.\n";
+    "exist yet; doctor skips its existence check for whichever of them still doesn't.\n"
+    "-v/--verbose prints the shell-startup-file PATH-update notices (silent by default,\n"
+    "or per the config's own top-level `verbose` default).\n";
 
 #define OPT_STRIP_MATCHED_ARGS 1000
 #define OPT_SOURCE_ARG 1001
@@ -55,7 +57,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                        StrVec *patterns, int *exit_codes, size_t exit_code_count,
                        StrVec *route_args, bool strip_matched_args, StrVec *split_source_args,
                        StrVec *split_fallback_args, StrVec *rewrite_from, StrVec *rewrite_to,
-                       bool diagnostic, bool force) {
+                       bool diagnostic, bool force, bool verbose) {
     if (name[0] == '\0' || strchr(name, '/') != NULL || strcmp(name, "shimback") == 0) {
         die("add: invalid shim name '%s'", name);
     }
@@ -241,18 +243,35 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     entry->diagnostic = diagnostic;
     entry->force = force;
 
+    /* --verbose only ever turns this invocation's verbosity *on*; the
+     * config's own `verbose` default is what controls it when the flag
+     * isn't given. */
+    bool effective_verbose = verbose || cfg.verbose;
+
     ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
     if (save_st != CONFIG_OK) {
         die("add: failed to save config: %s", errbuf);
     }
 
-    printf("shimback: '%s' -> %s (fallback: %s, policy: %s)\n", name, symlink_path,
-           resolved_fallback ? resolved_fallback : "none", policy_to_string(policy));
+    bool colorize = stdout_is_color();
+    const char *reset = colorize ? ANSI_RESET : "";
+    const char *name_color = colorize ? ANSI_BOLD ANSI_CYAN : "";
+    const char *path_color = colorize ? ANSI_GREEN : "";
+    const char *fallback_color = colorize ? (resolved_fallback ? ANSI_BLUE : ANSI_DIM) : "";
+    const char *pc = policy_color(policy);
+    const char *policy_color_str = (colorize && pc) ? pc : "";
+
+    printf("shimback: '%s%s%s' -> %s%s%s (fallback: %s%s%s, policy: %s%s%s)\n", name_color, name,
+           reset, path_color, symlink_path, reset, fallback_color,
+           resolved_fallback ? resolved_fallback : "none", reset, policy_color_str,
+           policy_to_string(policy), reset);
 
     ShellKind shell = detect_current_shell();
-    shell_ensure_path(shell, shim_dir);
-    printf("Restart your shell (or re-source its startup file) for the PATH change to take "
-           "effect.\n");
+    shell_ensure_path(shell, shim_dir, effective_verbose);
+    if (effective_verbose) {
+        printf("Restart your shell (or re-source its startup file) for the PATH change to take "
+               "effect.\n");
+    }
 
     return 0;
 }
@@ -264,6 +283,7 @@ int cmd_add(int argc, char **argv) {
     bool diagnostic = false;
     bool strip_matched_args = false;
     bool force = false;
+    bool verbose = false;
     StrVec source_args;
     strvec_init(&source_args);
     StrVec fallback_args;
@@ -299,11 +319,12 @@ int cmd_add(int argc, char **argv) {
         {"rewrite", required_argument, 0, 'w'},
         {"diagnostic", no_argument, 0, 'd'},
         {"force", no_argument, 0, OPT_FORCE},
+        {"verbose", no_argument, 0, 'v'},
         {0, 0, 0, 0},
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "s:f:p:e:x:r:w:d", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:f:p:e:x:r:w:dv", long_opts, NULL)) != -1) {
         switch (opt) {
             case 's': source_arg = optarg; break;
             case OPT_SOURCE_ARG: strvec_push(&source_args, xstrdup(optarg)); break;
@@ -338,6 +359,7 @@ int cmd_add(int argc, char **argv) {
             }
             case 'd': diagnostic = true; break;
             case OPT_FORCE: force = true; break;
+            case 'v': verbose = true; break;
             default:
                 fprintf(stderr, "%s", USAGE);
                 return 1;
@@ -428,11 +450,12 @@ int cmd_add(int argc, char **argv) {
                            &result.patterns, result.exit_codes, result.exit_code_count,
                            &result.route_args, result.strip_matched_args,
                            &result.split_source_args, &result.split_fallback_args,
-                           &result.rewrite_from, &result.rewrite_to, result.diagnostic, force);
+                           &result.rewrite_from, &result.rewrite_to, result.diagnostic, force,
+                           verbose);
     }
 
     return finish_add(name, source_arg, &source_args, fallback_arg, &fallback_args, policy,
                        &patterns, exit_codes, exit_code_count, &route_args, strip_matched_args,
                        &split_source_args, &split_fallback_args, &rewrite_from, &rewrite_to,
-                       diagnostic, force);
+                       diagnostic, force, verbose);
 }
