@@ -115,8 +115,10 @@ shimback add sed -f /usr/bin/sed
   further and just never offers the fallback-args page at all when
   fallback is left blank.
 - `add` refuses to create a shim where source and fallback resolve to the
-  same binary (nothing would ever change), and never writes anything if
-  validation fails.
+  same binary *with the same extra arguments* (nothing would ever behave
+  differently), and never writes anything if validation fails. Same binary
+  with **different** `--source-arg`/`--fallback-arg` is fine — that's two
+  distinct invocations of one command, not a no-op.
 - Because a bare `-s`/`-f` name is looked up on `PATH` with nothing
   excluded, it can resolve to another shim's symlink — and every shim
   symlink points at the same `shimback` binary, so that's indistinguishable

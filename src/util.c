@@ -160,3 +160,15 @@ const char *str_casestr(const char *haystack, const char *needle) {
     }
     return NULL;
 }
+
+bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count) {
+    if (a_count != b_count) {
+        return false;
+    }
+    for (size_t i = 0; i < a_count; i++) {
+        if (strcmp(a[i], b[i]) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
