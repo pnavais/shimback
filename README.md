@@ -11,6 +11,26 @@ dialect's argument style (`sed -i ''` vs `sed -i`) break under the other.
 `shimback` generalizes that "try one, fall back to the other" idea to any
 pair of commands.
 
+## Contents
+
+- [How it works](#how-it-works)
+- [Usage](#usage)
+  - [`add`](#add)
+    - [Interactive wizard](#interactive-wizard)
+  - [`remove` (alias: `rm`)](#remove-alias-rm)
+  - [`init`](#init)
+  - [`list` (alias: `ls`)](#list-alias-ls)
+  - [`doctor`](#doctor)
+  - [`install`](#install)
+  - [`uninstall`](#uninstall)
+- [Fallback policies](#fallback-policies)
+  - [Diagnostics](#diagnostics)
+- [Configuration](#configuration)
+- [Exit codes](#exit-codes)
+- [Building](#building)
+- [Platform support](#platform-support)
+- [License](#license)
+
 ## How it works
 
 1. `shimback add <name> ...` creates a symlink named `<name>` pointing at the
