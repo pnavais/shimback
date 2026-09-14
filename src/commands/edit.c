@@ -71,7 +71,7 @@ int cmd_edit(int argc, char **argv) {
     }
 
     int status;
-    if (waitpid(pid, &status, 0) < 0) {
+    if (xwaitpid(pid, &status) < 0) {
         die("edit: failed to wait for editor: %s", strerror(errno));
     }
     int code = decode_exit_code(status);

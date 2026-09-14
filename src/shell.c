@@ -140,30 +140,75 @@ static bool find_block(const char *content, const char *tag, const char *rc_path
     return true;
 }
 
+/* Appends `s` to `body` as a POSIX shell single-quoted literal -- the
+ * standard shlex.quote-equivalent escaping: wrap in '...', and replace each
+ * embedded literal quote with '\'' (close quote, escaped literal quote,
+ * reopen quote). Inside single quotes nothing else is special to sh/bash/zsh
+ * -- not $, backticks, backslashes, or double quotes -- so this is what
+ * actually neutralizes a directory path containing shell metacharacters
+ * before it's written into someone's startup file (see build_zsh_body /
+ * build_bash_body, which previously interpolated the raw path inside a
+ * double-quoted string, letting a path like `.../data"; rm -rf ~; #` inject
+ * arbitrary commands that ran on the next shell startup). */
+static void append_sh_squoted(DynBuf *body, const char *s) {
+    dynbuf_append_char(body, '\'');
+    for (const char *p = s; *p != '\0'; p++) {
+        if (*p == '\'') {
+            dynbuf_append_str(body, "'\\''");
+        } else {
+            dynbuf_append_char(body, *p);
+        }
+    }
+    dynbuf_append_char(body, '\'');
+}
+
+/* Inverse of append_sh_squoted: reads one single-quoted literal starting at
+ * *p (which must point at the opening quote), decoding the '\'' embedded-
+ * quote escape back into a plain ', and advances *p past the closing quote.
+ * Returns the newly allocated, unescaped string. */
+static char *read_sh_squoted(const char **p) {
+    (*p)++; /* opening quote */
+    DynBuf out;
+    dynbuf_init(&out);
+    while (**p != '\0') {
+        if (**p == '\'') {
+            if ((*p)[1] == '\\' && (*p)[2] == '\'' && (*p)[3] == '\'') {
+                dynbuf_append_char(&out, '\'');
+                *p += 4;
+                continue;
+            }
+            (*p)++; /* closing quote */
+            break;
+        }
+        dynbuf_append_char(&out, **p);
+        (*p)++;
+    }
+    char *s = xstrdup(dynbuf_cstr(&out));
+    dynbuf_free(&out);
+    return s;
+}
+
 /* Extracts the directory list from a block body shaped like
- * build_zsh_body's/build_bash_body's output (an `export PATH=` line listing
- * colon-separated directories ahead of a literal trailing $PATH), appending
- * each into `out`. Best-effort: a body with no such line just yields no
- * directories, so callers can safely union a new one in regardless. */
+ * build_zsh_body's/build_bash_body's output (an `export PATH=` assignment
+ * of colon-separated, individually single-quoted directories ahead of a
+ * literal trailing "$PATH"), appending each into `out`. Best-effort: a body
+ * with no such line just yields no directories, so callers can safely union
+ * a new one in regardless. */
 static void parse_existing_dirs(const char *body, size_t body_len, StrVec *out) {
     char *copy = xmalloc(body_len + 1);
     memcpy(copy, body, body_len);
     copy[body_len] = '\0';
 
-    const char *marker = "export PATH=\"";
-    char *p = strstr(copy, marker);
+    const char *marker = "export PATH=";
+    const char *p = strstr(copy, marker);
     if (p) {
         p += strlen(marker);
-        char *end = strchr(p, '"');
-        if (end) {
-            *end = '\0';
-            char *saveptr = NULL;
-            char *tok = strtok_r(p, ":", &saveptr);
-            while (tok) {
-                if (strcmp(tok, "$PATH") != 0) {
-                    strvec_push(out, xstrdup(tok));
-                }
-                tok = strtok_r(NULL, ":", &saveptr);
+        while (*p == '\'') {
+            strvec_push(out, read_sh_squoted(&p));
+            if (*p == ':') {
+                p++;
+            } else {
+                break;
             }
         }
     }
@@ -180,29 +225,29 @@ static void parse_existing_dirs(const char *body, size_t body_len, StrVec *out) 
  * after them, putting our directories back in front once the queue drains. */
 static void build_zsh_body(DynBuf *body, const StrVec *dirs) {
     dynbuf_append_str(body, "if command -v zsh-defer >/dev/null 2>&1; then\n");
-    dynbuf_append_str(body, "    zsh-defer export PATH=\"");
+    dynbuf_append_str(body, "    zsh-defer export PATH=");
     for (size_t i = 0; i < dirs->count; i++) {
-        dynbuf_append_str(body, dirs->items[i]);
+        append_sh_squoted(body, dirs->items[i]);
         dynbuf_append_char(body, ':');
     }
-    dynbuf_append_str(body, "$PATH\"\n");
+    dynbuf_append_str(body, "\"$PATH\"\n");
     dynbuf_append_str(body, "else\n");
-    dynbuf_append_str(body, "    export PATH=\"");
+    dynbuf_append_str(body, "    export PATH=");
     for (size_t i = 0; i < dirs->count; i++) {
-        dynbuf_append_str(body, dirs->items[i]);
+        append_sh_squoted(body, dirs->items[i]);
         dynbuf_append_char(body, ':');
     }
-    dynbuf_append_str(body, "$PATH\"\n");
+    dynbuf_append_str(body, "\"$PATH\"\n");
     dynbuf_append_str(body, "fi\n");
 }
 
 static void build_bash_body(DynBuf *body, const StrVec *dirs) {
-    dynbuf_append_str(body, "export PATH=\"");
+    dynbuf_append_str(body, "export PATH=");
     for (size_t i = 0; i < dirs->count; i++) {
-        dynbuf_append_str(body, dirs->items[i]);
+        append_sh_squoted(body, dirs->items[i]);
         dynbuf_append_char(body, ':');
     }
-    dynbuf_append_str(body, "$PATH\"\n");
+    dynbuf_append_str(body, "\"$PATH\"\n");
 }
 
 static bool ends_with(const char *s, const char *suffix) {
@@ -452,32 +497,67 @@ static char *fish_snippet_path(const char *tag) {
     return path;
 }
 
+/* fish equivalents of append_sh_squoted/read_sh_squoted: inside fish's
+ * single quotes, only \\ and \' are recognized escapes (everything else,
+ * including $ and the "(...)" command-substitution syntax, is literal) --
+ * so those are exactly what need escaping here, in that order (backslash
+ * first, so a backslash introduced by quoting the original quote character
+ * doesn't itself get re-escaped). Without this, a directory path containing
+ * `(` and `)` would have been evaluated as a fish command substitution the
+ * next time the snippet was sourced. */
+static void append_fish_squoted(DynBuf *body, const char *s) {
+    dynbuf_append_char(body, '\'');
+    for (const char *p = s; *p != '\0'; p++) {
+        if (*p == '\\' || *p == '\'') {
+            dynbuf_append_char(body, '\\');
+        }
+        dynbuf_append_char(body, *p);
+    }
+    dynbuf_append_char(body, '\'');
+}
+
+static char *read_fish_squoted(const char **p) {
+    (*p)++; /* opening quote */
+    DynBuf out;
+    dynbuf_init(&out);
+    while (**p != '\0' && **p != '\'') {
+        if (**p == '\\' && ((*p)[1] == '\\' || (*p)[1] == '\'')) {
+            dynbuf_append_char(&out, (*p)[1]);
+            *p += 2;
+            continue;
+        }
+        dynbuf_append_char(&out, **p);
+        (*p)++;
+    }
+    if (**p == '\'') {
+        (*p)++;
+    }
+    char *s = xstrdup(dynbuf_cstr(&out));
+    dynbuf_free(&out);
+    return s;
+}
+
 /* Extracts the directory list from a snippet shaped like build_fish_body's
- * output (a `set -gx PATH ...` line listing space-separated directories
- * ahead of a literal trailing $PATH), mirroring parse_existing_dirs.
- * Best-effort: a file with no such line just yields no directories. */
+ * output (a `set -gx PATH ...` line listing space-separated, individually
+ * single-quoted directories ahead of a literal trailing $PATH), mirroring
+ * parse_existing_dirs. Best-effort: a file with no such line just yields no
+ * directories. */
 static void parse_existing_fish_dirs(const char *content, StrVec *out) {
-    const char *marker = "set -gx PATH ";
+    const char *marker = "set -gx PATH";
     const char *p = strstr(content, marker);
     if (!p) {
         return;
     }
     p += strlen(marker);
-    const char *end = strchr(p, '\n');
-    size_t len = end ? (size_t)(end - p) : strlen(p);
-    char *line = xmalloc(len + 1);
-    memcpy(line, p, len);
-    line[len] = '\0';
-
-    char *saveptr = NULL;
-    char *tok = strtok_r(line, " ", &saveptr);
-    while (tok) {
-        if (strcmp(tok, "$PATH") != 0) {
-            strvec_push(out, xstrdup(tok));
+    for (;;) {
+        while (*p == ' ') {
+            p++;
         }
-        tok = strtok_r(NULL, " ", &saveptr);
+        if (*p != '\'') {
+            break;
+        }
+        strvec_push(out, read_fish_squoted(&p));
     }
-    free(line);
 }
 
 static void build_fish_body(DynBuf *body, const StrVec *dirs) {
@@ -485,7 +565,7 @@ static void build_fish_body(DynBuf *body, const StrVec *dirs) {
     dynbuf_append_str(body, "set -gx PATH");
     for (size_t i = 0; i < dirs->count; i++) {
         dynbuf_append_char(body, ' ');
-        dynbuf_append_str(body, dirs->items[i]);
+        append_fish_squoted(body, dirs->items[i]);
     }
     dynbuf_append_str(body, " $PATH\n");
 }

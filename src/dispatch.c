@@ -175,7 +175,7 @@ static void run_inherited(const char *exe, char *const argv[], int *raw_status) 
         fprintf(stderr, "shimback: exec %s: %s\n", exe, strerror(errno));
         _exit(127);
     }
-    waitpid(pid, raw_status, 0);
+    xwaitpid(pid, raw_status);
 }
 
 /* Runs `exe` with stdout/stderr captured into buffers rather than streamed
@@ -248,7 +248,7 @@ static void run_captured(const char *exe, char *const argv[], DynBuf *out, DynBu
 
     close(out_pipe[0]);
     close(err_pipe[0]);
-    waitpid(pid, raw_status, 0);
+    xwaitpid(pid, raw_status);
 }
 
 static void replay(DynBuf *out, DynBuf *err) {
