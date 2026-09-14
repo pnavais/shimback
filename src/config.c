@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,27 @@
 
 #include "paths.h"
 #include "util.h"
+
+/* Strictly parses a non-negative integer field: rejects empty input,
+ * trailing garbage, an out-of-range value, and a negative one. Unlike a
+ * bare strtol() call, "nope" (or "-5", or "99999999999999999999") is
+ * never silently accepted as 0 (or some wrapped/truncated value) -- for a
+ * field like capture_timeout_ms, which directly drives dispatch behavior
+ * (0 means "cut over to live output immediately"), silently misparsing a
+ * typo would change behavior without ever surfacing as an error. */
+static bool parse_nonneg_int(const char *s, int *out) {
+    if (s[0] == '\0') {
+        return false;
+    }
+    errno = 0;
+    char *end;
+    long v = strtol(s, &end, 10);
+    if (*end != '\0' || errno == ERANGE || v < 0 || v > INT_MAX) {
+        return false;
+    }
+    *out = (int)v;
+    return true;
+}
 
 void config_init(Config *cfg) {
     cfg->version = 1;
@@ -440,7 +462,12 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                     status = CONFIG_ERR_PARSE;
                 }
             } else if (strcmp(key, "capture_timeout_ms") == 0) {
-                cfg->capture_timeout_ms = (int)strtol(value_str, NULL, 10);
+                if (!parse_nonneg_int(value_str, &cfg->capture_timeout_ms)) {
+                    snprintf(errbuf, errbuf_size,
+                             "line %d: 'capture_timeout_ms' must be a non-negative integer",
+                             line_no);
+                    status = CONFIG_ERR_PARSE;
+                }
             } else if (strcmp(key, "capture_limit") == 0) {
                 const char *cursor = value_str;
                 char *v = parse_quoted_string(&cursor);
@@ -621,7 +648,12 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                 break;
             }
         } else if (strcmp(key, "capture_timeout_ms") == 0) {
-            entry->capture_timeout_ms = (int)strtol(value_str, NULL, 10);
+            if (!parse_nonneg_int(value_str, &entry->capture_timeout_ms)) {
+                snprintf(errbuf, errbuf_size,
+                         "line %d: 'capture_timeout_ms' must be a non-negative integer", line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
             entry->capture_timeout_set = true;
         } else if (strcmp(key, "capture_limit") == 0) {
             char *v = parse_quoted_string(&cursor);
@@ -930,32 +962,16 @@ ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size
     dynbuf_init(&out);
     render_config(cfg, &out);
 
-    char tmp_path[4096];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%d", path, (int)getpid());
-
-    FILE *f = fopen(tmp_path, "wb");
-    if (!f) {
-        snprintf(errbuf, errbuf_size, "cannot create %s: %s", tmp_path, strerror(errno));
-        dynbuf_free(&out);
-        return CONFIG_ERR_IO;
-    }
-    size_t written = fwrite(out.data, 1, out.len, f);
-    bool ok = written == out.len;
-    if (ok) {
-        ok = fflush(f) == 0;
-    }
-    fclose(f);
+    /* 0600: config.toml controls which executables a shim actually runs,
+     * so it's owner-only rather than the world-readable 0644 generated
+     * shell files get -- enforced on every save (see write_file_atomic,
+     * paths.c), not just at first creation, so it's self-healing even if
+     * something else ever leaves the file at a weaker mode. */
+    bool ok = write_file_atomic(path, out.data, out.len, 0600);
     dynbuf_free(&out);
 
     if (!ok) {
-        snprintf(errbuf, errbuf_size, "cannot write %s: %s", tmp_path, strerror(errno));
-        unlink(tmp_path);
-        return CONFIG_ERR_IO;
-    }
-
-    if (rename(tmp_path, path) != 0) {
-        snprintf(errbuf, errbuf_size, "cannot replace %s: %s", path, strerror(errno));
-        unlink(tmp_path);
+        snprintf(errbuf, errbuf_size, "cannot write %s: %s", path, strerror(errno));
         return CONFIG_ERR_IO;
     }
 

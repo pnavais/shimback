@@ -141,6 +141,48 @@ if [ "$code" -eq 0 ]; then
     fail "remove: removing an already-removed shim should fail"
 fi
 
+# --- remove must not leave the symlink and config entry inconsistent when
+# the config save fails: the symlink used to be unlinked before the save,
+# so a failed save left the config still describing a shim whose symlink
+# was already gone (see review.md) ---
+"$SHIMBACK" add rmordertool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+RMORDER_LINK="$(shim_path rmordertool)"
+if [ ! -e "$RMORDER_LINK" ]; then
+    fail "remove-ordering setup: expected rmordertool's symlink to exist"
+fi
+
+CFG_DIR="$(dirname "$(config_file)")"
+chmod 0500 "$CFG_DIR"
+"$SHIMBACK" remove rmordertool >/dev/null 2>"$SANDBOX/err"
+code=$?
+chmod 0700 "$CFG_DIR"
+if [ "$code" -eq 0 ]; then
+    fail "remove: should fail when the config directory isn't writable"
+fi
+assert_contains "remove: reports the save failure" "$(cat "$SANDBOX/err")" "failed to save config"
+if [ ! -e "$RMORDER_LINK" ]; then
+    fail "remove: symlink must survive a failed config save, not be left orphaned"
+fi
+assert_contains "remove: config entry also survives a failed save" "$("$SHIMBACK" list)" \
+    "rmordertool"
+
+"$SHIMBACK" remove rmordertool >/dev/null
+
+# --- generated startup files and config.toml are never world-writable,
+# even under a permissive umask -- the mode is always set explicitly
+# rather than left to whatever fopen()+umask would have produced (see
+# review.md) ---
+OLD_UMASK="$(umask)"
+umask 000
+"$SHIMBACK" add umasktool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+umask "$OLD_UMASK"
+
+zshrc_perms="$(ls -l "$ZSHRC" | cut -c1-10)"
+cfg_perms="$(ls -l "$(config_file)" | cut -c1-10)"
+assert_eq "add under umask 000: .zshrc is not world-writable" "-rw-r--r--" "$zshrc_perms"
+assert_eq "add under umask 000: config.toml is not world-writable" "-rw-------" "$cfg_perms"
+"$SHIMBACK" remove umasktool >/dev/null
+
 # --- fuzzy "did you mean" hints: edit-distance based, no fzf (or any other
 # external tool) involved, so these always run regardless of the test
 # machine's setup ---

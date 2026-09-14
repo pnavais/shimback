@@ -89,13 +89,17 @@ int cmd_remove(int argc, char **argv) {
     char *symlink_path = path_join(shim_dir, name);
     char *self_exe = self_exe_path();
 
+    /* Read-only pre-flight: figure out whether there's a shimback-managed
+     * symlink to remove, without touching it yet. The config is saved
+     * first (below), and only once that succeeds is the symlink actually
+     * unlinked -- so a failed save never leaves the symlink gone while the
+     * config still describes the shim as configured. */
+    bool have_managed_symlink = false;
     struct stat st;
     if (lstat(symlink_path, &st) == 0 && S_ISLNK(st.st_mode)) {
         char *resolved = canonicalize(symlink_path);
         if (resolved && strcmp(resolved, self_exe) == 0) {
-            if (unlink(symlink_path) != 0) {
-                warn("failed to remove symlink %s: %s", symlink_path, strerror(errno));
-            }
+            have_managed_symlink = true;
         } else {
             warn("%s is not a shimback-managed symlink; leaving it alone", symlink_path);
         }
@@ -105,6 +109,10 @@ int cmd_remove(int argc, char **argv) {
     ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
     if (save_st != CONFIG_OK) {
         die("remove: failed to save config: %s", errbuf);
+    }
+
+    if (have_managed_symlink && unlink(symlink_path) != 0) {
+        warn("failed to remove symlink %s: %s", symlink_path, strerror(errno));
     }
 
     bool colorize = stdout_is_color();
