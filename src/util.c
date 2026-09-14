@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -181,4 +182,48 @@ pid_t xwaitpid(pid_t pid, int *status) {
         rc = waitpid(pid, status, 0);
     } while (rc < 0 && errno == EINTR);
     return rc;
+}
+
+bool parse_size_bytes(const char *s, size_t *out) {
+    if (s[0] == '\0' || !isdigit((unsigned char)s[0])) {
+        return false;
+    }
+    char *end;
+    unsigned long long value = strtoull(s, &end, 10);
+    const char *suffix = end;
+
+    char buf[8];
+    size_t suffix_len = strlen(suffix);
+    if (suffix_len >= sizeof(buf)) {
+        return false;
+    }
+    for (size_t i = 0; i < suffix_len; i++) {
+        buf[i] = (char)tolower((unsigned char)suffix[i]);
+    }
+    buf[suffix_len] = '\0';
+
+    unsigned long long multiplier;
+    if (buf[0] == '\0' || strcmp(buf, "b") == 0) {
+        multiplier = 1;
+    } else if (strcmp(buf, "k") == 0 || strcmp(buf, "kb") == 0) {
+        multiplier = 1000ULL;
+    } else if (strcmp(buf, "ki") == 0 || strcmp(buf, "kib") == 0) {
+        multiplier = 1024ULL;
+    } else if (strcmp(buf, "m") == 0 || strcmp(buf, "mb") == 0) {
+        multiplier = 1000ULL * 1000;
+    } else if (strcmp(buf, "mi") == 0 || strcmp(buf, "mib") == 0) {
+        multiplier = 1024ULL * 1024;
+    } else if (strcmp(buf, "g") == 0 || strcmp(buf, "gb") == 0) {
+        multiplier = 1000ULL * 1000 * 1000;
+    } else if (strcmp(buf, "gi") == 0 || strcmp(buf, "gib") == 0) {
+        multiplier = 1024ULL * 1024 * 1024;
+    } else {
+        return false;
+    }
+
+    if (value != 0 && value > (unsigned long long)SIZE_MAX / multiplier) {
+        return false; /* would overflow size_t */
+    }
+    *out = (size_t)(value * multiplier);
+    return true;
 }

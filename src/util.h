@@ -95,4 +95,15 @@ bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count
  * outcome (the pid, or -1 with errno set for a real failure). */
 pid_t xwaitpid(pid_t pid, int *status);
 
+/* Parses a human-friendly byte size: a non-negative integer optionally
+ * followed by a case-insensitive unit suffix, with no whitespace in
+ * between -- "B" (or no suffix at all) for plain bytes, "K"/"KB" for
+ * decimal kilobytes (x1000), "KiB" for binary kibibytes (x1024), and
+ * likewise "M"/"MB"/"MiB" and "G"/"GB"/"GiB". E.g. "8MiB", "8388608", and
+ * "8192KiB" all parse to the same byte count. Returns false, leaving *out
+ * untouched, for anything else: empty input, a non-digit start, an
+ * unrecognized suffix, or a value that would overflow size_t once
+ * multiplied out. */
+bool parse_size_bytes(const char *s, size_t *out);
+
 #endif /* SHIMBACK_UTIL_H */

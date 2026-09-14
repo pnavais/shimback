@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "config.h"
@@ -178,13 +179,35 @@ static void run_inherited(const char *exe, char *const argv[], int *raw_status) 
     xwaitpid(pid, raw_status);
 }
 
+/* Milliseconds elapsed since `start` (CLOCK_MONOTONIC, so immune to wall-
+ * clock adjustments -- NTP, DST, someone changing the system clock). */
+static long elapsed_ms_since(const struct timespec *start) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (long)((now.tv_sec - start->tv_sec) * 1000 +
+                   (now.tv_nsec - start->tv_nsec) / 1000000);
+}
+
 /* Runs `exe` with stdout/stderr captured into buffers rather than streamed
  * live -- this is what makes a failed trial run invisible. Drains both
  * pipes via poll() rather than sequential reads, since the child may
  * interleave writes to both streams and a full pipe would otherwise
- * deadlock a sequential reader. */
+ * deadlock a sequential reader.
+ *
+ * `timeout_ms`/`limit_bytes` bound how long this invisibility can last:
+ * whichever is hit first (the trial has run longer than `timeout_ms`, or
+ * `out`+`err` together have grown past `limit_bytes`), shimback gives up on
+ * ever hiding or falling back on this run -- it flushes whatever's been
+ * captured so far straight to the real stdout/stderr and relays everything
+ * read from that point on live instead of buffering it. Nothing is ever
+ * discarded; the only thing that changes is that the caller can no longer
+ * decide to fall back once *committed_live is set to true, since some of
+ * the source's real output has already been shown. Still drains to EOF
+ * either way (live relay doesn't need buffering, but the deadlock-avoidance
+ * reason for draining both pipes via poll() applies regardless). */
 static void run_captured(const char *exe, char *const argv[], DynBuf *out, DynBuf *err,
-                          int *raw_status) {
+                          int *raw_status, int timeout_ms, size_t limit_bytes,
+                          bool *committed_live) {
     int out_pipe[2];
     int err_pipe[2];
     if (pipe(out_pipe) != 0 || pipe(err_pipe) != 0) {
@@ -210,8 +233,12 @@ static void run_captured(const char *exe, char *const argv[], DynBuf *out, DynBu
     close(out_pipe[1]);
     close(err_pipe[1]);
 
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
     bool out_done = false;
     bool err_done = false;
+    bool live = false;
     char chunk[4096];
     while (!out_done || !err_done) {
         struct pollfd fds[2];
@@ -220,7 +247,19 @@ static void run_captured(const char *exe, char *const argv[], DynBuf *out, DynBu
         fds[1].fd = err_done ? -1 : err_pipe[0];
         fds[1].events = POLLIN;
 
-        int rc = poll(fds, 2, -1);
+        /* Once committed to live relay there's no more deadline to watch
+         * for, so just block; until then, never wait past the deadline --
+         * otherwise a source that's gone quiet (a server that isn't
+         * chatty, just long-running) would never get re-checked against
+         * timeout_ms, since poll() would only wake for data that never
+         * comes. */
+        int poll_timeout = -1;
+        if (!live) {
+            long remaining = timeout_ms - elapsed_ms_since(&start);
+            poll_timeout = remaining > 0 ? (int)remaining : 0;
+        }
+
+        int rc = poll(fds, 2, poll_timeout);
         if (rc < 0) {
             if (errno == EINTR) {
                 continue;
@@ -228,10 +267,24 @@ static void run_captured(const char *exe, char *const argv[], DynBuf *out, DynBu
             die("poll failed: %s", strerror(errno));
         }
 
+        if (!live && (elapsed_ms_since(&start) >= timeout_ms || out->len + err->len >= limit_bytes)) {
+            fwrite(out->data, 1, out->len, stdout);
+            fwrite(err->data, 1, err->len, stderr);
+            fflush(stdout);
+            fflush(stderr);
+            live = true;
+            *committed_live = true;
+        }
+
         if (!out_done && (fds[0].revents & (POLLIN | POLLHUP | POLLERR))) {
             ssize_t n = read(out_pipe[0], chunk, sizeof(chunk));
             if (n > 0) {
-                dynbuf_append(out, chunk, (size_t)n);
+                if (live) {
+                    fwrite(chunk, 1, (size_t)n, stdout);
+                    fflush(stdout);
+                } else {
+                    dynbuf_append(out, chunk, (size_t)n);
+                }
             } else if (n == 0 || errno != EINTR) {
                 out_done = true;
             }
@@ -239,7 +292,12 @@ static void run_captured(const char *exe, char *const argv[], DynBuf *out, DynBu
         if (!err_done && (fds[1].revents & (POLLIN | POLLHUP | POLLERR))) {
             ssize_t n = read(err_pipe[0], chunk, sizeof(chunk));
             if (n > 0) {
-                dynbuf_append(err, chunk, (size_t)n);
+                if (live) {
+                    fwrite(chunk, 1, (size_t)n, stderr);
+                    fflush(stderr);
+                } else {
+                    dynbuf_append(err, chunk, (size_t)n);
+                }
             } else if (n == 0 || errno != EINTR) {
                 err_done = true;
             }
@@ -429,7 +487,24 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     dynbuf_init(&out);
     dynbuf_init(&err);
     int status;
-    run_captured(resolved_source, source_argv, &out, &err, &status);
+    int effective_timeout_ms =
+        entry->capture_timeout_set ? entry->capture_timeout_ms : cfg.capture_timeout_ms;
+    size_t effective_limit_bytes =
+        entry->capture_limit_set ? entry->capture_limit_bytes : cfg.capture_limit_bytes;
+    bool committed_live = false;
+    run_captured(resolved_source, source_argv, &out, &err, &status, effective_timeout_ms,
+                 effective_limit_bytes, &committed_live);
+
+    if (committed_live) {
+        /* The trial ran long enough, or produced enough output, that
+         * shimback already gave up on hiding it and started relaying it
+         * live -- some of the source's real output is already on the
+         * user's screen, so falling back is no longer an option for this
+         * invocation. Just report what actually happened. */
+        dynbuf_free(&out);
+        dynbuf_free(&err);
+        return decode_exit_code(status);
+    }
 
     if (child_succeeded(status)) {
         replay(&out, &err);

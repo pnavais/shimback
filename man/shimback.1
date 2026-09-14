@@ -12,6 +12,7 @@ shimback \- run a primary command, transparently fall back to another
 [\fB\-\-split\-source\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-split\-fallback\-arg\fR \fIarg\fR]\|.\|.\|.
 [\fB\-\-rewrite\fR \fIfrom\fR=\fIto\fR]\|.\|.\|. [\fB\-\-diagnostic\fR] [\fB\-\-force\fR]
 [\fB\-v\fR|\fB\-\-verbose\fR]
+[\fB\-\-capture\-timeout\fR \fIms\fR] [\fB\-\-capture\-limit\fR \fIsize\fR]
 .br
 .B shimback remove
 [\fB\-y\fR]
@@ -87,6 +88,23 @@ entirely if a fallback is triggered \(em nothing about the failed attempt
 reaches the terminal unless the shim explicitly opts into a one\-line
 diagnostic (see
 .B \-\-diagnostic
+below).
+.PP
+This targets fast\-failing commands, which almost always fail in well under
+a second with a small amount of output. Since there's no way to know
+whether to show or hide a run's output before it exits, capturing has to
+hold it in memory until then; to keep that bounded, a trial run that takes
+too long or produces too much output \(em whichever happens first \(em
+makes shimback give up on ever hiding or falling back on it, flush what was
+captured so far, and relay the rest live instead. Nothing already produced
+is ever lost; only the opportunity to fall back for that one invocation is,
+since some of the source's real output is already visible by then. See
+.B \-\-capture\-timeout
+/
+.B \-\-capture\-limit
+below (default 2000ms / 8MiB, each also settable as a global default in the
+config \(em see
+.B FILES
 below).
 .SH COMMANDS
 .TP
@@ -184,6 +202,39 @@ below).
 only ever turns them on; it cannot override a config default of
 .I true
 back to silent for one call.
+.IP
+.B \-\-capture\-timeout
+.I ms
+and
+.B \-\-capture\-limit
+.I size
+override, for this shim only, the two thresholds deciding when a trial run
+gives up on being hideable (see
+.B DESCRIPTION
+above): default 2000ms / 8MiB, both also settable as global defaults at the
+top level of the config (see
+.BR FILES ).
+A shim\-level value always wins over the global one.
+.B \-\-capture\-limit
+accepts a plain byte count or a size with a case\-insensitive unit suffix
+\(em
+.BR B
+(or nothing) for bytes,
+.B K
+/
+.B KB
+for decimal kilobytes (\(mu1000),
+.B KiB
+for binary kibibytes (\(mu1024), and likewise
+.BR M / MB / MiB
+and
+.BR G / GB / GiB
+\(em so
+.IR 8MiB ,
+.IR 8192KiB ,
+and
+.I 8388608
+all mean the same thing.
 .IP
 .B \-\-source\-arg
 and
@@ -649,6 +700,21 @@ keeps them silent unless
 .B \-\-verbose
 is passed on that particular
 .BR add .
+Top\-level
+.I capture_timeout_ms
+and
+.I capture_limit
+set the global defaults for the trial\-run capture cutover (see
+.B DESCRIPTION
+above); omitted, they default to
+.I 2000
+and
+.IR "\(dq8MiB\(dq" .
+A shim can override either with its own
+.IR capture_timeout_ms / capture_limit
+(see
+.BR add ,
+above).
 .TP
 .I $XDG_DATA_HOME/shimback/bin
 The shim directory: every shim's symlink lives here (falls back to

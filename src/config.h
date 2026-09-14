@@ -4,6 +4,18 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+/* Global defaults for the trial-run capture cutover (see ShimEntry's
+ * capture_timeout_ms/capture_limit_bytes and dispatch.c's run_captured):
+ * how long, and how much output, a source's invisible trial run is allowed
+ * to accumulate before shimback gives up on ever hiding/falling back on it
+ * and switches to relaying it live instead. 2s comfortably covers the
+ * fast local failures (bad flag, missing file, ...) this mechanism exists
+ * for; 8MiB is far more than any realistic error message while still
+ * bounding worst-case memory for a source that turns out to be
+ * long-running or unexpectedly chatty. */
+#define SHIMBACK_DEFAULT_CAPTURE_TIMEOUT_MS 2000
+#define SHIMBACK_DEFAULT_CAPTURE_LIMIT_BYTES (8u * 1024 * 1024)
+
 /* POLICY_EXIT_CODE: fall back on any non-zero exit (the default).
  * POLICY_HEURISTIC: fall back only when stderr matches an error_pattern.
  * POLICY_EXIT_CODE_MATCH: fall back only when the exit code is one of
@@ -97,6 +109,10 @@ typedef struct {
                                    * doesn't, rather than reporting it as broken; has no effect
                                    * on dispatch, which always checks for real at invocation
                                    * time regardless. */
+    bool capture_timeout_set;    /* true if this shim overrides Config.capture_timeout_ms */
+    int capture_timeout_ms;      /* only meaningful when capture_timeout_set */
+    bool capture_limit_set;      /* true if this shim overrides Config.capture_limit_bytes */
+    size_t capture_limit_bytes;  /* only meaningful when capture_limit_set */
 } ShimEntry;
 
 typedef struct {
@@ -108,6 +124,15 @@ typedef struct {
                           * default false) for whether `add` prints the shell-startup-file
                           * PATH-update notices; `add --verbose` overrides this to true for
                           * that one invocation regardless of the config default. */
+    int capture_timeout_ms;      /* global default for the trial-run capture cutover (see
+                                   * SHIMBACK_DEFAULT_CAPTURE_TIMEOUT_MS above); always
+                                   * populated -- config_init seeds the hardcoded default,
+                                   * a top-level `capture_timeout_ms = <n>` in config.toml
+                                   * overrides it. A shim's own capture_timeout_set/
+                                   * capture_timeout_ms, if present, wins over this. */
+    size_t capture_limit_bytes;  /* global default for the same cutover's size half; always
+                                   * populated the same way (see
+                                   * SHIMBACK_DEFAULT_CAPTURE_LIMIT_BYTES). */
 } Config;
 
 typedef enum {

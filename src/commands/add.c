@@ -27,11 +27,16 @@ static const char *USAGE =
     "                    [--route-arg <arg>]... [--strip-matched-args]\n"
     "                    [--split-source-arg <arg>]... [--split-fallback-arg <arg>]...\n"
     "                    [--rewrite <from>=<to>]... [--diagnostic] [--force] [-v|--verbose]\n"
+    "                    [--capture-timeout <ms>] [--capture-limit <size>]\n"
     "-f/--fallback is required, except with --policy rewrite, where it's unused.\n"
     "--force allows source/fallback to point at a path (not a bare name) that doesn't\n"
     "exist yet; doctor skips its existence check for whichever of them still doesn't.\n"
     "-v/--verbose prints the shell-startup-file PATH-update notices (silent by default,\n"
-    "or per the config's own top-level `verbose` default).\n";
+    "or per the config's own top-level `verbose` default).\n"
+    "--capture-timeout/--capture-limit override, for this shim only, how long or how much\n"
+    "output an invisible trial run may accumulate before shimback gives up on hiding it\n"
+    "and streams it live instead (global defaults: 2000ms / 8MiB). --capture-limit accepts\n"
+    "a unit suffix (B, K/KB, KiB, M/MB, MiB, G/GB, GiB, case-insensitive; no suffix = bytes).\n";
 
 #define OPT_STRIP_MATCHED_ARGS 1000
 #define OPT_SOURCE_ARG 1001
@@ -39,6 +44,8 @@ static const char *USAGE =
 #define OPT_FORCE 1003
 #define OPT_SPLIT_SOURCE_ARG 1004
 #define OPT_SPLIT_FALLBACK_ARG 1005
+#define OPT_CAPTURE_TIMEOUT 1006
+#define OPT_CAPTURE_LIMIT 1007
 
 static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
     if (*count == *cap) {
@@ -57,7 +64,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                        StrVec *patterns, int *exit_codes, size_t exit_code_count,
                        StrVec *route_args, bool strip_matched_args, StrVec *split_source_args,
                        StrVec *split_fallback_args, StrVec *rewrite_from, StrVec *rewrite_to,
-                       bool diagnostic, bool force, bool verbose) {
+                       bool diagnostic, bool force, bool verbose, bool capture_timeout_set,
+                       int capture_timeout_ms, bool capture_limit_set, size_t capture_limit_bytes) {
     if (name[0] == '\0' || strchr(name, '/') != NULL || strcmp(name, "shimback") == 0) {
         die("add: invalid shim name '%s'", name);
     }
@@ -238,6 +246,10 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     entry->rewrite_to_count = rewrite_to->count;
     entry->diagnostic = diagnostic;
     entry->force = force;
+    entry->capture_timeout_set = capture_timeout_set;
+    entry->capture_timeout_ms = capture_timeout_ms;
+    entry->capture_limit_set = capture_limit_set;
+    entry->capture_limit_bytes = capture_limit_bytes;
 
     /* --verbose only ever turns this invocation's verbosity *on*; the
      * config's own `verbose` default is what controls it when the flag
@@ -295,6 +307,10 @@ int cmd_add(int argc, char **argv) {
     bool strip_matched_args = false;
     bool force = false;
     bool verbose = false;
+    bool capture_timeout_set = false;
+    int capture_timeout_ms = 0;
+    bool capture_limit_set = false;
+    size_t capture_limit_bytes = 0;
     StrVec source_args;
     strvec_init(&source_args);
     StrVec fallback_args;
@@ -331,6 +347,8 @@ int cmd_add(int argc, char **argv) {
         {"diagnostic", no_argument, 0, 'd'},
         {"force", no_argument, 0, OPT_FORCE},
         {"verbose", no_argument, 0, 'v'},
+        {"capture-timeout", required_argument, 0, OPT_CAPTURE_TIMEOUT},
+        {"capture-limit", required_argument, 0, OPT_CAPTURE_LIMIT},
         {0, 0, 0, 0},
     };
 
@@ -371,6 +389,27 @@ int cmd_add(int argc, char **argv) {
             case 'd': diagnostic = true; break;
             case OPT_FORCE: force = true; break;
             case 'v': verbose = true; break;
+            case OPT_CAPTURE_TIMEOUT: {
+                char *end;
+                long v = strtol(optarg, &end, 10);
+                if (*optarg == '\0' || *end != '\0' || v < 0) {
+                    die("add: --capture-timeout must be a non-negative integer of milliseconds "
+                        "(got '%s')",
+                        optarg);
+                }
+                capture_timeout_set = true;
+                capture_timeout_ms = (int)v;
+                break;
+            }
+            case OPT_CAPTURE_LIMIT: {
+                if (!parse_size_bytes(optarg, &capture_limit_bytes)) {
+                    die("add: --capture-limit must be a size like \"8MiB\" or a plain byte count "
+                        "(got '%s')",
+                        optarg);
+                }
+                capture_limit_set = true;
+                break;
+            }
             default:
                 fprintf(stderr, "%s", USAGE);
                 return 1;
@@ -462,11 +501,13 @@ int cmd_add(int argc, char **argv) {
                            &result.route_args, result.strip_matched_args,
                            &result.split_source_args, &result.split_fallback_args,
                            &result.rewrite_from, &result.rewrite_to, result.diagnostic, force,
-                           verbose);
+                           verbose, capture_timeout_set, capture_timeout_ms, capture_limit_set,
+                           capture_limit_bytes);
     }
 
     return finish_add(name, source_arg, &source_args, fallback_arg, &fallback_args, policy,
                        &patterns, exit_codes, exit_code_count, &route_args, strip_matched_args,
                        &split_source_args, &split_fallback_args, &rewrite_from, &rewrite_to,
-                       diagnostic, force, verbose);
+                       diagnostic, force, verbose, capture_timeout_set, capture_timeout_ms,
+                       capture_limit_set, capture_limit_bytes);
 }
