@@ -48,6 +48,18 @@ def assert_not_contains(desc, haystack, needle):
         fail(f"{desc}: expected NOT to find [{needle}] in [{haystack}]")
 
 
+def real(path):
+    """The wizard stores source/fallback canonicalized (realpath(3), same as
+    the C code's canonicalize()), so a config-file assertion must compare
+    against the resolved path too. On a usrmerged Linux system /bin is a
+    symlink to /usr/bin, so e.g. "/bin/cat" resolves to "/usr/bin/cat" --
+    on macOS (and non-usrmerged Linux) realpath is a no-op here since /bin
+    is a real directory. Terminal-output assertions checking the wizard's
+    live breadcrumb echo of what was just typed should NOT use this: that
+    text is the raw, pre-resolution input."""
+    return os.path.realpath(path)
+
+
 class Sandbox:
     def __init__(self, binary):
         self.binary = binary
@@ -150,7 +162,7 @@ try:
     assert_eq("1a exit code", 0, code)
     cfg = sb.config_text()
     assert_contains("1a config has shim", cfg, "[shims.tool1]")
-    assert_contains("1a fallback stored", cfg, 'fallback = "/bin/cat"')
+    assert_contains("1a fallback stored", cfg, f'fallback = "{real("/bin/cat")}"')
     assert_contains("1a policy stored", cfg, 'policy = "exit-code"')
     assert_not_contains("1a no explicit source (auto)", cfg, "source =")
     if not os.path.islink(sb.shim_path("tool1")):
@@ -197,8 +209,8 @@ try:
     code = sb.wait()
     assert_eq("2 exit code", 0, code)
     cfg = sb.config_text()
-    assert_contains("2 source preserved in config", cfg, 'source = "/bin/ls"')
-    assert_contains("2 fallback set in config", cfg, 'fallback = "/bin/cat"')
+    assert_contains("2 source preserved in config", cfg, f'source = "{real("/bin/ls")}"')
+    assert_contains("2 fallback set in config", cfg, f'fallback = "{real("/bin/cat")}"')
 finally:
     sb.cleanup()
 
@@ -225,8 +237,9 @@ try:
     code = sb.wait()
     assert_eq("3 exit code", 0, code)
     cfg = sb.config_text()
-    assert_contains("3 source preserved after back+forward", cfg, 'source = "/bin/ls"')
-    assert_contains("3 fallback preserved after back+forward", cfg, 'fallback = "/bin/cat"')
+    assert_contains("3 source preserved after back+forward", cfg, f'source = "{real("/bin/ls")}"')
+    assert_contains("3 fallback preserved after back+forward", cfg,
+                     f'fallback = "{real("/bin/cat")}"')
 finally:
     sb.cleanup()
 
@@ -254,7 +267,7 @@ try:
     assert_eq("4 exit code", 0, code)
     cfg = sb.config_text()
     assert_contains("4 policy changed to heuristic", cfg, 'policy = "heuristic"')
-    assert_contains("4 new fallback value used", cfg, 'fallback = "/bin/ls"')
+    assert_contains("4 new fallback value used", cfg, f'fallback = "{real("/bin/ls")}"')
     assert_contains("4 pattern set after policy change", cfg, 'error_patterns = ["invalid option"]')
 finally:
     sb.cleanup()
