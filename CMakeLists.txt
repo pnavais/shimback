@@ -8,6 +8,15 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+# With extensions off, -std=c11 is strict ISO C -- glibc (unlike macOS's
+# libc, which exposes these regardless) hides POSIX-only declarations
+# (strtok_r, clock_gettime/CLOCK_MONOTONIC, ...) behind a feature-test
+# macro in that mode. Without it, strtok_r in particular isn't just a
+# warning: it's implicitly declared as returning int, silently truncating
+# the real pointer it returns on any 64-bit platform. POSIX.1-2008 covers
+# everything this project uses.
+add_compile_definitions(_POSIX_C_SOURCE=200809L)
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
 endif()

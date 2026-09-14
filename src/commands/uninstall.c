@@ -80,12 +80,17 @@ static void remove_config(void) {
 }
 
 static void remove_path_blocks(void) {
+    /* Deliberately unconditional -- NOT gated on shell_is_installed(). A
+     * shell's rc file can have a stale shimback block in it regardless of
+     * whether that shell's binary is currently findable on $PATH (it may
+     * have been uninstalled since, or just not be on this particular
+     * PATH), and shell_remove_path_tagged already treats "no such block"
+     * as a harmless no-op -- so skipping a kind here only risks leaving a
+     * real block behind, never saves useful work. */
     ShellKind kinds[] = {SHELL_ZSH, SHELL_BASH, SHELL_FISH};
     for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
-        if (shell_is_installed(kinds[i])) {
-            shell_remove_path_tagged(kinds[i], SHIM_DIR_TAG);
-            shell_remove_path_tagged(kinds[i], LEGACY_INSTALL_TAG);
-        }
+        shell_remove_path_tagged(kinds[i], SHIM_DIR_TAG);
+        shell_remove_path_tagged(kinds[i], LEGACY_INSTALL_TAG);
     }
 }
 
