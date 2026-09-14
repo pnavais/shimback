@@ -38,7 +38,7 @@ static bool download_via_curl(const char *curl, const char *url, const char *des
         _exit(127);
     }
     int status;
-    waitpid(pid, &status, 0);
+    xwaitpid(pid, &status);
     bool ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
     if (ok && rename(tmp, dest) == 0) {
         return true;

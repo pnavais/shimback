@@ -68,6 +68,34 @@ if [ -e "$(shim_path badtool)" ]; then
     fail "add rejection: no symlink should have been created for badtool"
 fi
 
+# --- add must not leave an orphaned symlink behind when the existing
+# config turns out to be invalid: the symlink/config mutation order used to
+# be reversed, so a config that fails validation would still leave a fresh
+# symlink on disk with no matching entry (see review.md) ---
+CFG="$(config_file)"
+CFG_BACKUP="$SANDBOX/config_backup.toml"
+cp "$CFG" "$CFG_BACKUP"
+{
+    echo "version = 1"
+    echo ""
+    echo "[shims.brokenshim]"
+    echo "fallback = \"$FAKE_FALLBACK\""
+    echo "policy = \"route-args\""
+} >"$CFG"
+
+"$SHIMBACK" add orphantool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add: should fail when the existing config is invalid"
+fi
+assert_contains "add: reports the invalid existing config" "$(cat "$SANDBOX/err")" \
+    "existing config"
+if [ -e "$(shim_path orphantool)" ]; then
+    fail "add: must not leave an orphaned symlink when the existing config was invalid"
+fi
+
+cp "$CFG_BACKUP" "$CFG"
+
 # --- bare -s/-f command names resolve via $PATH, not just a raw stat, and
 # get stored as the resolved absolute path (frozen, like an explicit path) ---
 FIXTURES_DIR_REAL="$(cd "$(dirname "$FAKE_FALLBACK")" && pwd)"

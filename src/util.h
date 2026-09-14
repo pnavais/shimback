@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <sys/types.h> /* pid_t */
 
 #define ANSI_RESET "\033[0m"
 #define ANSI_BOLD "\033[1m"
@@ -83,5 +84,15 @@ const char *str_casestr(const char *haystack, const char *needle);
  * variants of one command as source/fallback), both in `add`'s own
  * no-op-shim check and in dispatch's matching runtime shortcut. */
 bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count);
+
+/* waitpid(2) for a specific `pid`, options 0, transparently retried when
+ * interrupted by a signal (EINTR) -- every blocking wait for a child in this
+ * codebase wants this: an unrelated signal arriving while waiting (e.g.
+ * SIGWINCH on terminal resize) would otherwise make a bare waitpid() call
+ * return early with *status left unset and the child still unreaped, so a
+ * caller that didn't know to retry would decode a garbage exit code. Returns
+ * whatever the underlying waitpid() call ultimately returns for any other
+ * outcome (the pid, or -1 with errno set for a real failure). */
+pid_t xwaitpid(pid_t pid, int *status);
 
 #endif /* SHIMBACK_UTIL_H */

@@ -1,10 +1,12 @@
 #include "util.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 bool stdout_is_color(void) {
@@ -171,4 +173,12 @@ bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count
         }
     }
     return true;
+}
+
+pid_t xwaitpid(pid_t pid, int *status) {
+    pid_t rc;
+    do {
+        rc = waitpid(pid, status, 0);
+    } while (rc < 0 && errno == EINTR);
+    return rc;
 }

@@ -140,12 +140,14 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
             resolved_fallback);
     }
 
-    if (!mkdir_p(shim_dir)) {
-        die("add: failed to create shim directory %s", shim_dir);
-    }
-
+    /* Read-only pre-flight: if something already occupies where the symlink
+     * would go and it isn't ours to replace, fail before touching the
+     * config at all -- no point loading/saving it only to then refuse the
+     * filesystem half of the change. Doesn't itself write anything yet;
+     * see below for why the actual symlink create/replace waits until
+     * after the config is safely saved. */
     char *symlink_path = path_join(shim_dir, name);
-
+    bool replacing_existing_symlink = false;
     struct stat st;
     if (lstat(symlink_path, &st) == 0) {
         if (!S_ISLNK(st.st_mode)) {
@@ -159,13 +161,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                 "manually first",
                 symlink_path);
         }
-        if (unlink(symlink_path) != 0) {
-            die("add: failed to replace existing symlink %s: %s", symlink_path, strerror(errno));
-        }
-    }
-
-    if (symlink(self_exe, symlink_path) != 0) {
-        die("add: failed to create symlink %s: %s", symlink_path, strerror(errno));
+        replacing_existing_symlink = true;
     }
 
     char *cfg_path = config_file_path();
@@ -251,6 +247,21 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
     if (save_st != CONFIG_OK) {
         die("add: failed to save config: %s", errbuf);
+    }
+
+    /* Only now, with the config safely saved, do we touch the shim
+     * directory -- this way a failure above (an unreadable/invalid
+     * existing config, or a failed save) never leaves a dangling symlink
+     * behind with no matching config entry, which used to happen when the
+     * symlink was created first. */
+    if (!mkdir_p(shim_dir)) {
+        die("add: failed to create shim directory %s", shim_dir);
+    }
+    if (replacing_existing_symlink && unlink(symlink_path) != 0) {
+        die("add: failed to replace existing symlink %s: %s", symlink_path, strerror(errno));
+    }
+    if (symlink(self_exe, symlink_path) != 0) {
+        die("add: failed to create symlink %s: %s", symlink_path, strerror(errno));
     }
 
     bool colorize = stdout_is_color();
