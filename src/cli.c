@@ -152,7 +152,9 @@ static void print_usage(void) {
         "            \002vim\002, \002vi\002, \002nano\002, \002pico\002 found on \002PATH\002 -- fails if none of\n"
         "            those are found either. Warns (without failing) if the file no\n"
         "            longer parses once the editor exits successfully.\n"
-        "              \004e.g. shimback edit\004\n");
+        "              \004e.g. shimback edit\004\n"
+        "\n"
+        "\004Copyright (c) 2026 pnavais. MIT OR Apache-2.0.\004\n");
 }
 
 int cli_run(int argc, char **argv) {
