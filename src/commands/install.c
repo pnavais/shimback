@@ -27,10 +27,24 @@ static const char *USAGE =
  * failure (curl missing/erroring, network down, non-2xx response with -f). */
 static bool download_via_curl(const char *curl, const char *url, const char *dest) {
     char tmp[4160];
-    snprintf(tmp, sizeof(tmp), "%s.tmp.%d", dest, (int)getpid());
+    snprintf(tmp, sizeof(tmp), "%s.tmp.%d.XXXXXX", dest, (int)getpid());
+    /* Claim an exclusively-created, unguessable name ourselves first --
+     * curl's own `-o` just opens whatever path it's given, which would
+     * silently follow a symlink pre-planted at a purely pid-based name.
+     * curl still has to reopen this same path itself (there's no way to
+     * hand it an already-open fd via -o), so this narrows the window
+     * rather than closing it outright: an attacker would now need to
+     * unlink and replace this exact file in the instant between our
+     * mkstemp() and curl's own open(), not just guess a pid in advance. */
+    int fd = mkstemp(tmp);
+    if (fd < 0) {
+        return false;
+    }
+    close(fd);
 
     pid_t pid = fork();
     if (pid < 0) {
+        unlink(tmp);
         return false;
     }
     if (pid == 0) {
@@ -40,8 +54,11 @@ static bool download_via_curl(const char *curl, const char *url, const char *des
     int status;
     xwaitpid(pid, &status);
     bool ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
-    if (ok && rename(tmp, dest) == 0) {
-        return true;
+    if (ok) {
+        chmod(tmp, 0644);
+        if (rename(tmp, dest) == 0) {
+            return true;
+        }
     }
     unlink(tmp);
     return false;

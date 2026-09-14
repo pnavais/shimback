@@ -84,27 +84,6 @@ static char *read_file_or_empty(const char *path) {
     return buf;
 }
 
-static bool write_file_atomic(const char *path, const char *content, size_t len) {
-    char tmp[4160];
-    snprintf(tmp, sizeof(tmp), "%s.tmp.%d", path, (int)getpid());
-    FILE *f = fopen(tmp, "wb");
-    if (!f) {
-        return false;
-    }
-    size_t written = fwrite(content, 1, len, f);
-    bool ok = written == len && fflush(f) == 0;
-    fclose(f);
-    if (!ok) {
-        unlink(tmp);
-        return false;
-    }
-    if (rename(tmp, path) != 0) {
-        unlink(tmp);
-        return false;
-    }
-    return true;
-}
-
 /* Finds the tag-marked block in `content`: [*block_start, *block_end) covers
  * the whole block including both marker lines and the trailing newline;
  * [*body_start, *body_end) covers just the interior, between them. Returns
@@ -347,7 +326,7 @@ static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char
         dynbuf_append(&out, content, (size_t)(block_start - content));
         dynbuf_append(&out, desired.data, desired.len);
         dynbuf_append_str(&out, block_end);
-        ok = write_file_atomic(rc_path, out.data, out.len);
+        ok = write_file_atomic(rc_path, out.data, out.len, 0644);
         dynbuf_free(&out);
     } else {
         DynBuf out;
@@ -360,7 +339,7 @@ static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char
             dynbuf_append_char(&out, '\n');
         }
         dynbuf_append(&out, desired.data, desired.len);
-        ok = write_file_atomic(rc_path, out.data, out.len);
+        ok = write_file_atomic(rc_path, out.data, out.len, 0644);
         dynbuf_free(&out);
     }
 
@@ -388,7 +367,7 @@ static bool remove_block(const char *rc_path, const char *tag) {
     dynbuf_init(&out);
     dynbuf_append(&out, content, (size_t)(block_start - content));
     dynbuf_append_str(&out, block_end);
-    bool ok = write_file_atomic(rc_path, out.data, out.len);
+    bool ok = write_file_atomic(rc_path, out.data, out.len, 0644);
     dynbuf_free(&out);
     free(content);
     return ok;
@@ -601,7 +580,7 @@ static bool ensure_fish(const char *dir, const char *tag, bool verbose) {
     build_fish_body(&desired, &dirs);
     strvec_free(&dirs);
 
-    bool ok = write_file_atomic(path, desired.data, desired.len);
+    bool ok = write_file_atomic(path, desired.data, desired.len, 0644);
     dynbuf_free(&desired);
 
     if (ok) {

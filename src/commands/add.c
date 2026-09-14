@@ -5,6 +5,7 @@
 
 #include <errno.h>
 #include <getopt.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -390,9 +391,11 @@ int cmd_add(int argc, char **argv) {
             case OPT_FORCE: force = true; break;
             case 'v': verbose = true; break;
             case OPT_CAPTURE_TIMEOUT: {
+                errno = 0;
                 char *end;
                 long v = strtol(optarg, &end, 10);
-                if (*optarg == '\0' || *end != '\0' || v < 0) {
+                if (*optarg == '\0' || *end != '\0' || errno == ERANGE || v < 0 ||
+                    v > INT_MAX) {
                     die("add: --capture-timeout must be a non-negative integer of milliseconds "
                         "(got '%s')",
                         optarg);

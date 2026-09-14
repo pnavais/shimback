@@ -359,6 +359,52 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
+    /* A malformed capture_timeout_ms must be a clear parse error, not
+     * silently accepted as 0 (which, since it directly drives dispatch's
+     * capture cutover, would silently change a shim's behavior -- see
+     * review.md). Checked at both the top level and per-shim. */
+    const char *bad_global_timeout = "version = 1\ncapture_timeout_ms = nope\n";
+    const char *bad_shim_timeout = "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\n"
+                                    "policy = \"exit-code\"\ncapture_timeout_ms = nope\n";
+    const char *negative_timeout = "version = 1\ncapture_timeout_ms = -5\n";
+    const char *overflow_timeout = "version = 1\ncapture_timeout_ms = 99999999999999999999\n";
+
+    f = fopen(path, "wb");
+    fwrite(bad_global_timeout, 1, strlen(bad_global_timeout), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "non-numeric global capture_timeout_ms is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(bad_shim_timeout, 1, strlen(bad_shim_timeout), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "non-numeric per-shim capture_timeout_ms is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(negative_timeout, 1, strlen(negative_timeout), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "negative capture_timeout_ms is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(overflow_timeout, 1, strlen(overflow_timeout), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "overflowing capture_timeout_ms is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
     unlink(path);
     free(path);
 }

@@ -2,6 +2,8 @@
 #define SHIMBACK_PATHS_H
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <sys/types.h> /* mode_t */
 
 /* All functions below return a newly allocated string; caller owns it (and,
  * per the project's memory convention, may simply leak it until process
@@ -82,5 +84,19 @@ bool mkdir_p(const char *dir);
 /* Joins two path components with a single '/', avoiding a double slash if
  * `a` already ends in one. Newly allocated; caller owns it. */
 char *path_join(const char *a, const char *b);
+
+/* Writes `data` (length `len`) to `path` atomically: via a securely-created
+ * temp file (mkstemp, so it's immune to a pre-planted symlink at a
+ * predictable "<path>.tmp.<pid>" name -- a plain fopen() would silently
+ * follow such a symlink and write through it) in the same directory as
+ * `path`, then rename() into place, so a reader never observes a partially-
+ * written file. `mode` is always applied explicitly and unconditionally --
+ * never left to whatever the umask happens to be, and not preserved from
+ * whatever `path` previously had, so a call site's own chosen mode is
+ * self-healing: anything that ever leaves `path` with a weaker mode (a
+ * permissive umask on some other writer, a stray hand copy, ...) is
+ * corrected back on the next call rather than silently perpetuated.
+ * Returns false on any I/O failure, leaving `path` untouched. */
+bool write_file_atomic(const char *path, const char *data, size_t len, mode_t mode);
 
 #endif /* SHIMBACK_PATHS_H */

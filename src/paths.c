@@ -165,9 +165,20 @@ static bool copy_file_mode(const char *src, const char *dst, mode_t mode) {
     }
 
     char tmp[4160];
-    snprintf(tmp, sizeof(tmp), "%s.tmp.%d", dst, (int)getpid());
-    FILE *out = fopen(tmp, "wb");
+    snprintf(tmp, sizeof(tmp), "%s.tmp.%d.XXXXXX", dst, (int)getpid());
+    /* mkstemp both creates the file exclusively (immune to a pre-planted
+     * symlink at this predictable-looking name -- a plain fopen(tmp, "wb")
+     * would silently follow one) and fills in an unguessable suffix,
+     * rather than relying on the pid alone. */
+    int fd = mkstemp(tmp);
+    if (fd < 0) {
+        fclose(in);
+        return false;
+    }
+    FILE *out = fdopen(fd, "wb");
     if (!out) {
+        close(fd);
+        unlink(tmp);
         fclose(in);
         return false;
     }
@@ -284,4 +295,37 @@ char *force_resolve_binary_arg(const char *arg) {
         return NULL;
     }
     return path_join(cwd, arg);
+}
+
+bool write_file_atomic(const char *path, const char *data, size_t len, mode_t mode) {
+    char tmp[4160];
+    snprintf(tmp, sizeof(tmp), "%s.tmp.%d.XXXXXX", path, (int)getpid());
+    int fd = mkstemp(tmp);
+    if (fd < 0) {
+        return false;
+    }
+    if (fchmod(fd, mode) != 0) {
+        close(fd);
+        unlink(tmp);
+        return false;
+    }
+    FILE *f = fdopen(fd, "wb");
+    if (!f) {
+        close(fd);
+        unlink(tmp);
+        return false;
+    }
+
+    size_t written = fwrite(data, 1, len, f);
+    bool ok = written == len && fflush(f) == 0;
+    fclose(f);
+    if (!ok) {
+        unlink(tmp);
+        return false;
+    }
+    if (rename(tmp, path) != 0) {
+        unlink(tmp);
+        return false;
+    }
+    return true;
 }
