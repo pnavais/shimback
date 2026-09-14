@@ -13,6 +13,7 @@ pair of commands.
 
 ## Contents
 
+- [Installation](#installation)
 - [How it works](#how-it-works)
 - [Usage](#usage)
 - [Fallback policies](#fallback-policies)
@@ -21,6 +22,39 @@ pair of commands.
 - [Building](#building)
 - [Platform support](#platform-support)
 - [License](#license)
+
+## Installation
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/master/install.sh | sh
+```
+
+Downloads the right prebuilt binary for your machine from the
+[latest release](https://github.com/pnavais/shimback/releases/latest) and
+hands it to `shimback install` (see [`install`](#install), below), which
+copies itself to a stable location, sets up `PATH`, and installs the man
+page. Extra arguments are forwarded as-is, e.g. to pick a prefix:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/master/install.sh | sh -s -- --prefix ~/.local
+```
+
+Or download a prebuilt binary directly from the
+[latest release](https://github.com/pnavais/shimback/releases/latest):
+
+| Platform | Download |
+|---|---|
+| macOS (Apple Silicon) | [shimback-macos-arm64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-macos-arm64.tar.gz) |
+| macOS (Intel) | [shimback-macos-x86_64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-macos-x86_64.tar.gz) |
+| Linux (x86_64) | [shimback-linux-x86_64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-linux-x86_64.tar.gz) |
+| Linux (arm64) | [shimback-linux-arm64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-linux-arm64.tar.gz) |
+
+Each archive contains the `shimback` binary, the man page, the license
+files, and this README. Extract it and either run `./shimback install`
+(same as the curl one-liner above) or place the binary wherever you like on
+`PATH` yourself — see [Building](#building) for the caveat on doing that
+manually. Building from source works the same way on any other platform;
+see [Building](#building) below.
 
 ## How it works
 

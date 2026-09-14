@@ -487,3 +487,18 @@ config, pointing at this repo's test fixtures. Both were artifacts of that
 interrupted run, not anything the user did — cleaned up now
 (`chmod 0700` restored, `shimback remove x`), verified with a clean
 `shimback doctor` afterward.
+
+## Final release assessment (2026-09-14)
+
+The latest fixes address all previously identified release-blocking findings:
+atomic writers now use exclusive temporary files and explicit modes, `remove`
+preserves state when saving fails, and capture-timeout values are strictly
+validated. I independently verified the relevant implementations and found no
+new release-blocking issue. The documented residual window in `install` exists
+between `mkstemp` and curl reopening the temporary path, but exploitation
+requires write access to the destination directory; this is acceptable for
+0.1.0 and is substantially safer than the former predictable-name behavior.
+
+**Release recommendation: ready for 0.1.0**, subject to the normal release
+packaging/version/tag checks. Verification: clean Release build and full CTest
+suite passed 10/10; current Debug build with `-Wall -Wextra -Werror` also passed.
