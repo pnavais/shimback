@@ -44,6 +44,23 @@ entirely if a fallback is triggered — nothing about the failed attempt
 reaches your terminal unless the shim explicitly opts into a one-line
 diagnostic (see `diagnostic` below).
 
+This is built for **fast-failing commands** — a bad flag, a missing file, a
+GNU/BSD mismatch — which almost always fail in well under a second with a
+small amount of output. Capturing has to hold everything in memory until the
+source exits, since there's no way to know whether to show or hide it any
+sooner than that; to keep that bounded, shimback gives up on hiding/falling
+back for a given run if the trial takes too long or produces too much
+output — whichever happens first — and switches to relaying the rest live
+instead. Nothing already produced is ever lost (the switch just flushes what
+was captured so far and streams the rest as it arrives); the only thing
+that's lost is the *opportunity* to fall back for that one invocation, since
+some of the source's real output is already on screen by then. This means a
+long-running command (a dev server, a slow build) or one that unexpectedly
+emits a lot of output still behaves reasonably — you just see it live,
+un-hidden, rather than staring at nothing until it eventually exits. The two
+thresholds (2 seconds, 8MiB by default) are configurable, globally and per
+shim — see `--capture-timeout`/`--capture-limit` below.
+
 ## Usage
 
 ```
@@ -54,6 +71,7 @@ shimback add <name> [-s <source>] [--source-arg <arg>]...
                      [--route-arg <arg>]... [--strip-matched-args]
                      [--split-source-arg <arg>]... [--split-fallback-arg <arg>]...
                      [--rewrite <from>=<to>]... [--diagnostic] [--force] [-v|--verbose]
+                     [--capture-timeout <ms>] [--capture-limit <size>]
 shimback remove [-y] <name>
 shimback init
 shimback list [--full]
@@ -166,6 +184,17 @@ shimback add sed -f /usr/bin/sed
   `config.toml` (see [Configuration](#configuration)) to make that the
   default for every `add`. `-v`/`--verbose` only ever turns them on; it
   can't override a config default of `true` back to silent for one call.
+- `--capture-timeout <ms>` and `--capture-limit <size>` override, for this
+  shim only, the two thresholds that decide when a trial run gives up on
+  being hideable (see [How it works](#how-it-works)): default 2000ms /
+  8MiB, both also configurable as global defaults at the top level of
+  `config.toml`. A shim-level value always wins over the global one.
+  `--capture-limit` accepts a plain byte count or a size with a
+  case-insensitive unit suffix — `B` (or nothing) for bytes, `K`/`KB` for
+  decimal kilobytes (×1000), `KiB` for binary kibibytes (×1024), and
+  likewise `M`/`MB`/`MiB` and `G`/`GB`/`GiB` — so `--capture-limit 8MiB`,
+  `--capture-limit 8192KiB`, and `--capture-limit 8388608` all mean the
+  same thing.
 
 #### Interactive wizard
 
@@ -572,8 +601,19 @@ A top-level `verbose = true` sets the default for `add`'s shell-startup-file
 PATH-update notices (see `add`, above); omitted or `false` keeps them silent
 unless `-v`/`--verbose` is passed on that particular `add`.
 
+Top-level `capture_timeout_ms` and `capture_limit` set the global defaults
+for the trial-run capture cutover (see
+[How it works](#how-it-works)) — omitted, they default to `2000` and
+`"8MiB"`. A shim can override either with its own `capture_timeout_ms`/
+`capture_limit` (see `add`'s `--capture-timeout`/`--capture-limit`, above).
+`capture_limit` accepts the same unit suffixes there or here — always
+stored back as a plain byte count once resolved, same as `--capture-limit`
+freezes into a byte count at `add` time.
+
 ```toml
 version = 1
+capture_timeout_ms = 2000
+capture_limit = "8MiB"
 
 [shims.sed]
 fallback = "/usr/bin/sed"
@@ -585,6 +625,8 @@ fallback = "/usr/bin/awk"
 policy = "heuristic"
 error_patterns = ["invalid option", "illegal option", "unrecognized option"]
 diagnostic = true
+capture_timeout_ms = 500
+capture_limit = "1MiB"
 
 [shims.grep]
 fallback = "/usr/bin/grep"

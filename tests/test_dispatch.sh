@@ -385,4 +385,58 @@ shim_section="$(awk '/^\[shims\.aliasnofallback\]/{f=1; next} /^\[shims\./{f=0} 
 assert_not_contains "fallback_args without fallback: discarded, not stored" "$shim_section" \
     "fallback_args"
 
+# --- capture cutover: a source that produces more than --capture-limit
+# gives up on hiding/falling back for that run -- the real exit code
+# surfaces, every byte of real output still arrives (nothing lost, just no
+# longer invisible), and the fallback never runs ---
+"$SHIMBACK" add capsize -s "$FAKE_FIREHOSE" -f "$FAKE_FALLBACK" --capture-limit 1KiB >/dev/null
+CAPSIZE="$(shim_path capsize)"
+"$CAPSIZE" >"$SANDBOX/capsize_out" 2>"$SANDBOX/capsize_err"
+code=$?
+assert_eq "capture cutover (size): real exit code surfaces, no fallback" "1" "$code"
+assert_eq "capture cutover (size): every line of real output arrived, none lost" "5000" \
+    "$(wc -l <"$SANDBOX/capsize_out" | tr -d ' ')"
+assert_not_contains "capture cutover (size): fallback did not run" "$(cat "$SANDBOX/capsize_out")" \
+    "FALLBACK_RAN"
+
+# --- capture cutover: a source that runs longer than --capture-timeout,
+# even one that's otherwise quiet, also gives up and surfaces the real
+# result rather than buffering indefinitely ---
+"$SHIMBACK" add captime -s "$FAKE_SLOW" -f "$FAKE_FALLBACK" --capture-timeout 150 >/dev/null
+CAPTIME="$(shim_path captime)"
+"$CAPTIME" >"$SANDBOX/captime_out" 2>"$SANDBOX/captime_err"
+code=$?
+assert_eq "capture cutover (time): real exit code surfaces, no fallback" "1" "$code"
+assert_contains "capture cutover (time): start marker arrived" "$(cat "$SANDBOX/captime_out")" \
+    "slow-start"
+assert_contains "capture cutover (time): end marker arrived too (nothing lost)" \
+    "$(cat "$SANDBOX/captime_out")" "slow-end"
+assert_not_contains "capture cutover (time): fallback did not run" \
+    "$(cat "$SANDBOX/captime_out")" "FALLBACK_RAN"
+
+# --- capture cutover does not affect a normal fast failure: default
+# thresholds are generous enough that hiding-and-falling-back still works
+# exactly as it always has ---
+"$SHIMBACK" add capnormal -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+CAPNORMAL="$(shim_path capnormal)"
+out="$(FAKE_EXIT_CODE=1 FAKE_STDOUT="hidden-output" "$CAPNORMAL")"
+assert_contains "capture cutover: normal fast-fail still falls back invisibly" "$out" \
+    "FALLBACK_RAN"
+assert_not_contains "capture cutover: hidden output stays hidden" "$out" "hidden-output"
+
+# --- --capture-limit rejects malformed sizes; a unit suffix (case
+# insensitive) or plain bytes both resolve to the expected byte count ---
+"$SHIMBACK" add badcaplimit -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --capture-limit "not-a-size" \
+    >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add: a malformed --capture-limit should be rejected"
+fi
+assert_contains "add: malformed --capture-limit error is clear" "$(cat "$SANDBOX/err")" \
+    "--capture-limit must be a size"
+
+"$SHIMBACK" add capunits -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --capture-limit 8MiB >/dev/null
+assert_contains "add: --capture-limit 8MiB resolves to bytes" "$(cat "$(config_file)")" \
+    'capture_limit = "8388608"'
+
 finish

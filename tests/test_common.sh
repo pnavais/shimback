@@ -16,7 +16,10 @@ FAKE_PRIMARY="$FIXTURES_DIR/fake_primary.sh"
 FAKE_FALLBACK="$FIXTURES_DIR/fake_fallback.sh"
 FAKE_INTERLEAVED="$FIXTURES_DIR/fake_interleaved.sh"
 FAKE_ECHO="$FIXTURES_DIR/fake_echo.sh"
-chmod +x "$FAKE_PRIMARY" "$FAKE_FALLBACK" "$FAKE_INTERLEAVED" "$FAKE_ECHO"
+FAKE_FIREHOSE="$FIXTURES_DIR/fake_firehose.sh"
+FAKE_SLOW="$FIXTURES_DIR/fake_slow.sh"
+chmod +x "$FAKE_PRIMARY" "$FAKE_FALLBACK" "$FAKE_INTERLEAVED" "$FAKE_ECHO" "$FAKE_FIREHOSE" \
+    "$FAKE_SLOW"
 
 SANDBOX="$(mktemp -d)"
 export HOME="$SANDBOX/home"

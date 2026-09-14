@@ -39,6 +39,8 @@ static void test_round_trip(void) {
     config_init(&cfg);
     cfg.version = 1;
     cfg.verbose = true;
+    cfg.capture_timeout_ms = 5000;
+    cfg.capture_limit_bytes = 16 * 1024 * 1024;
 
     size_t sed_idx = config_upsert(&cfg, "sed");
     cfg.shims[sed_idx].fallback = xstrdup("/usr/bin/sed");
@@ -50,6 +52,10 @@ static void test_round_trip(void) {
     cfg.shims[awk_idx].policy = POLICY_HEURISTIC;
     cfg.shims[awk_idx].diagnostic = true;
     cfg.shims[awk_idx].force = true;
+    cfg.shims[awk_idx].capture_timeout_set = true;
+    cfg.shims[awk_idx].capture_timeout_ms = 500;
+    cfg.shims[awk_idx].capture_limit_set = true;
+    cfg.shims[awk_idx].capture_limit_bytes = 2048;
     cfg.shims[awk_idx].fallback_args = xmalloc(1 * sizeof(char *));
     cfg.shims[awk_idx].fallback_args[0] = xstrdup("--posix");
     cfg.shims[awk_idx].fallback_arg_count = 1;
@@ -119,6 +125,9 @@ static void test_round_trip(void) {
     check(st == CONFIG_OK, "round-trip: config_load succeeds");
     check(reloaded.version == 1, "round-trip: version is 1");
     check(reloaded.verbose == true, "round-trip: verbose == true");
+    check(reloaded.capture_timeout_ms == 5000, "round-trip: global capture_timeout_ms == 5000");
+    check(reloaded.capture_limit_bytes == 16 * 1024 * 1024,
+          "round-trip: global capture_limit_bytes == 16MiB");
     check(reloaded.count == 6, "round-trip: shim count is 6");
 
     ShimEntry *sed = config_find(&reloaded, "sed");
@@ -130,6 +139,8 @@ static void test_round_trip(void) {
         check(sed->error_pattern_count == 0, "sed.error_pattern_count == 0");
         check(sed->diagnostic == false, "sed.diagnostic == false");
         check(sed->force == false, "sed.force == false");
+        check(sed->capture_timeout_set == false, "sed.capture_timeout_set == false");
+        check(sed->capture_limit_set == false, "sed.capture_limit_set == false");
     }
 
     ShimEntry *awk = config_find(&reloaded, "awk");
@@ -146,6 +157,10 @@ static void test_round_trip(void) {
         }
         check(awk->diagnostic == true, "awk.diagnostic == true");
         check(awk->force == true, "awk.force == true");
+        check(awk->capture_timeout_set == true, "awk.capture_timeout_set == true");
+        check(awk->capture_timeout_ms == 500, "awk.capture_timeout_ms == 500");
+        check(awk->capture_limit_set == true, "awk.capture_limit_set == true");
+        check(awk->capture_limit_bytes == 2048, "awk.capture_limit_bytes == 2048");
         check(awk->fallback_arg_count == 1, "awk.fallback_arg_count == 1");
         if (awk->fallback_arg_count == 1) {
             check_str_eq("awk.fallback_args[0]", "--posix", awk->fallback_args[0]);
@@ -356,13 +371,49 @@ static void test_missing_file_is_empty_config(void) {
     check(st == CONFIG_OK, "missing config file is not an error");
     check(cfg.count == 0, "missing config file yields zero shims");
     check(cfg.verbose == false, "missing config file defaults verbose to false");
+    check(cfg.capture_timeout_ms == SHIMBACK_DEFAULT_CAPTURE_TIMEOUT_MS,
+          "missing config file defaults capture_timeout_ms to the hardcoded default");
+    check(cfg.capture_limit_bytes == SHIMBACK_DEFAULT_CAPTURE_LIMIT_BYTES,
+          "missing config file defaults capture_limit_bytes to the hardcoded default");
     config_free(&cfg);
+}
+
+static void test_parse_size_bytes(void) {
+    size_t v;
+
+    check(parse_size_bytes("0", &v) && v == 0, "parse_size_bytes: 0 bytes");
+    check(parse_size_bytes("8388608", &v) && v == 8388608, "parse_size_bytes: plain bytes");
+    check(parse_size_bytes("8B", &v) && v == 8, "parse_size_bytes: 8B");
+    check(parse_size_bytes("8b", &v) && v == 8, "parse_size_bytes: 8b (lowercase)");
+    check(parse_size_bytes("1K", &v) && v == 1000, "parse_size_bytes: 1K == 1000");
+    check(parse_size_bytes("1KB", &v) && v == 1000, "parse_size_bytes: 1KB == 1000");
+    check(parse_size_bytes("1kb", &v) && v == 1000, "parse_size_bytes: 1kb (lowercase)");
+    check(parse_size_bytes("1Ki", &v) && v == 1024, "parse_size_bytes: 1Ki == 1024");
+    check(parse_size_bytes("1KiB", &v) && v == 1024, "parse_size_bytes: 1KiB == 1024");
+    check(parse_size_bytes("1kib", &v) && v == 1024, "parse_size_bytes: 1kib (lowercase)");
+    check(parse_size_bytes("8MiB", &v) && v == 8u * 1024 * 1024, "parse_size_bytes: 8MiB");
+    check(parse_size_bytes("1M", &v) && v == 1000000, "parse_size_bytes: 1M == 1000000");
+    check(parse_size_bytes("1MB", &v) && v == 1000000, "parse_size_bytes: 1MB == 1000000");
+    check(parse_size_bytes("1G", &v) && v == 1000000000ULL, "parse_size_bytes: 1G == 1e9");
+    check(parse_size_bytes("1GiB", &v) && v == 1024ULL * 1024 * 1024,
+          "parse_size_bytes: 1GiB == 1024^3");
+    check(parse_size_bytes("8192KiB", &v) && v == 8u * 1024 * 1024,
+          "parse_size_bytes: 8192KiB == 8MiB (equivalent forms agree)");
+
+    check(!parse_size_bytes("", &v), "parse_size_bytes: empty string rejected");
+    check(!parse_size_bytes("MiB", &v), "parse_size_bytes: no leading digits rejected");
+    check(!parse_size_bytes("-5MiB", &v), "parse_size_bytes: negative value rejected");
+    check(!parse_size_bytes("5XB", &v), "parse_size_bytes: unrecognized suffix rejected");
+    check(!parse_size_bytes("5 MB", &v), "parse_size_bytes: whitespace before suffix rejected");
+    check(!parse_size_bytes("99999999999999999999999999GiB", &v),
+          "parse_size_bytes: overflow rejected");
 }
 
 int main(void) {
     test_round_trip();
     test_literal_parse();
     test_validation_errors();
+    test_parse_size_bytes();
     test_missing_file_is_empty_config();
 
     if (failures > 0) {

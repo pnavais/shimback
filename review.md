@@ -155,25 +155,46 @@ regression test: reliably forcing a `waitpid` EINTR race in CI is inherently
 flaky (timing-dependent), so this was verified by hand rather than adding a
 test likely to be a source of spurious CI failures later.
 
-### Not fixed — needs a decision before the next round
+### Also fixed, after further discussion
 
 **Warning #3 — fallback-policy trials buffer unbounded child output in
-memory.** Confirmed as described, **not fixed**. The straightforward-looking
-fix (cap `DynBuf` growth per stream, keep draining past the cap to avoid the
-deadlock) turns out to have a real correctness cost: `run_captured`'s output
-also gets replayed verbatim whenever the trial run succeeds, or fails but
-the policy decides not to fall back — both are cases where the *whole
-buffer* is the actual output the user is supposed to see, "as if shimback
-weren't there at all" (the project's own design promise). A hard cap would
-silently truncate that output for any command that's simply chatty and
-successful, which is a worse, more surprising failure mode than the
-original memory-growth one for a personal, single-user CLI tool wrapping
-ordinary commands. The reviewer's other suggested fix — spool to temp files
-instead of memory, so size is bounded without sacrificing fidelity — doesn't
-have that problem, but is a meaningfully bigger and riskier change to make
-this close to a release (temp file lifecycle/cleanup across every exit path,
-disk-full handling, replay-from-file instead of replay-from-buffer) than the
-other three. Left as-is pending a decision on direction:
-1. Hard memory cap with truncation risk on large successful/non-fallback output (small, fast, but a real behavior change).
-2. Spool to temp files (no correctness compromise, larger diff, more surface for new bugs).
-3. Leave as-is for 0.1.0 (the realistic exposure for a personal CLI wrapping normal commands is low) and revisit post-release.
+memory.** Fixed, via neither of the two options originally weighed in this
+document. Discussion after the first round surfaced a better design than
+either: `run_captured` now tracks both elapsed time and bytes captured for
+a trial run; whichever of two configurable thresholds is hit first (default
+2000ms / 8MiB) makes shimback give up on ever hiding or falling back on
+that run, flush whatever's been captured so far straight to the real
+stdout/stderr, and relay everything read from that point on live instead of
+buffering it further. This bounds worst-case memory (the original concern)
+*and* fixes a related, previously-undiscussed problem: a long-running or
+unexpectedly chatty source used to buffer invisibly for its entire
+lifetime, with no way to see its output until it exited — a genuine
+functional gap for anything wrapping a dev server or a slow build, not just
+a memory question. Unlike a hard cap that truncates, **no output is ever
+lost** — every byte the command produces still reaches the user, split
+between "replayed from the buffer" and "streamed live after the cutover."
+The only thing that changes at the cutover point is that falling back is no
+longer possible for that one invocation, since some of the source's real
+output is already on screen.
+
+Both thresholds are configurable, with the same global-default-plus-per-shim-
+override shape used for `verbose`/`force`: `capture_timeout_ms`/
+`capture_limit` at the top level of `config.toml`, or per-shim via `add
+--capture-timeout <ms>`/`--capture-limit <size>` (accepting a unit suffix —
+`B`, `K`/`KB`, `KiB`, `M`/`MB`/`MiB`, `G`/`GB`/`GiB`, case-insensitive).
+
+One narrower, honest trade-off: `heuristic` policy's `--error-pattern`
+matching only ever sees what was captured before a cutover, if one happens
+— in practice low-risk, since a real error message appears at/near the
+point of failure, not buried after megabytes of unrelated output, and once
+cut over, the whole fallback decision (content or exit-code based, whichever
+policy) is skipped uniformly, not just heuristic's.
+
+Verified: the reviewer's original memory concern (a firehose of output),
+the newly-identified long-running-command case (time-based cutover, checked
+against a real `SIGWINCH`-interrupt-style live test), the fast-fail case
+still falling back exactly as before with the default thresholds (no
+regression), and that no bytes are ever lost across a cutover in either
+direction. New tests in `test_dispatch.sh` (size and time cutover, fast-fail
+regression, CLI unit-parsing) and `test_config_parser.c` (`parse_size_bytes`
+unit tests, global+per-shim config round-trip).

@@ -17,6 +17,8 @@ void config_init(Config *cfg) {
     cfg->count = 0;
     cfg->cap = 0;
     cfg->verbose = false;
+    cfg->capture_timeout_ms = SHIMBACK_DEFAULT_CAPTURE_TIMEOUT_MS;
+    cfg->capture_limit_bytes = SHIMBACK_DEFAULT_CAPTURE_LIMIT_BYTES;
 }
 
 const char *policy_to_string(Policy p) {
@@ -437,6 +439,22 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                              line_no);
                     status = CONFIG_ERR_PARSE;
                 }
+            } else if (strcmp(key, "capture_timeout_ms") == 0) {
+                cfg->capture_timeout_ms = (int)strtol(value_str, NULL, 10);
+            } else if (strcmp(key, "capture_limit") == 0) {
+                const char *cursor = value_str;
+                char *v = parse_quoted_string(&cursor);
+                size_t bytes;
+                if (!v || !parse_size_bytes(v, &bytes)) {
+                    snprintf(errbuf, errbuf_size,
+                             "line %d: 'capture_limit' must be a quoted size like \"8MiB\" or "
+                             "\"8388608\"",
+                             line_no);
+                    status = CONFIG_ERR_PARSE;
+                } else {
+                    cfg->capture_limit_bytes = bytes;
+                }
+                free(v);
             } else {
                 warn("config: line %d: unknown top-level key '%s', ignoring", line_no, key);
             }
@@ -602,6 +620,24 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                 status = CONFIG_ERR_PARSE;
                 break;
             }
+        } else if (strcmp(key, "capture_timeout_ms") == 0) {
+            entry->capture_timeout_ms = (int)strtol(value_str, NULL, 10);
+            entry->capture_timeout_set = true;
+        } else if (strcmp(key, "capture_limit") == 0) {
+            char *v = parse_quoted_string(&cursor);
+            size_t bytes;
+            if (!v || !parse_size_bytes(v, &bytes)) {
+                snprintf(errbuf, errbuf_size,
+                         "line %d: 'capture_limit' must be a quoted size like \"8MiB\" or "
+                         "\"8388608\"",
+                         line_no);
+                status = CONFIG_ERR_PARSE;
+                free(v);
+                break;
+            }
+            free(v);
+            entry->capture_limit_bytes = bytes;
+            entry->capture_limit_set = true;
         } else if (strcmp(key, "rewrite_from") == 0) {
             StrVec vec;
             strvec_init(&vec);
@@ -725,6 +761,14 @@ static void render_config(const Config *cfg, DynBuf *out) {
     dynbuf_append_str(out, line);
     if (cfg->verbose) {
         dynbuf_append_str(out, "verbose = true\n");
+    }
+    if (cfg->capture_timeout_ms != SHIMBACK_DEFAULT_CAPTURE_TIMEOUT_MS) {
+        snprintf(line, sizeof(line), "capture_timeout_ms = %d\n", cfg->capture_timeout_ms);
+        dynbuf_append_str(out, line);
+    }
+    if (cfg->capture_limit_bytes != SHIMBACK_DEFAULT_CAPTURE_LIMIT_BYTES) {
+        snprintf(line, sizeof(line), "capture_limit = \"%zu\"\n", cfg->capture_limit_bytes);
+        dynbuf_append_str(out, line);
     }
 
     for (size_t i = 0; i < cfg->count; i++) {
@@ -857,6 +901,14 @@ static void render_config(const Config *cfg, DynBuf *out) {
         }
         if (entry->force) {
             dynbuf_append_str(out, "force = true\n");
+        }
+        if (entry->capture_timeout_set) {
+            snprintf(line, sizeof(line), "capture_timeout_ms = %d\n", entry->capture_timeout_ms);
+            dynbuf_append_str(out, line);
+        }
+        if (entry->capture_limit_set) {
+            snprintf(line, sizeof(line), "capture_limit = \"%zu\"\n", entry->capture_limit_bytes);
+            dynbuf_append_str(out, line);
         }
     }
 }
