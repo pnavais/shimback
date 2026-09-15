@@ -480,6 +480,10 @@ int cmd_doctor(int argc, char **argv) {
             continue;
         }
 
+        if (source == SHIM_SOURCE_SPLIT) {
+            report_ok("config: split file at %s", split_path);
+        }
+
         if (fix_mode) {
             fix_symlink_if_needed(shim_dir, name, self_exe);
             bool entry_dirty = fix_cycle_if_needed(e, self_exe);

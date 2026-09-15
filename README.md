@@ -397,11 +397,12 @@ shimback list
 Prints every shim's name, source (or `auto`), fallback, policy, and
 diagnostic flag as a column-aligned table. This includes a
 [split-config](#splitting-a-shims-config-into-its-own-file) shim exactly
-like a config.toml one (marked with a `config: split` line under
-`--full`), and a real shim symlink with no configuration anywhere for it
-at all -- an **orphan**, shown with an explanatory message in place of
-its row's usual columns instead of being silently left out (see
-`doctor`, below, for removing one):
+like a config.toml one (its own file's path shown as a `config:` line
+under `--full`, so you always know exactly where it currently lives),
+and a real shim symlink with no configuration anywhere for it at all --
+an **orphan**, shown with an explanatory message in place of its row's
+usual columns instead of being silently left out (see `doctor`, below,
+for removing one):
 
 ```
 NAME  SOURCE                   FALLBACK      POLICY     DIAGNOSTIC

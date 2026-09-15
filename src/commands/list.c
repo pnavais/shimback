@@ -159,8 +159,9 @@ int cmd_list(int argc, char **argv) {
      * column widths, again to print) would be wasted work for no reason. */
     ShimEntry **entries = xmalloc(name_count * sizeof(ShimEntry *));
     ShimSource *sources = xmalloc(name_count * sizeof(ShimSource));
+    char **split_paths = xmalloc(name_count * sizeof(char *));
     for (size_t i = 0; i < name_count; i++) {
-        sources[i] = resolve_shim_entry(&cfg, names[i], &entries[i], NULL);
+        sources[i] = resolve_shim_entry(&cfg, names[i], &entries[i], &split_paths[i]);
     }
 
     bool colorize = stdout_is_color();
@@ -223,7 +224,7 @@ int cmd_list(int argc, char **argv) {
 
         if (full) {
             if (sources[i] == SHIM_SOURCE_SPLIT) {
-                print_detail_line(colorize, "config", "split (see `shimback doctor`)");
+                print_detail_line(colorize, "config", split_paths[i]);
             }
             print_full_details(e, colorize);
         }
@@ -234,10 +235,12 @@ int cmd_list(int argc, char **argv) {
             shim_entry_free(entries[i]);
             free(entries[i]);
         }
+        free(split_paths[i]);
         free(names[i]);
     }
     free(entries);
     free(sources);
+    free(split_paths);
     free(names);
 
     return 0;
