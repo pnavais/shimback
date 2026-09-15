@@ -5,19 +5,25 @@
 
 #include <dirent.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include "../config.h"
 #include "../paths.h"
 #include "../shell.h"
 #include "../util.h"
+#include "version.h"
+
+/* Bounds how much of a candidate file looks_like_shimback_binary will read
+ * into memory -- shimback itself is a few MB at most; nothing legitimate
+ * it would ever be asked to check is anywhere near this size, so this is
+ * just a sanity bound against an implausibly huge file, not a real limit
+ * in practice. */
+#define SHIMBACK_BINARY_CHECK_MAX_SIZE (256 * 1024 * 1024)
 
 /* The single tag every command shares (add/init/install all merge their
  * directory into the same block -- see shell.c). "shimback-bin" was a
@@ -30,55 +36,58 @@
 
 static const char *USAGE = "usage: shimback uninstall [--prefix <dir>] [--full]\n";
 
-/* Runs `path --version` in a fork and checks its stdout starts with
- * "shimback " -- a lightweight, no-persistent-state way to confirm a file
- * is actually a shimback binary (any version/build of it, not just this
- * exact one) before either deleting it (bin_dest, below -- built from
- * user-controlled --prefix, which could point anywhere) or treating a
- * shim's symlink target as legitimately ours (remove_shim_symlinks,
- * below -- a shim can be created by a different shimback binary/build
- * than whichever one happens to be running `uninstall`, e.g. after an
- * upgrade; that's still ours, unlike a symlink to something else entirely
- * hand-placed in this directory). Fails closed: anything unexpected
- * (can't fork/exec, a non-zero exit, unrecognized output) is treated as
- * "not verified", never as "verified" by default. */
+/* Statically scans `path`'s own bytes for SHIMBACK_BINARY_MARKER -- a
+ * fixed sequence every shimback build embeds (see main.c and
+ * version.h.in) -- to confirm a file is actually a shimback binary (any
+ * version/build of it, not just this exact one) before either deleting
+ * it (bin_dest, below -- built from user-controlled --prefix, which
+ * could point anywhere) or treating a shim's symlink target as
+ * legitimately ours (remove_shim_symlinks, below -- a shim can be
+ * created by a different shimback binary/build than whichever one
+ * happens to be running `uninstall`, e.g. after an upgrade).
+ *
+ * Deliberately does NOT execute the candidate to ask it what it is
+ * (e.g. `path --version`, this function's own earlier design): a foreign
+ * executable placed at a shimback-owned path can print whatever it likes
+ * -- including a convincing "shimback " prefix -- while doing something
+ * else first, so running an untrusted file just to decide whether to
+ * delete it is itself a code-execution risk, not a safety check (see
+ * review.md). A plain byte-scan can still be fooled by a file that
+ * happens to embed the same marker bytes, but reading them can never
+ * execute anything, which is the actual property this needs. */
 static bool looks_like_shimback_binary(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+        return false;
+    }
+    if (st.st_size < (off_t)SHIMBACK_BINARY_MARKER_LEN ||
+        st.st_size > (off_t)SHIMBACK_BINARY_CHECK_MAX_SIZE) {
+        return false;
+    }
     if (!is_executable_file(path)) {
         return false;
     }
-    int out_pipe[2];
-    if (pipe(out_pipe) != 0) {
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
         return false;
     }
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(out_pipe[0]);
-        close(out_pipe[1]);
-        return false;
-    }
-    if (pid == 0) {
-        close(out_pipe[0]);
-        dup2(out_pipe[1], STDOUT_FILENO);
-        close(out_pipe[1]);
-        int devnull = open("/dev/null", O_WRONLY);
-        if (devnull >= 0) {
-            dup2(devnull, STDERR_FILENO);
-            close(devnull);
+    size_t size = (size_t)st.st_size;
+    char *buf = xmalloc(size);
+    size_t n = fread(buf, 1, size, f);
+    fclose(f);
+
+    bool found = false;
+    if (n == size) {
+        for (size_t i = 0; i + SHIMBACK_BINARY_MARKER_LEN <= n; i++) {
+            if (memcmp(buf + i, SHIMBACK_BINARY_MARKER, SHIMBACK_BINARY_MARKER_LEN) == 0) {
+                found = true;
+                break;
+            }
         }
-        execl(path, path, "--version", (char *)NULL);
-        _exit(127);
     }
-    close(out_pipe[1]);
-    char buf[64];
-    ssize_t n = read(out_pipe[0], buf, sizeof(buf) - 1);
-    close(out_pipe[0]);
-    int status;
-    bool waited_ok = xwaitpid(pid, &status) >= 0;
-    if (!waited_ok || n <= 0) {
-        return false;
-    }
-    buf[n] = '\0';
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0 && strncmp(buf, "shimback ", 9) == 0;
+    free(buf);
+    return found;
 }
 
 /* Same idea as looks_like_shimback_binary, but for the man page: no need

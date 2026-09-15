@@ -717,7 +717,25 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             char *header = trimmed + 1;
             const char *prefix = "shims.";
             if (strncmp(header, prefix, strlen(prefix)) == 0 && header[strlen(prefix)] != '\0') {
-                current_index = (ssize_t)config_upsert(cfg, header + strlen(prefix));
+                const char *shim_name = header + strlen(prefix);
+                /* A name reaching config_upsert unvalidated ends up
+                 * trusted everywhere downstream that reads it back out of
+                 * `cfg` -- including split_config_filename() (via
+                 * uninstall --full's sweep, doctor, list, ...), where a
+                 * '/'/'..'-containing name could reach outside shimback's
+                 * own directories entirely. A hand-edited config.toml
+                 * with a name like this is exactly as malformed as one
+                 * with broken section-header syntax, so it's rejected the
+                 * same way (see review.md). */
+                if (!is_valid_shim_name(shim_name)) {
+                    snprintf(errbuf, errbuf_size,
+                             "line %d: invalid shim name '%s' in section header -- names may "
+                             "only contain letters, digits, '.', '_', '+', and '-'",
+                             line_no, shim_name);
+                    status = CONFIG_ERR_PARSE;
+                    break;
+                }
+                current_index = (ssize_t)config_upsert(cfg, shim_name);
             } else {
                 warn("config: line %d: unknown section [%s], ignoring", line_no, header);
                 current_index = -1;

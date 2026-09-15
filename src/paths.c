@@ -28,6 +28,23 @@ char *path_join(const char *a, const char *b) {
     return result;
 }
 
+static bool is_shim_name_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+           c == '.' || c == '_' || c == '+' || c == '-';
+}
+
+bool is_valid_shim_name(const char *name) {
+    if (name[0] == '\0' || strcmp(name, "shimback") == 0) {
+        return false;
+    }
+    for (const char *p = name; *p != '\0'; p++) {
+        if (!is_shim_name_char(*p)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 char *home_dir(void) {
     const char *val = getenv("HOME");
     if (val && val[0] != '\0') {
@@ -87,6 +104,18 @@ char *shim_bin_dir(void) {
 }
 
 char *split_config_filename(const char *name) {
+    /* Defense in depth, not the primary check: every legitimate caller is
+     * expected to have already validated `name` against
+     * is_valid_shim_name() (add.c/remove.c on user input, config_load()
+     * on a hand-edited config.toml's own section headers) before it ever
+     * reaches here. A name containing '/' or '..' joined into a path
+     * below would otherwise let something outside shimback's own
+     * directories be read, written, or deleted -- so treat an unvalidated
+     * name arriving here as a programming error (something upstream
+     * forgot to validate), not a normal, recoverable failure. */
+    if (!is_valid_shim_name(name)) {
+        die("internal error: unsafe shim name '%s' reached split_config_filename", name);
+    }
     size_t total = strlen(name) + strlen("-config.toml") + 1;
     char *result = xmalloc(total);
     snprintf(result, total, "%s-config.toml", name);

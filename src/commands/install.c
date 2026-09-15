@@ -60,15 +60,25 @@ static bool download_via_curl(const char *curl, const char *url, const char *des
     }
     int status = 0;
     bool ok = xwaitpid(pid, &status) >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
-    if (ok) {
-        chmod(tmp_file, 0644);
-        if (rename(tmp_file, dest) == 0) {
-            rmdir(tmpdir);
-            return true;
+    if (ok && chmod(tmp_file, 0644) != 0) {
+        /* Don't rename a file into place with whatever mode it happened
+         * to get otherwise (mkdtemp()'s own directory is 0700, but that
+         * says nothing about what curl -o created the file itself with)
+         * -- treat a failed chmod() as a failed download instead. */
+        warn("install: failed to set permissions on downloaded man page: %s", strerror(errno));
+        ok = false;
+    }
+    if (ok && rename(tmp_file, dest) == 0) {
+        if (rmdir(tmpdir) != 0) {
+            warn("install: failed to remove temporary directory %s: %s", tmpdir,
+                 strerror(errno));
         }
+        return true;
     }
     unlink(tmp_file);
-    rmdir(tmpdir);
+    if (rmdir(tmpdir) != 0) {
+        warn("install: failed to remove temporary directory %s: %s", tmpdir, strerror(errno));
+    }
     return false;
 }
 

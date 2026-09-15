@@ -60,10 +60,9 @@ typedef struct {
  * via Esc/Ctrl-C. */
 bool run_add_wizard(const WizardSeed *seed, WizardResult *out);
 
-/* The exact shim-name validity rule the CLI path enforces too (empty, a
- * '/' anywhere, or literally "shimback") -- exported so both the wizard's
- * name page and add.c's shared tail check the identical rule instead of
- * two copies drifting apart. */
-bool is_valid_shim_name(const char *name);
+/* is_valid_shim_name lives in paths.h now (config.c's config_load needs
+ * it too, to validate a [shims.<name>] section header the same way --
+ * see its own comment there), not declared again here since every user
+ * of this header already gets paths.h transitively. */
 
 #endif /* SHIMBACK_ADD_WIZARD_H */

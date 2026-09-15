@@ -10,6 +10,24 @@
  * exit in short-lived CLI command handlers -- see util.h). NULL is returned
  * only where explicitly documented. */
 
+/* Allowlist, not a denylist, for a shim name: ASCII letters, digits, '.',
+ * '_', '+', '-', and not the literal "shimback". A shim name ends up
+ * interpolated verbatim into a `[shims.<name>]` TOML section header
+ * (config.c's render_config) and into a `<name>-config.toml` filename
+ * (split_config_filename, below), so anything outside this set risks
+ * corrupting either -- most notably '#' (config.c's parser treats it as
+ * a comment marker even inside a section header, silently truncating it
+ * on the next load and making the *entire* config unloadable, not just
+ * that one shim) and '/' or '..' (a path-traversal component that would
+ * otherwise reach outside shimback's own directories once joined into a
+ * path -- see split_config_filename). Lives here rather than in a
+ * command-level file so config.c's config_load can enforce the same rule
+ * on a hand-edited config.toml's own [shims.<name>] headers, and so
+ * split_config_filename itself can enforce it defensively -- config.c
+ * already depends on paths.c, so this is the only direction that doesn't
+ * create a dependency cycle. */
+bool is_valid_shim_name(const char *name);
+
 /* $HOME, or the POSIX passwd-database fallback if unset. Dies if neither
  * source is available -- there's no meaningful way to continue without it. */
 char *home_dir(void);

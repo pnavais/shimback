@@ -62,6 +62,46 @@ static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
     (*arr)[(*count)++] = value;
 }
 
+/* Undoes a config commit that finish_add already made durable, for a
+ * *brand-new* shim (no previous symlink existed) whose shim-directory
+ * creation or symlink creation then failed -- without this, `add` would
+ * return an error while leaving a fully "configured" shim behind with no
+ * working symlink at all, confusing later `list`/`doctor`/dispatch (see
+ * review.md). Not needed for the *replacing an existing symlink* case:
+ * that path already builds the new symlink at a temp name and rename()s
+ * it into place atomically, so on failure the *old* symlink survives
+ * completely intact -- and since a shim symlink only ever redirects to
+ * the shimback binary (never encodes policy/source/fallback data itself,
+ * all of which dispatch re-reads fresh from config.toml/the split file
+ * every time), that old symlink is still fully functional under whatever
+ * config now exists for it. Best-effort: if the rollback write itself
+ * fails too, that's reported, but the process still ends via the
+ * caller's own die() either way. */
+static void rollback_new_shim_config(const char *name, const char *cfg_path, bool split_config,
+                                      const char *split_target_path) {
+    char errbuf[256];
+    if (split_config) {
+        if (split_target_path && unlink(split_target_path) != 0 && errno != ENOENT) {
+            warn("add: failed to roll back split config %s: %s", split_target_path,
+                 strerror(errno));
+        }
+        return;
+    }
+    Config cfg;
+    ConfigStatus load_st = config_load(cfg_path, &cfg, errbuf, sizeof(errbuf));
+    if (load_st != CONFIG_OK) {
+        warn("add: failed to roll back config entry for '%s': %s", name, errbuf);
+        return;
+    }
+    if (config_remove(&cfg, name)) {
+        ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
+        if (save_st != CONFIG_OK) {
+            warn("add: failed to roll back config entry for '%s': %s", name, errbuf);
+        }
+    }
+    config_free(&cfg);
+}
+
 /* Everything from policy validation through creating the symlink and
  * writing the config entry -- shared by both the "everything was already
  * given on the command line" path and the "the interactive wizard filled
@@ -310,6 +350,9 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * behind with no matching config entry, which used to happen when the
      * symlink was created first. */
     if (!mkdir_p(shim_dir)) {
+        if (!replacing_existing_symlink) {
+            rollback_new_shim_config(name, cfg_path, split_config, split_target_path);
+        }
         die("add: failed to create shim directory %s", shim_dir);
     }
     if (replacing_existing_symlink) {
@@ -331,6 +374,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
             die("add: failed to replace existing symlink %s: %s", symlink_path, strerror(errno));
         }
     } else if (symlink(self_exe, symlink_path) != 0) {
+        rollback_new_shim_config(name, cfg_path, split_config, split_target_path);
         die("add: failed to create symlink %s: %s", symlink_path, strerror(errno));
     }
 

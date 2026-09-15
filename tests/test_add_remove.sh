@@ -196,6 +196,25 @@ if [ ! -e "$RMSYMLINKFAIL_LINK" ]; then
 fi
 rm -f "$RMSYMLINKFAIL_LINK"
 
+# --- add rolls back a brand-new shim's just-committed config entry if the
+# shim directory can't actually be created afterward, rather than leaving
+# a "configured" shim with no working symlink behind (see review.md) ---
+OLD_DATA_HOME_RB="$XDG_DATA_HOME"
+export XDG_DATA_HOME="$SANDBOX/blocked-data-home"
+mkdir -p "$(dirname "$XDG_DATA_HOME")"
+printf 'blocker' >"$XDG_DATA_HOME"
+
+out="$("$SHIMBACK" add rollbacktool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" 2>&1)"
+code=$?
+export XDG_DATA_HOME="$OLD_DATA_HOME_RB"
+rm -f "$SANDBOX/blocked-data-home"
+if [ "$code" -eq 0 ]; then
+    fail "add: should fail when the shim directory can't be created"
+fi
+assert_contains "add: reports the directory failure" "$out" "failed to create shim directory"
+assert_not_contains "add: rolls back the config entry on failure" \
+    "$(cat "$(config_file)")" "rollbacktool"
+
 # --- generated startup files and config.toml are never world-writable,
 # even under a permissive umask -- the mode is always set explicitly
 # rather than left to whatever fopen()+umask would have produced (see
@@ -322,5 +341,22 @@ assert_not_contains "uninstall --full: PATH block removed from .zshrc.local" \
     "$(cat "$ZSHRC_LOCAL")" "shimback"
 
 rm -f "$ZSHRC_LOCAL"
+
+# --- remove refuses a path-traversal name before it ever reaches path
+# construction -- a bare "../../../victim" must never let a file outside
+# shimback's own directories be deleted, however the traversal happens to
+# resolve on this machine (see review.md) ---
+VICTIM="$SANDBOX/victim-config.toml"
+echo "sensitive data, not shimback's to touch" >"$VICTIM"
+out="$("$SHIMBACK" remove '../../../victim' 2>&1)"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "remove: a path-traversal name should be rejected, not succeed"
+fi
+assert_contains "remove: rejects a path-traversal name" "$out" "invalid shim name"
+if [ ! -e "$VICTIM" ]; then
+    fail "remove: a file outside shimback's own directories must never be touched"
+fi
+rm -f "$VICTIM"
 
 finish
