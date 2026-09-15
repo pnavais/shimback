@@ -160,6 +160,28 @@ static char *prompt_fix_cycle(const char *shim_name, const char *field_label,
     }
 }
 
+/* Interactively confirms removing an orphaned shim symlink -- a real
+ * shimback-managed symlink with no configuration anywhere for it (no
+ * config.toml entry, no split config file in any of its three potential
+ * locations; see ShimSource/resolve_shim_entry). `auto_yes` (`doctor fix
+ * -y`) skips the prompt outright. On EOF (non-interactive stdin, same as
+ * prompt_fix_cycle above), treats it as "no" rather than hanging. */
+static bool confirm_remove_orphan(const char *name, bool auto_yes) {
+    if (auto_yes) {
+        return true;
+    }
+    printf("  '%s' has a real shim symlink but no configuration anywhere for it (no "
+           "config.toml entry, no split config file). Remove the symlink? [y/N] ",
+           name);
+    fflush(stdout);
+    char line[64];
+    if (!fgets(line, sizeof(line), stdin)) {
+        printf("\n  Leaving '%s' as-is.\n", name);
+        return false;
+    }
+    return line[0] == 'y' || line[0] == 'Y';
+}
+
 /* If `entry`'s fallback (or, if explicit, its source) resolves to the
  * shimback binary itself -- a cycle, since dispatching through it would
  * just re-invoke this same shim forever -- interactively prompts for a
@@ -347,15 +369,19 @@ cross_check:
 
 int cmd_doctor(int argc, char **argv) {
     bool fix_mode = false;
+    bool auto_yes = false;
     if (argc > 1) {
-        if (strcmp(argv[1], "fix") == 0) {
-            fix_mode = true;
-        } else {
+        if (strcmp(argv[1], "fix") != 0) {
             die("doctor: unexpected argument '%s' (did you mean `shimback doctor fix`?)",
                 argv[1]);
         }
-        if (argc > 2) {
-            die("doctor: unexpected argument '%s'", argv[2]);
+        fix_mode = true;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "-y") == 0 || strcmp(argv[i], "--yes") == 0) {
+                auto_yes = true;
+            } else {
+                die("doctor: unexpected argument '%s'", argv[i]);
+            }
         }
     }
 
@@ -415,7 +441,10 @@ int cmd_doctor(int argc, char **argv) {
         printf("\n");
     }
 
-    if (cfg.count == 0) {
+    size_t name_count = 0;
+    char **names = collect_all_shim_names(&cfg, &name_count);
+
+    if (name_count == 0) {
         printf("No shims configured.\n");
         return issues > 0 ? 1 : 0;
     }
@@ -423,18 +452,56 @@ int cmd_doctor(int argc, char **argv) {
     char *self_exe = self_exe_path();
     bool config_dirty = false;
 
-    printf("%s%zu shim(s) configured:%s\n", hdr, cfg.count, reset);
-    for (size_t i = 0; i < cfg.count; i++) {
-        ShimEntry *e = &cfg.shims[i];
-        printf("\n%s%s%s\n", name_color, e->name, reset);
+    printf("%s%zu shim(s):%s\n", hdr, name_count, reset);
+    for (size_t i = 0; i < name_count; i++) {
+        const char *name = names[i];
+        printf("\n%s%s%s\n", name_color, name, reset);
+
+        ShimEntry *e = NULL;
+        char *split_path = NULL;
+        ShimSource source = resolve_shim_entry(&cfg, name, &e, &split_path);
+
+        if (source == SHIM_SOURCE_ORPHAN) {
+            if (fix_mode && confirm_remove_orphan(name, auto_yes)) {
+                char *link_path = path_join(shim_dir, name);
+                if (unlink(link_path) == 0) {
+                    report_fixed("removed orphaned symlink (no configuration found for it)");
+                } else {
+                    warn("doctor fix: failed to remove orphaned symlink for '%s': %s", name,
+                         strerror(errno));
+                }
+                free(link_path);
+            } else {
+                report_fail(&issues,
+                             "orphaned symlink -- no config.toml entry or split config file "
+                             "found (run `shimback doctor fix` to remove it, or `shimback "
+                             "doctor fix -y` to remove every orphan without asking)");
+            }
+            continue;
+        }
 
         if (fix_mode) {
-            fix_symlink_if_needed(shim_dir, e->name, self_exe);
-            config_dirty = fix_cycle_if_needed(e, self_exe) || config_dirty;
+            fix_symlink_if_needed(shim_dir, name, self_exe);
+            bool entry_dirty = fix_cycle_if_needed(e, self_exe);
+            if (entry_dirty) {
+                if (source == SHIM_SOURCE_SPLIT) {
+                    char split_errbuf[256];
+                    ConfigStatus split_st =
+                        config_save_split(e, split_path, split_errbuf, sizeof(split_errbuf));
+                    if (split_st != CONFIG_OK) {
+                        warn("doctor fix: failed to save split config for '%s': %s", name,
+                             split_errbuf);
+                    } else {
+                        printf("shimback doctor: saved split config changes to %s\n", split_path);
+                    }
+                } else {
+                    config_dirty = true;
+                }
+            }
         }
-        check_symlink(&issues, shim_dir, e->name);
+        check_symlink(&issues, shim_dir, name);
         char *resolved_fallback = check_fallback(&issues, e->fallback, self_exe, e->force);
-        check_source(&issues, e, e->name, shim_dir, self_exe, resolved_fallback, e->force);
+        check_source(&issues, e, name, shim_dir, self_exe, resolved_fallback, e->force);
         free(resolved_fallback);
 
         if (e->policy == POLICY_HEURISTIC && e->error_pattern_count == 0) {
@@ -464,6 +531,12 @@ int cmd_doctor(int argc, char **argv) {
                          "policy is rewrite but no --rewrite rule is configured -- this shim "
                          "will never rewrite anything");
         }
+
+        if (source == SHIM_SOURCE_SPLIT) {
+            shim_entry_free(e);
+            free(e);
+        }
+        free(split_path);
     }
     printf("\n");
 

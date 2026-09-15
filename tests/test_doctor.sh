@@ -228,4 +228,110 @@ assert_contains "doctor: forced fallback now checked normally once it exists" "$
 assert_not_contains "doctor: no --force note once fallback actually exists" "$out" \
     "fallback: $GHOST_FB (added with --force"
 
+# --- clean slate before the scenarios below: the hand-edited config.toml
+# truncation earlier in this file (`>"$CFG"`, staging the "cyc" cycle
+# test) incidentally orphaned mytool/drifted -- invisible before this
+# feature existed, since doctor never looked beyond config.toml -- and
+# cyc's own cycle was deliberately left broken by the EOF test right
+# after it. One `doctor fix` clears both: the piped line answers cyc's
+# still-pending cycle prompt (it's first, in cfg order), and -y removes
+# the orphans with no prompt of their own needed. ---
+out0="$(printf '%s\n' "$FAKE_FALLBACK" | "$SHIMBACK" doctor fix -y)"
+assert_contains "cleanup: cyc's leftover cycle gets fixed" "$out0" "[fixed] fallback updated to"
+assert_contains "cleanup: mytool's leftover orphan gets removed" "$out0" \
+    "[fixed] removed orphaned symlink"
+assert_contains "cleanup: drifted's leftover orphan gets removed" "$out0" \
+    "[fixed] removed orphaned symlink"
+out0b="$("$SHIMBACK" doctor)"
+assert_eq "cleanup: doctor is clean before the split-config/orphan scenarios" "0" "$?"
+if echo "$out0b" | grep -q "orphaned\|resolves back to the shimback binary itself"; then
+    fail "cleanup: doctor should be fully clean at this point: $out0b"
+fi
+
+# --- doctor/doctor fix consider a split-config shim too (see
+# test_split_config.sh), and a cycle fix on one saves back to its own
+# split file, not config.toml. `add` already refuses to create a cyclic
+# shim going forward (see above), so -- same trick as the config.toml
+# "cyc" case above -- the cycle has to be hand-edited in afterward. ---
+"$SHIMBACK" add splitcyc -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --split-config >/dev/null
+SPLIT_FILE="$(dirname "$CFG")/splitcyc-config.toml"
+{
+    printf 'source = "%s"\n' "$FAKE_PRIMARY"
+    printf 'fallback = "%s"\n' "$SHIMBACK"
+    printf 'policy = "exit-code"\n'
+} >"$SPLIT_FILE"
+
+out="$("$SHIMBACK" doctor)"
+assert_contains "doctor: sees a split-config shim at all" "$out" "splitcyc"
+assert_contains "doctor: reports the split shim's cycle" "$out" \
+    "resolves back to the shimback binary itself"
+
+out2="$(printf '%s\n' "$FAKE_FALLBACK" | "$SHIMBACK" doctor fix)"
+assert_contains "doctor fix: fixes the split shim's cycle" "$out2" "[fixed] fallback updated to"
+assert_contains "doctor fix: saves back to the split file, not config.toml" "$out2" \
+    "saved split config changes to $SPLIT_FILE"
+assert_contains "doctor fix: split file actually updated" "$(cat "$SPLIT_FILE")" \
+    "fallback = \"$FAKE_FALLBACK\""
+assert_not_contains "doctor fix: config.toml untouched by the split shim's fix" \
+    "$(cat "$CFG")" "splitcyc"
+"$SHIMBACK" remove -y splitcyc >/dev/null
+
+# --- an orphaned shim (real symlink, no config anywhere) is reported as
+# an issue by default, not silently skipped ---
+"$SHIMBACK" add orphantool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+awk '/^\[shims\.orphantool\]$/{skip=1;next} /^\[/{skip=0} !skip' "$CFG" >"$CFG.tmp" &&
+    mv "$CFG.tmp" "$CFG"
+ORPHAN_LINK="$(shim_path orphantool)"
+if [ ! -L "$ORPHAN_LINK" ]; then
+    fail "setup: expected orphantool's symlink to still exist"
+fi
+
+out="$("$SHIMBACK" doctor)"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "doctor: should fail when an orphaned symlink is present"
+fi
+assert_contains "doctor: reports the orphaned symlink" "$out" \
+    "orphaned symlink -- no config.toml entry or split config file found"
+
+# --- doctor fix: prompts before removing an orphan, rejects a "no" ---
+out2="$(printf 'n\n' | "$SHIMBACK" doctor fix)"
+assert_contains "doctor fix: prompts about the orphan" "$out2" \
+    "has a real shim symlink but no configuration anywhere for it"
+if [ ! -L "$ORPHAN_LINK" ]; then
+    fail "doctor fix: declining the prompt should leave the orphan's symlink alone"
+fi
+
+# --- doctor fix: accepts a "y" and removes it ---
+out3="$(printf 'y\n' | "$SHIMBACK" doctor fix)"
+assert_contains "doctor fix: removes the orphan on 'y'" "$out3" \
+    "[fixed] removed orphaned symlink"
+if [ -e "$ORPHAN_LINK" ]; then
+    fail "doctor fix: orphan's symlink should be gone after confirming"
+fi
+
+out4="$("$SHIMBACK" doctor)"
+code4=$?
+assert_eq "doctor: exit 0 once the orphan is gone" "0" "$code4"
+
+# --- doctor fix -y: removes an orphan without prompting ---
+"$SHIMBACK" add orphantool2 -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+awk '/^\[shims\.orphantool2\]$/{skip=1;next} /^\[/{skip=0} !skip' "$CFG" >"$CFG.tmp" &&
+    mv "$CFG.tmp" "$CFG"
+ORPHAN2_LINK="$(shim_path orphantool2)"
+
+out5="$(run_with_timeout 5 "$SANDBOX/fix_y_out" "$SHIMBACK" doctor fix -y </dev/null; \
+    cat "$SANDBOX/fix_y_out")"
+code5=$?
+if [ "$code5" -eq 137 ]; then
+    fail "doctor fix -y: hung waiting for input on a closed stdin"
+fi
+assert_contains "doctor fix -y: removes the orphan without a prompt" "$out5" \
+    "[fixed] removed orphaned symlink"
+assert_not_contains "doctor fix -y: never printed the confirmation prompt" "$out5" \
+    "Remove the symlink?"
+if [ -e "$ORPHAN2_LINK" ]; then
+    fail "doctor fix -y: orphan's symlink should be gone"
+fi
+
 finish

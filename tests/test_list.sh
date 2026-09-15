@@ -58,13 +58,41 @@ if [ "$code" -eq 0 ]; then
 fi
 assert_contains "list: unexpected argument error" "$(cat "$SANDBOX/err")" "unexpected argument"
 
+# --- list shows a split-config shim (see test_split_config.sh) just like
+# a config.toml one, plus a "config: split" marker under --full ---
+"$SHIMBACK" add splittool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --split-config >/dev/null
+out="$("$SHIMBACK" list)"
+assert_contains "list: shows a split-config shim in the compact table" "$out" "splittool"
+full="$("$SHIMBACK" list --full)"
+assert_contains "list --full: marks a split-config shim as such" "$full" \
+    "config: split (see \`shimback doctor\`)"
+
+# --- list surfaces a real shim symlink with no configuration anywhere
+# (its config.toml entry removed by hand, leaving the symlink behind) as
+# an orphan, rather than silently omitting it -- see test_doctor.sh for
+# `doctor fix`'s orphan-removal side of this feature ---
+"$SHIMBACK" add orphantool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+CFG="$(config_file)"
+awk '/^\[shims\.orphantool\]$/{skip=1;next} /^\[/{skip=0} !skip' "$CFG" >"$CFG.tmp" &&
+    mv "$CFG.tmp" "$CFG"
+assert_not_contains "setup: orphantool's entry removed from config.toml by hand" \
+    "$(cat "$CFG")" "orphantool"
+
+out="$("$SHIMBACK" list)"
+assert_contains "list: surfaces an orphaned symlink" "$out" "orphantool"
+assert_contains "list: explains why it's orphaned" "$out" \
+    "orphaned symlink -- no config.toml entry or split config file found"
+
+"$SHIMBACK" remove -y splittool >/dev/null
+"$SHIMBACK" doctor fix -y >/dev/null
+
 # --- empty config with --full is still just the empty-config message ---
-"$SHIMBACK" remove sed >/dev/null
-"$SHIMBACK" remove htool >/dev/null
-"$SHIMBACK" remove xtool >/dev/null
-"$SHIMBACK" remove rtool >/dev/null
-"$SHIMBACK" remove rwtool >/dev/null
-"$SHIMBACK" remove atool >/dev/null
+"$SHIMBACK" remove -y sed >/dev/null
+"$SHIMBACK" remove -y htool >/dev/null
+"$SHIMBACK" remove -y xtool >/dev/null
+"$SHIMBACK" remove -y rtool >/dev/null
+"$SHIMBACK" remove -y rwtool >/dev/null
+"$SHIMBACK" remove -y atool >/dev/null
 out="$("$SHIMBACK" list --full)"
 assert_eq "list --full: empty config message" "No shims configured." "$out"
 
