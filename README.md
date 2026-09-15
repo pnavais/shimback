@@ -388,8 +388,14 @@ whole file) by `uninstall --full`.
 shimback list
 ```
 
-Prints every configured shim's name, source (or `auto`), fallback, policy,
-and diagnostic flag as a column-aligned table:
+Prints every shim's name, source (or `auto`), fallback, policy, and
+diagnostic flag as a column-aligned table. This includes a
+[split-config](#splitting-a-shims-config-into-its-own-file) shim exactly
+like a config.toml one (marked with a `config: split` line under
+`--full`), and a real shim symlink with no configuration anywhere for it
+at all -- an **orphan**, shown with an explanatory message in place of
+its row's usual columns instead of being silently left out (see
+`doctor`, below, for removing one):
 
 ```
 NAME  SOURCE                   FALLBACK      POLICY     DIAGNOSTIC
@@ -430,19 +436,25 @@ ll     /bin/ls    /usr/local/bin/eza  exit-code  false
 ### `doctor`
 
 ```sh
-shimback doctor [fix]
+shimback doctor [fix [-y|--yes]]
 ```
 
 Checks the health of your whole shimback setup and reports any problems:
 whether the shim directory exists and is actually on `$PATH`, whether the
-config file parses, and, for each configured shim, whether its symlink
-exists and isn't dead, whether its fallback (and, if explicit, its source)
-still exist and are executable, and whether its policy is fully configured
-(e.g. `heuristic` with no `--error-pattern`, or `exit-code-match` with no
-`--exit-code`, can never fall back). Exits `0` if everything checks out,
-`1` otherwise — safe to run in CI or a shell startup hook. Section headers
-and shim names are bold yellow/cyan, `[ok]`/`[fail]` are green/red, and the
-closing summary line is green or red, when stdout is a terminal.
+config file parses, and, for every real shim — whether it's backed by a
+config.toml entry or its own
+[split config file](#splitting-a-shims-config-into-its-own-file) — whether
+its symlink exists and isn't dead, whether its fallback (and, if explicit,
+its source) still exist and are executable, and whether its policy is
+fully configured (e.g. `heuristic` with no `--error-pattern`, or
+`exit-code-match` with no `--exit-code`, can never fall back). A real shim
+symlink with **no** configuration anywhere for it — an orphan, typically
+left behind after its config.toml entry or split file was deleted by hand
+— is reported too, rather than silently skipped (see below for removing
+one). Exits `0` if everything checks out, `1` otherwise — safe to run in
+CI or a shell startup hook. Section headers and shim names are bold
+yellow/cyan, `[ok]`/`[fail]` are green/red, and the closing summary line
+is green or red, when stdout is a terminal.
 
 `shimback doctor fix` repairs what it safely can before reporting: any shim
 whose symlink is missing entirely, or is a *dangling* symlink (its target no
@@ -457,7 +469,9 @@ It also checks every shim's source (if explicit) and fallback for a
 **cycle**: a value that resolves back to the `shimback` binary itself (see
 `add`, above). `add` refuses to create one, so the only way a cycle ends up
 in the config is by hand-editing it. When `fix` finds one, it prompts
-interactively for a replacement, right there in the terminal:
+interactively for a replacement, right there in the terminal — and, for a
+split-config shim, saves the fix back to its own split file, never to
+config.toml:
 
 ```
 cyc
@@ -473,6 +487,21 @@ nothing shimback-specific). If stdin isn't interactive (e.g. run from a
 script) and hits EOF before you've answered, it gives up on that one entry
 and leaves it as-is — `doctor fix` never hangs waiting for input that can't
 arrive.
+
+For an **orphan** (a real shim symlink with no config.toml entry or split
+config file anywhere for it), `fix` prompts before removing its symlink,
+the same shape as the cycle prompt above:
+
+```
+mytool
+  'mytool' has a real shim symlink but no configuration anywhere for it (no
+  config.toml entry, no split config file). Remove the symlink? [y/N]
+```
+
+Pass `-y`/`--yes` (`shimback doctor fix -y`) to remove every orphan found
+without asking — useful for a script or CI job where nothing can answer an
+interactive prompt. It only affects orphan removal; a cycle still always
+prompts (or gives up on EOF, as above) regardless of `-y`.
 
 `doctor` also checks for a stray PATH block: if `~/.zshrc.local` exists but
 the shimback block is still sitting in `~/.zshrc` (written by an `add`/

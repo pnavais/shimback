@@ -52,6 +52,18 @@ void split_config_all_paths(const char *name, char *paths[3]);
  * how you override, without having to touch or delete the original. */
 char *resolve_split_config_path(const char *name);
 
+/* Lists every shimback-managed symlink directly inside shim_bin_dir() --
+ * i.e. every real shim, whether or not it has a config.toml entry or a
+ * split config file anywhere (`list`/`doctor` need this to notice a
+ * split-only shim, or one with no configuration anywhere at all -- an
+ * orphan). A dangling symlink, or one pointing at something other than
+ * the running shimback binary, is not included (mirrors the same check
+ * `remove`/`uninstall` use to decide a symlink is "ours"). Newly
+ * allocated array of newly allocated names (not full paths); *out_count
+ * receives its length (0/NULL if none, including when the directory
+ * itself doesn't exist yet). */
+char **list_shim_symlink_names(size_t *out_count);
+
 /* realpath(3) wrapper. Returns NULL if the path doesn't exist / can't be
  * resolved (errno is left as set by realpath). */
 char *canonicalize(const char *path);

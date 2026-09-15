@@ -1,5 +1,6 @@
 #include "paths.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <pwd.h>
 #include <stdio.h>
@@ -126,6 +127,45 @@ char *resolve_split_config_path(const char *name) {
         }
     }
     return found;
+}
+
+char **list_shim_symlink_names(size_t *out_count) {
+    char *shim_dir = shim_bin_dir();
+    char *self_exe = self_exe_path();
+
+    char **names = NULL;
+    size_t count = 0;
+    size_t cap = 0;
+
+    DIR *d = opendir(shim_dir);
+    if (d) {
+        struct dirent *ent;
+        while ((ent = readdir(d)) != NULL) {
+            if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+                continue;
+            }
+            char *entry_path = path_join(shim_dir, ent->d_name);
+            struct stat lst;
+            if (lstat(entry_path, &lst) == 0 && S_ISLNK(lst.st_mode)) {
+                char *resolved = canonicalize(entry_path);
+                if (resolved && strcmp(resolved, self_exe) == 0) {
+                    if (count == cap) {
+                        cap = cap == 0 ? 8 : cap * 2;
+                        names = xrealloc(names, cap * sizeof(char *));
+                    }
+                    names[count++] = xstrdup(ent->d_name);
+                }
+                free(resolved);
+            }
+            free(entry_path);
+        }
+        closedir(d);
+    }
+
+    free(shim_dir);
+    free(self_exe);
+    *out_count = count;
+    return names;
 }
 
 char *canonicalize(const char *path) {

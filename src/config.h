@@ -177,6 +177,42 @@ ConfigStatus config_save_split(const ShimEntry *entry, const char *path, char *e
  * treated as an error. Returns the number of files actually removed. */
 size_t remove_split_configs(const char *name);
 
+/* Where a shim's effective configuration actually comes from -- `list`
+ * and `doctor` must consider every real shim symlink, not just ones with
+ * a config.toml entry (see collect_all_shim_names), so a shim can be
+ * config.toml-backed, split-file-backed, or (a real symlink, but no
+ * configuration anywhere for it -- typically the config.toml entry or
+ * split file having been deleted by hand) an orphan. */
+typedef enum {
+    SHIM_SOURCE_CONFIG,
+    SHIM_SOURCE_SPLIT,
+    SHIM_SOURCE_ORPHAN,
+} ShimSource;
+
+/* Resolves `name`'s effective ShimEntry: a split file (see
+ * resolve_split_config_path, paths.h) always wins if one exists, then a
+ * config.toml entry in `cfg`, then SHIM_SOURCE_ORPHAN if neither does.
+ * For SHIM_SOURCE_SPLIT, *entry is a freshly heap-allocated ShimEntry the
+ * caller must shim_entry_free() and free() once done; for
+ * SHIM_SOURCE_CONFIG, *entry aliases the entry already living inside
+ * `cfg` (config_find's own pointer -- do not free it separately, and it's
+ * invalidated the same way that is); for SHIM_SOURCE_ORPHAN, *entry is
+ * NULL. If `split_path_out` is non-NULL, it receives the split file's own
+ * path (caller-owned) for SHIM_SOURCE_SPLIT, or NULL otherwise -- callers
+ * that might need to write a fix back (doctor fix) need to know which
+ * split file that is. Dies on a malformed split file, the same way
+ * config_load dying on a malformed config.toml already would. */
+ShimSource resolve_shim_entry(Config *cfg, const char *name, ShimEntry **entry,
+                               char **split_path_out);
+
+/* Builds the full set of shim names `list`/`doctor` must consider: every
+ * name already in `cfg`, in its own order, followed by every
+ * shimback-managed symlink name (see list_shim_symlink_names, paths.h)
+ * that isn't already one of those -- a split-only shim, or an orphan (see
+ * ShimSource). Newly allocated array of newly allocated strings;
+ * *out_count receives its length (0/NULL if there's nothing at all). */
+char **collect_all_shim_names(const Config *cfg, size_t *out_count);
+
 /* Read-only lookup; NULL if not found. Only valid to call when no further
  * config_upsert calls are pending (the returned pointer can be invalidated
  * by a later upsert that grows the backing array). */

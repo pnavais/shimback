@@ -1126,3 +1126,71 @@ size_t remove_split_configs(const char *name) {
     }
     return removed;
 }
+
+ShimSource resolve_shim_entry(Config *cfg, const char *name, ShimEntry **entry,
+                               char **split_path_out) {
+    char *split_path = resolve_split_config_path(name);
+    if (split_path) {
+        ShimEntry *split_entry = xmalloc(sizeof(ShimEntry));
+        memset(split_entry, 0, sizeof(*split_entry));
+        split_entry->name = xstrdup(name);
+        split_entry->policy = POLICY_EXIT_CODE;
+
+        char errbuf[256];
+        ConfigStatus st = config_load_split(split_path, split_entry, errbuf, sizeof(errbuf));
+        if (st != CONFIG_OK) {
+            die("failed to load split config for '%s': %s", name, errbuf);
+        }
+
+        *entry = split_entry;
+        if (split_path_out) {
+            *split_path_out = split_path;
+        } else {
+            free(split_path);
+        }
+        return SHIM_SOURCE_SPLIT;
+    }
+
+    if (split_path_out) {
+        *split_path_out = NULL;
+    }
+
+    ShimEntry *found = config_find(cfg, name);
+    if (found) {
+        *entry = found;
+        return SHIM_SOURCE_CONFIG;
+    }
+
+    *entry = NULL;
+    return SHIM_SOURCE_ORPHAN;
+}
+
+char **collect_all_shim_names(const Config *cfg, size_t *out_count) {
+    size_t symlink_count = 0;
+    char **symlink_names = list_shim_symlink_names(&symlink_count);
+
+    size_t cap = cfg->count + symlink_count;
+    char **names = cap > 0 ? xmalloc(cap * sizeof(char *)) : NULL;
+    size_t count = 0;
+
+    for (size_t i = 0; i < cfg->count; i++) {
+        names[count++] = xstrdup(cfg->shims[i].name);
+    }
+    for (size_t i = 0; i < symlink_count; i++) {
+        bool dup = false;
+        for (size_t j = 0; j < cfg->count; j++) {
+            if (strcmp(cfg->shims[j].name, symlink_names[i]) == 0) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) {
+            names[count++] = xstrdup(symlink_names[i]);
+        }
+        free(symlink_names[i]);
+    }
+    free(symlink_names);
+
+    *out_count = count;
+    return names;
+}

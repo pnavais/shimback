@@ -2,6 +2,7 @@
 
 #include <getopt.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "../config.h"
@@ -101,6 +102,21 @@ static void print_full_details(const ShimEntry *e, bool colorize) {
     }
 }
 
+/* strlen(ORPHAN_LABEL) has to fit inside source_w + 2 + fallback_w + 2 +
+ * policy_w for print_orphan_row's spanning cell below to make sense --
+ * given how short the fixed column headers are, this is always true in
+ * practice (a shim name long enough to make name_w dominate doesn't
+ * affect this), but there's no enforced invariant tying the two, so this
+ * comment is the only thing keeping that in view. */
+#define ORPHAN_LABEL "(orphaned symlink -- no config.toml entry or split config file found)"
+
+static void print_orphan_row(const char *name, size_t name_w, bool colorize) {
+    print_cell(name, name_w, ANSI_BOLD ANSI_CYAN, colorize);
+    printf("  ");
+    print_cell(ORPHAN_LABEL, 0, ANSI_RED, colorize);
+    printf("\n");
+}
+
 int cmd_list(int argc, char **argv) {
     bool full = false;
 
@@ -130,9 +146,21 @@ int cmd_list(int argc, char **argv) {
         die("list: %s", errbuf);
     }
 
-    if (cfg.count == 0) {
+    size_t name_count = 0;
+    char **names = collect_all_shim_names(&cfg, &name_count);
+
+    if (name_count == 0) {
         printf("No shims configured.\n");
         return 0;
+    }
+
+    /* Resolved once up front (not per pass) since a split entry is a
+     * freshly heap-loaded ShimEntry -- loading it twice (once to measure
+     * column widths, again to print) would be wasted work for no reason. */
+    ShimEntry **entries = xmalloc(name_count * sizeof(ShimEntry *));
+    ShimSource *sources = xmalloc(name_count * sizeof(ShimSource));
+    for (size_t i = 0; i < name_count; i++) {
+        sources[i] = resolve_shim_entry(&cfg, names[i], &entries[i], NULL);
     }
 
     bool colorize = stdout_is_color();
@@ -142,15 +170,18 @@ int cmd_list(int argc, char **argv) {
     size_t fallback_w = strlen("FALLBACK");
     size_t policy_w = strlen("POLICY");
 
-    for (size_t i = 0; i < cfg.count; i++) {
-        ShimEntry *e = &cfg.shims[i];
+    for (size_t i = 0; i < name_count; i++) {
+        size_t nl = strlen(names[i]);
+        if (nl > name_w) name_w = nl;
+        if (sources[i] == SHIM_SOURCE_ORPHAN) {
+            continue;
+        }
+        ShimEntry *e = entries[i];
         const char *source_display = e->source ? e->source : "auto";
         const char *fallback_display = e->fallback ? e->fallback : "none";
-        size_t nl = strlen(e->name);
         size_t sl = strlen(source_display);
         size_t fl = strlen(fallback_display);
         size_t pl = strlen(policy_to_string(e->policy));
-        if (nl > name_w) name_w = nl;
         if (sl > source_w) source_w = sl;
         if (fl > fallback_w) fallback_w = fl;
         if (pl > policy_w) policy_w = pl;
@@ -168,13 +199,17 @@ int cmd_list(int argc, char **argv) {
     print_cell("DIAGNOSTIC", 0, header_color, colorize);
     printf("\n");
 
-    for (size_t i = 0; i < cfg.count; i++) {
-        ShimEntry *e = &cfg.shims[i];
+    for (size_t i = 0; i < name_count; i++) {
+        if (sources[i] == SHIM_SOURCE_ORPHAN) {
+            print_orphan_row(names[i], name_w, colorize);
+            continue;
+        }
+        ShimEntry *e = entries[i];
         const char *source_display = e->source ? e->source : "auto";
         const char *fallback_display = e->fallback ? e->fallback : "none";
         const char *policy_str = policy_to_string(e->policy);
 
-        print_cell(e->name, name_w, ANSI_BOLD ANSI_CYAN, colorize);
+        print_cell(names[i], name_w, ANSI_BOLD ANSI_CYAN, colorize);
         printf("  ");
         print_cell(source_display, source_w, e->source ? ANSI_GREEN : ANSI_DIM, colorize);
         printf("  ");
@@ -187,9 +222,23 @@ int cmd_list(int argc, char **argv) {
         printf("\n");
 
         if (full) {
+            if (sources[i] == SHIM_SOURCE_SPLIT) {
+                print_detail_line(colorize, "config", "split (see `shimback doctor`)");
+            }
             print_full_details(e, colorize);
         }
     }
+
+    for (size_t i = 0; i < name_count; i++) {
+        if (sources[i] == SHIM_SOURCE_SPLIT) {
+            shim_entry_free(entries[i]);
+            free(entries[i]);
+        }
+        free(names[i]);
+    }
+    free(entries);
+    free(sources);
+    free(names);
 
     return 0;
 }
