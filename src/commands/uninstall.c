@@ -143,14 +143,6 @@ int cmd_uninstall(int argc, char **argv) {
     }
     free(shim_dir);
 
-    char *bin_dest = path_join(path_join(prefix, "bin"), "shimback");
-    remove_file_if_present(bin_dest, "installed binary");
-    free(bin_dest);
-
-    char *man_dest = path_join(path_join(prefix, "share/man/man1"), "shimback.1");
-    remove_file_if_present(man_dest, "man page");
-    free(man_dest);
-
     if (full) {
         /* Split-config files (see paths.h's split_config_all_paths) are
          * just another storage form of the same shim data config.toml
@@ -159,7 +151,17 @@ int cmd_uninstall(int argc, char **argv) {
          * entry, and ones that only ever existed via a split file (whose
          * symlink -- and so name -- we still just saw above, even though
          * they'd have no entry in cfg at all). Read before remove_config()
-         * deletes config.toml out from under it. */
+         * deletes config.toml out from under it.
+         *
+         * This whole block must run before the installed-binary removal
+         * below: split_config_all_paths locates one of its three
+         * candidate paths via self_exe_path(), which canonicalizes the
+         * currently running executable's own path -- and when this *is*
+         * the installed copy (the common case, e.g. `~/.local/bin/shimback
+         * uninstall --full`), that resolution starts failing the moment
+         * that file is unlinked, since realpath() needs the directory
+         * entry to still exist. Nothing below this point may depend on
+         * self_exe_path() succeeding. */
         char *cfg_path_for_sweep = config_file_path();
         Config cfg_for_sweep;
         char sweep_errbuf[256];
@@ -183,6 +185,14 @@ int cmd_uninstall(int argc, char **argv) {
         printf("shimback: --full also cleared the config file, any split <name>-config.toml "
                "files, and PATH blocks in shell startup files\n");
     }
+
+    char *bin_dest = path_join(path_join(prefix, "bin"), "shimback");
+    remove_file_if_present(bin_dest, "installed binary");
+    free(bin_dest);
+
+    char *man_dest = path_join(path_join(prefix, "share/man/man1"), "shimback.1");
+    remove_file_if_present(man_dest, "man page");
+    free(man_dest);
 
     free(prefix);
     return 0;

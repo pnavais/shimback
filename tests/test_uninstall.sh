@@ -113,4 +113,31 @@ if [ -e "$SPLIT_CFG" ]; then
     fail "uninstall --full: split config file should be removed"
 fi
 
+# --- uninstall --full run from the INSTALLED binary itself (the real,
+# common way someone actually runs it: `~/.local/bin/shimback uninstall
+# --full`) must not die partway through. Every scenario above ran
+# uninstall from a copy of the binary that survives the whole run ($SHIMBACK,
+# never installed at $DEST) -- this is the one place self_exe_path()'s
+# own canonicalize() call is resolving the same file uninstall is about to
+# unlink, which is exactly the ordering this regression test guards:
+# anything needing self_exe_path() (the split-config sweep, in
+# particular) must run before the installed-binary removal, not after. ---
+"$SHIMBACK" add selftool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --split-config >/dev/null
+"$BUNDLED_SHIMBACK" install --prefix "$PREFIX" >/dev/null
+if [ ! -x "$DEST" ]; then
+    fail "setup: expected an installed binary at $DEST for the self-uninstall test"
+fi
+
+out5="$("$DEST" uninstall --prefix "$PREFIX" --full)"
+code5=$?
+assert_eq "uninstall --full run from the installed binary itself: exits 0" "0" "$code5"
+assert_not_contains "uninstall --full (self): no canonicalize failure" "$out5" \
+    "failed to canonicalize executable path"
+if [ -e "$DEST" ]; then
+    fail "uninstall --full (self): installed binary should be gone"
+fi
+if [ -f "$CFG" ]; then
+    fail "uninstall --full (self): config file should be removed"
+fi
+
 finish
