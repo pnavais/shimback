@@ -59,13 +59,13 @@ fi
 assert_contains "list: unexpected argument error" "$(cat "$SANDBOX/err")" "unexpected argument"
 
 # --- list shows a split-config shim (see test_split_config.sh) just like
-# a config.toml one, plus a "config: split" marker under --full ---
+# a config.toml one, plus its actual split file path under --full ---
 "$SHIMBACK" add splittool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --split-config >/dev/null
 out="$("$SHIMBACK" list)"
 assert_contains "list: shows a split-config shim in the compact table" "$out" "splittool"
 full="$("$SHIMBACK" list --full)"
-assert_contains "list --full: marks a split-config shim as such" "$full" \
-    "config: split (see \`shimback doctor\`)"
+assert_contains "list --full: shows the split-config shim's own file path" "$full" \
+    "config: $(dirname "$(config_file)")/splittool-config.toml"
 
 # --- list surfaces a real shim symlink with no configuration anywhere
 # (its config.toml entry removed by hand, leaving the symlink behind) as

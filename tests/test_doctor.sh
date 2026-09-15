@@ -263,6 +263,8 @@ SPLIT_FILE="$(dirname "$CFG")/splitcyc-config.toml"
 
 out="$("$SHIMBACK" doctor)"
 assert_contains "doctor: sees a split-config shim at all" "$out" "splitcyc"
+assert_contains "doctor: shows the split shim's own file path" "$out" \
+    "config: split file at $SPLIT_FILE"
 assert_contains "doctor: reports the split shim's cycle" "$out" \
     "resolves back to the shimback binary itself"
 
