@@ -17,7 +17,8 @@ assert_contains "doctor: reports no shims" "$out" "No shims configured."
 out="$("$SHIMBACK" doctor)"
 code=$?
 assert_eq "doctor: exit 0 for a healthy shim" "0" "$code"
-assert_contains "doctor: healthy shim reports ok symlink" "$out" "[ok]   symlink ->"
+assert_contains "doctor: healthy shim reports ok symlink" "$out" \
+    "[ok]   symlink $(shim_path mytool) ->"
 assert_contains "doctor: all checks passed" "$out" "all checks passed"
 
 # --- dead symlink: doctor fails and says so ---

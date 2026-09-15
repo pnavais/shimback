@@ -421,21 +421,28 @@ color automatically.
 
 `shimback list --full` (or `ls --full`) additionally prints whatever the
 table's columns leave out, as extra indented lines right under a shim's
-row: `source_args`/`fallback_args` (see `add`, above — independent of
-policy, so these can show up for any shim), then whatever's
-policy-specific — `error_patterns` for `heuristic`, the configured codes
-for `exit-code-match`, `route_args` and `strip_matched_args` for
-`route-args`, `source_route_args`/`fallback_route_args`/`strip_matched_args`
-for `split-args`, and each `<from> -> <to>` pair for `rewrite`. A shim with
-none of the above configured has nothing extra to show and gets no
-additional lines:
+row: the shim symlink's own path (always shown, for every shim -- an
+orphan's row gets this too, even though it has no other detail to show),
+its [split config file](#splitting-a-shims-config-into-its-own-file)'s
+path if it has one, `source_args`/`fallback_args` (see `add`, above —
+independent of policy, so these can show up for any shim), then
+whatever's policy-specific — `error_patterns` for `heuristic`, the
+configured codes for `exit-code-match`, `route_args` and
+`strip_matched_args` for `route-args`,
+`source_route_args`/`fallback_route_args`/`strip_matched_args` for
+`split-args`, and each `<from> -> <to>` pair for `rewrite`. A shim with
+none of the policy-specific extras configured still gets its symlink
+line, just nothing more:
 
 ```
 NAME   SOURCE     FALLBACK      POLICY           DIAGNOSTIC
 sed    auto       /usr/bin/sed  exit-code        false
+        symlink: /Users/you/.local/share/shimback/bin/sed
 awk    /opt/.../gawk   /usr/bin/awk  heuristic   true
+        symlink: /Users/you/.local/share/shimback/bin/awk
         error patterns: invalid option, illegal option
 ll     /bin/ls    /usr/local/bin/eza  exit-code  false
+        symlink: /Users/you/.local/share/shimback/bin/ll
         source args: -l, -t, -r, -a, -h
         fallback args: -la
 ```
