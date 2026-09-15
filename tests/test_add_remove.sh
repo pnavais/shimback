@@ -168,6 +168,34 @@ assert_contains "remove: config entry also survives a failed save" "$("$SHIMBACK
 
 "$SHIMBACK" remove rmordertool >/dev/null
 
+# --- remove must not claim success when the config entry is gone but its
+# symlink could not actually be removed (see review.md) -- unlike the
+# scenario above, here config_save succeeds (a different directory), only
+# the symlink's own removal fails, so the failure has to be caught and
+# reported separately rather than papered over by "it saved fine" ---
+"$SHIMBACK" add rmsymlinkfail -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+RMSYMLINKFAIL_LINK="$(shim_path rmsymlinkfail)"
+if [ ! -e "$RMSYMLINKFAIL_LINK" ]; then
+    fail "remove-symlink-failure setup: expected rmsymlinkfail's symlink to exist"
+fi
+
+SHIM_DIR="$(dirname "$RMSYMLINKFAIL_LINK")"
+chmod 0500 "$SHIM_DIR"
+out="$("$SHIMBACK" remove rmsymlinkfail 2>&1)"
+code=$?
+chmod 0700 "$SHIM_DIR"
+if [ "$code" -eq 0 ]; then
+    fail "remove: should fail (not silently succeed) when the symlink can't be removed"
+fi
+assert_not_contains "remove: no false 'removed' success message" "$out" "removed 'rmsymlinkfail'"
+assert_contains "remove: reports the partial removal" "$out" "partially removed"
+assert_contains "remove: config entry gone -- symlink is now an orphan, not configured" \
+    "$("$SHIMBACK" list)" "rmsymlinkfail  (orphaned symlink"
+if [ ! -e "$RMSYMLINKFAIL_LINK" ]; then
+    fail "remove: the un-removable symlink should still be there to match the failure reported"
+fi
+rm -f "$RMSYMLINKFAIL_LINK"
+
 # --- generated startup files and config.toml are never world-writable,
 # even under a permissive umask -- the mode is always set explicitly
 # rather than left to whatever fopen()+umask would have produced (see

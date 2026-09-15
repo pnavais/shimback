@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <wordexp.h>
 
 #include "../config.h"
 #include "../paths.h"
@@ -47,13 +48,37 @@ int cmd_edit(int argc, char **argv) {
     }
     if (pid == 0) {
         if (editor_env && editor_env[0] != '\0') {
-            /* Run through a shell so a multi-word $EDITOR (e.g. "code
-             * --wait") works: $EDITOR is deliberately left unquoted so the
-             * shell word-splits it into a command plus its own flags,
-             * while the config path ($1) stays quoted -- passed as a
-             * distinct argument, not interpolated into the script text, so
-             * it's safe regardless of what characters it contains. */
-            execl("/bin/sh", "sh", "-c", "exec $EDITOR \"$1\"", "sh", cfg_path, (char *)NULL);
+            /* wordexp() does the same word-splitting a shell would for a
+             * multi-word $EDITOR (e.g. "code --wait"), but with
+             * WRDE_NOCMD: command substitution ($(...), backticks) is
+             * refused outright rather than executed, and shell control
+             * operators (;, &&, |, >, ...) left unquoted are rejected as
+             * malformed input rather than being interpreted. Running
+             * $EDITOR through `sh -c` (the previous approach here) would
+             * instead hand any such content straight to the shell to
+             * execute, before the editor even opened -- fine for a
+             * trusted, self-chosen $EDITOR, but not something to do
+             * unconditionally with whatever the environment happens to
+             * contain (e.g. inherited across `sudo -E`, a CI job, or a
+             * container entrypoint). */
+            wordexp_t we;
+            int wrc = wordexp(editor_env, &we, WRDE_NOCMD);
+            if (wrc != 0 || we.we_wordc == 0) {
+                fprintf(stderr,
+                        "shimback: $EDITOR ('%s') doesn't look like a plain command%s -- "
+                        "refusing to run it\n",
+                        editor_env,
+                        wrc == WRDE_CMDSUB ? " (command substitution isn't allowed)" : "");
+                _exit(127);
+            }
+            size_t editor_argc = we.we_wordc;
+            char **editor_argv = xmalloc((editor_argc + 2) * sizeof(char *));
+            for (size_t i = 0; i < editor_argc; i++) {
+                editor_argv[i] = we.we_wordv[i];
+            }
+            editor_argv[editor_argc] = cfg_path;
+            editor_argv[editor_argc + 1] = NULL;
+            execvp(editor_argv[0], editor_argv);
             fprintf(stderr, "shimback: failed to run $EDITOR ('%s'): %s\n", editor_env,
                     strerror(errno));
             _exit(127);

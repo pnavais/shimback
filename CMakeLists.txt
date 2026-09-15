@@ -15,7 +15,13 @@ set(CMAKE_C_EXTENSIONS OFF)
 # warning: it's implicitly declared as returning int, silently truncating
 # the real pointer it returns on any 64-bit platform. POSIX.1-2008 covers
 # everything this project uses.
-add_compile_definitions(_POSIX_C_SOURCE=200809L)
+#
+# Explicitly defining _POSIX_C_SOURCE has the opposite effect on macOS's
+# own libc: it *restricts* visibility to strict POSIX, hiding Darwin/BSD
+# extensions (mkdtemp among them) that are normally exposed by default.
+# _DARWIN_C_SOURCE restores those on top of the same strict POSIX baseline
+# -- a no-op on Linux, where glibc doesn't look at it at all.
+add_compile_definitions(_POSIX_C_SOURCE=200809L _DARWIN_C_SOURCE)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
@@ -93,6 +99,13 @@ add_test(NAME test_uninstall
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_uninstall.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_add_wizard
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_add_wizard.sh $<TARGET_FILE:shimback>)
+# This is the one test that needs python3 (to drive the interactive wizard
+# through a real pseudo-terminal) -- not something the README lists as a
+# build/run prerequisite for shimback itself. Rather than fail the whole
+# suite on a python3-less machine, the script exits 77 (the conventional
+# "skipped" code) when it's missing, and ctest reports this test as
+# skipped, not failed, when it sees that same code back.
+set_tests_properties(test_add_wizard PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME test_list
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_list.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_edit

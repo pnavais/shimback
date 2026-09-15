@@ -5,11 +5,13 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "../config.h"
@@ -28,13 +30,87 @@
 
 static const char *USAGE = "usage: shimback uninstall [--prefix <dir>] [--full]\n";
 
-/* Removes every symlink directly inside `shim_dir` (dangling or not -- the
- * whole directory is exclusively shimback's, by convention, so nothing else
- * should ever be there) and then the directory itself, if left empty.
- * Returns the number of symlinks removed. If `removed_names` is non-NULL,
- * each removed symlink's own name (i.e. the shim name) is pushed onto it --
- * used by `--full` to know which shims to also sweep split-config files
- * for, including ones that only ever existed via a split file with no
+/* Runs `path --version` in a fork and checks its stdout starts with
+ * "shimback " -- a lightweight, no-persistent-state way to confirm a file
+ * is actually a shimback binary (any version/build of it, not just this
+ * exact one) before either deleting it (bin_dest, below -- built from
+ * user-controlled --prefix, which could point anywhere) or treating a
+ * shim's symlink target as legitimately ours (remove_shim_symlinks,
+ * below -- a shim can be created by a different shimback binary/build
+ * than whichever one happens to be running `uninstall`, e.g. after an
+ * upgrade; that's still ours, unlike a symlink to something else entirely
+ * hand-placed in this directory). Fails closed: anything unexpected
+ * (can't fork/exec, a non-zero exit, unrecognized output) is treated as
+ * "not verified", never as "verified" by default. */
+static bool looks_like_shimback_binary(const char *path) {
+    if (!is_executable_file(path)) {
+        return false;
+    }
+    int out_pipe[2];
+    if (pipe(out_pipe) != 0) {
+        return false;
+    }
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(out_pipe[0]);
+        close(out_pipe[1]);
+        return false;
+    }
+    if (pid == 0) {
+        close(out_pipe[0]);
+        dup2(out_pipe[1], STDOUT_FILENO);
+        close(out_pipe[1]);
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+        execl(path, path, "--version", (char *)NULL);
+        _exit(127);
+    }
+    close(out_pipe[1]);
+    char buf[64];
+    ssize_t n = read(out_pipe[0], buf, sizeof(buf) - 1);
+    close(out_pipe[0]);
+    int status;
+    bool waited_ok = xwaitpid(pid, &status) >= 0;
+    if (!waited_ok || n <= 0) {
+        return false;
+    }
+    buf[n] = '\0';
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0 && strncmp(buf, "shimback ", 9) == 0;
+}
+
+/* Same idea as looks_like_shimback_binary, but for the man page: no need
+ * to execute anything for this one -- shimback's own man page always
+ * starts with a recognizable ".TH SHIMBACK" troff header (see
+ * man/shimback.1), so a plain read is enough. */
+static bool looks_like_shimback_man_page(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        return false;
+    }
+    char buf[32] = {0};
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    (void)n;
+    return strncmp(buf, ".TH SHIMBACK", 12) == 0;
+}
+
+/* Removes every symlink directly inside `shim_dir` that's actually ours --
+ * dangling (its target no longer exists at all; by convention this
+ * directory is exclusively shimback's, so a dangling entry here is always
+ * a stale shim, not something else) or resolving to a real shimback
+ * binary (see looks_like_shimback_binary -- deliberately not narrowed to
+ * *this* running binary specifically, since a shim can predate an
+ * upgrade/reinstall) -- and leaves anything else alone (a live symlink
+ * resolving to something other than shimback, e.g. hand-placed by the
+ * user or another tool in this directory despite the convention). Then
+ * removes the directory itself, if left empty. Returns the number of
+ * symlinks actually removed. If `removed_names` is non-NULL, each removed
+ * symlink's own name (i.e. the shim name) is pushed onto it -- used by
+ * `--full` to know which shims to also sweep split-config files for,
+ * including ones that only ever existed via a split file with no
  * config.toml entry at all. */
 static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
     DIR *d = opendir(shim_dir);
@@ -50,24 +126,50 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
         char *entry_path = path_join(shim_dir, ent->d_name);
         struct stat lst;
         if (lstat(entry_path, &lst) == 0 && S_ISLNK(lst.st_mode)) {
-            if (unlink(entry_path) == 0) {
-                count++;
-                if (removed_names) {
-                    strvec_push(removed_names, xstrdup(ent->d_name));
+            char *resolved = canonicalize(entry_path);
+            bool dangling = resolved == NULL;
+            bool ours = resolved && looks_like_shimback_binary(resolved);
+            free(resolved);
+            if (dangling || ours) {
+                if (unlink(entry_path) == 0) {
+                    count++;
+                    if (removed_names) {
+                        strvec_push(removed_names, xstrdup(ent->d_name));
+                    }
+                } else {
+                    warn("uninstall: failed to remove %s: %s", entry_path, strerror(errno));
                 }
             } else {
-                warn("uninstall: failed to remove %s: %s", entry_path, strerror(errno));
+                warn("uninstall: leaving %s alone -- it doesn't resolve to the shimback binary",
+                     entry_path);
             }
         }
         free(entry_path);
     }
     closedir(d);
-    rmdir(shim_dir); /* best-effort: harmless failure if non-empty or already gone */
+    rmdir(shim_dir); /* best-effort: harmless failure if non-empty (e.g. a foreign symlink
+                       * deliberately left alone above) or already gone */
     return count;
 }
 
-static void remove_file_if_present(const char *path, const char *label) {
+typedef bool (*FileVerifier)(const char *path);
+
+/* Removes `path` if present -- and, when `verify` is given, only if it
+ * actually looks like something shimback itself would have put there.
+ * `--prefix` is user-controlled and can point anywhere, so `path` being
+ * exactly where shimback expects its own binary/man page to live is not
+ * by itself proof that's what's actually there (a typo'd --prefix, or one
+ * shared with another project that happens to use the same file name,
+ * would otherwise make this delete an unrelated file). `verify` is NULL
+ * for config.toml, whose path is never --prefix-derived. */
+static void remove_file_if_present(const char *path, const char *label, FileVerifier verify) {
     if (access(path, F_OK) != 0) {
+        return;
+    }
+    if (verify && !verify(path)) {
+        warn("uninstall: %s doesn't look like a shimback %s -- leaving it alone (check "
+             "--prefix)",
+             path, label);
         return;
     }
     if (unlink(path) == 0) {
@@ -79,7 +181,7 @@ static void remove_file_if_present(const char *path, const char *label) {
 
 static void remove_config(void) {
     char *cfg_path = config_file_path();
-    remove_file_if_present(cfg_path, "config");
+    remove_file_if_present(cfg_path, "config", NULL);
     char *cfg_dir = dir_of(cfg_path);
     rmdir(cfg_dir); /* best-effort */
     free(cfg_dir);
@@ -187,11 +289,11 @@ int cmd_uninstall(int argc, char **argv) {
     }
 
     char *bin_dest = path_join(path_join(prefix, "bin"), "shimback");
-    remove_file_if_present(bin_dest, "installed binary");
+    remove_file_if_present(bin_dest, "installed binary", looks_like_shimback_binary);
     free(bin_dest);
 
     char *man_dest = path_join(path_join(prefix, "share/man/man1"), "shimback.1");
-    remove_file_if_present(man_dest, "man page");
+    remove_file_if_present(man_dest, "man page", looks_like_shimback_man_page);
     free(man_dest);
 
     free(prefix);
