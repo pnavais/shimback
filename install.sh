@@ -53,6 +53,23 @@ need_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "'$1' is required but not found on \$PATH"
 }
 
+# Picks whichever checksum tool is available -- sha256sum (GNU coreutils,
+# most Linux) or shasum -a 256 (macOS/BSD, and often present on Linux too)
+# -- and dies if neither is, rather than silently skipping verification.
+pick_checksum_cmd() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        CHECKSUM_CMD="sha256sum"
+    elif command -v shasum >/dev/null 2>&1; then
+        CHECKSUM_CMD="shasum -a 256"
+    else
+        die "neither 'sha256sum' nor 'shasum' found on \$PATH -- required to verify the downloaded release before installing it"
+    fi
+}
+
+sha256_of() {
+    $CHECKSUM_CMD "$1" | awk '{print $1}'
+}
+
 detect_os() {
     case "$(uname -s)" in
         Darwin) echo "macos" ;;
@@ -74,6 +91,7 @@ main() {
 
     need_cmd curl
     need_cmd tar
+    pick_checksum_cmd
 
     os="$(detect_os)"
     arch="$(detect_arch)"
@@ -81,10 +99,12 @@ main() {
 
     version="${SHIMBACK_VERSION:-latest}"
     if [ "$version" = "latest" ]; then
-        url="https://github.com/$REPO/releases/latest/download/$asset"
+        base_url="https://github.com/$REPO/releases/latest/download"
     else
-        url="https://github.com/$REPO/releases/download/$version/$asset"
+        base_url="https://github.com/$REPO/releases/download/$version"
     fi
+    url="$base_url/$asset"
+    sums_url="$base_url/SHA256SUMS"
 
     tmpdir="$(mktemp -d)"
     trap 'rm -rf "$tmpdir"' EXIT INT TERM
@@ -92,6 +112,17 @@ main() {
     echo "Downloading $asset ($version)..."
     if ! curl -fsSL "$url" -o "$tmpdir/$asset"; then
         die "failed to download $url -- check that a '$version' release exists for $os/$arch"
+    fi
+
+    echo "Verifying checksum..."
+    if ! curl -fsSL "$sums_url" -o "$tmpdir/SHA256SUMS"; then
+        die "failed to download $sums_url -- refusing to install an unverified binary"
+    fi
+    expected="$(awk -v f="$asset" '$2 == f { print $1 }' "$tmpdir/SHA256SUMS")"
+    [ -n "$expected" ] || die "no checksum entry for $asset in SHA256SUMS -- refusing to install an unverified binary"
+    actual="$(sha256_of "$tmpdir/$asset")"
+    if [ "$actual" != "$expected" ]; then
+        die "checksum mismatch for $asset (expected $expected, got $actual) -- refusing to install a possibly corrupted or tampered download"
     fi
 
     tar -xzf "$tmpdir/$asset" -C "$tmpdir"

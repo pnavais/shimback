@@ -74,8 +74,10 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                        bool diagnostic, bool force, bool verbose, bool capture_timeout_set,
                        int capture_timeout_ms, bool capture_limit_set, size_t capture_limit_bytes,
                        bool split_config) {
-    if (name[0] == '\0' || strchr(name, '/') != NULL || strcmp(name, "shimback") == 0) {
-        die("add: invalid shim name '%s'", name);
+    if (!is_valid_shim_name(name)) {
+        die("add: invalid shim name '%s' -- names may only contain letters, digits, '.', '_', "
+            "'+', and '-'",
+            name);
     }
 
     char *self_exe = self_exe_path();
@@ -310,10 +312,25 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     if (!mkdir_p(shim_dir)) {
         die("add: failed to create shim directory %s", shim_dir);
     }
-    if (replacing_existing_symlink && unlink(symlink_path) != 0) {
-        die("add: failed to replace existing symlink %s: %s", symlink_path, strerror(errno));
-    }
-    if (symlink(self_exe, symlink_path) != 0) {
+    if (replacing_existing_symlink) {
+        /* Build the replacement at a temp name first and rename() it over
+         * the old one, rather than unlink-then-symlink: rename() is
+         * atomic, so this can only ever fully succeed (new symlink in
+         * place) or fail before ever touching the existing one (old
+         * symlink still intact) -- never the unlink-succeeded-but-
+         * symlink-failed gap in between that would otherwise leave the
+         * name pointing at nothing at all. */
+        size_t tmp_len = strlen(symlink_path) + 32;
+        char *tmp_link = xmalloc(tmp_len);
+        snprintf(tmp_link, tmp_len, "%s.tmp.%d", symlink_path, (int)getpid());
+        if (symlink(self_exe, tmp_link) != 0) {
+            die("add: failed to create replacement symlink %s: %s", tmp_link, strerror(errno));
+        }
+        if (rename(tmp_link, symlink_path) != 0) {
+            unlink(tmp_link);
+            die("add: failed to replace existing symlink %s: %s", symlink_path, strerror(errno));
+        }
+    } else if (symlink(self_exe, symlink_path) != 0) {
         die("add: failed to create symlink %s: %s", symlink_path, strerror(errno));
     }
 
@@ -474,8 +491,10 @@ int cmd_add(int argc, char **argv) {
      * way (not "missing", so never wizard-eligible) -- finish_add() also
      * re-checks this (harmless for this path, the actual check for a
      * wizard-supplied name). */
-    if (name && (name[0] == '\0' || strchr(name, '/') != NULL || strcmp(name, "shimback") == 0)) {
-        die("add: invalid shim name '%s'", name);
+    if (name && !is_valid_shim_name(name)) {
+        die("add: invalid shim name '%s' -- names may only contain letters, digits, '.', '_', "
+            "'+', and '-'",
+            name);
     }
 
     Policy policy;

@@ -140,4 +140,48 @@ if [ -f "$CFG" ]; then
     fail "uninstall --full (self): config file should be removed"
 fi
 
+# --- uninstall leaves alone a live symlink in the shim directory that
+# doesn't resolve to a real shimback binary (hand-placed by the user or
+# another tool, despite the shim directory being shimback's by convention)
+# -- it must not be silently deleted just for being a symlink in that
+# directory ---
+"$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+FOREIGN_TARGET="$SANDBOX/not-shimback.sh"
+printf '#!/bin/sh\necho not shimback\n' >"$FOREIGN_TARGET"
+chmod +x "$FOREIGN_TARGET"
+FOREIGN_LINK="$(shim_path foreigntool)"
+ln -s "$FOREIGN_TARGET" "$FOREIGN_LINK"
+
+out6="$("$SHIMBACK" uninstall --prefix "$PREFIX" 2>&1)"
+assert_contains "uninstall: warns about the foreign symlink" "$out6" \
+    "leaving $FOREIGN_LINK alone"
+if [ ! -L "$FOREIGN_LINK" ]; then
+    fail "uninstall: foreign symlink should NOT have been removed"
+fi
+if [ -e "$(shim_path mytool)" ]; then
+    fail "uninstall: shimback's own symlink should still have been removed"
+fi
+rm -f "$FOREIGN_LINK" "$FOREIGN_TARGET"
+
+# --- uninstall --prefix pointing at a location with an unrelated file
+# named "shimback" (e.g. a typo'd --prefix, or one shared with another
+# project) leaves it alone rather than deleting it outright ---
+FOREIGN_PREFIX="$SANDBOX/foreign-prefix"
+mkdir -p "$FOREIGN_PREFIX/bin" "$FOREIGN_PREFIX/share/man/man1"
+printf '#!/bin/sh\necho not shimback either\n' >"$FOREIGN_PREFIX/bin/shimback"
+chmod +x "$FOREIGN_PREFIX/bin/shimback"
+printf '.TH SOMETHING-ELSE 1\n' >"$FOREIGN_PREFIX/share/man/man1/shimback.1"
+
+out7="$("$SHIMBACK" uninstall --prefix "$FOREIGN_PREFIX" 2>&1)"
+assert_contains "uninstall: refuses to delete an unrelated bin/shimback" "$out7" \
+    "doesn't look like a shimback installed binary"
+assert_contains "uninstall: refuses to delete an unrelated man page" "$out7" \
+    "doesn't look like a shimback man page"
+if [ ! -f "$FOREIGN_PREFIX/bin/shimback" ]; then
+    fail "uninstall --prefix: unrelated binary should NOT have been removed"
+fi
+if [ ! -f "$FOREIGN_PREFIX/share/man/man1/shimback.1" ]; then
+    fail "uninstall --prefix: unrelated man page should NOT have been removed"
+fi
+
 finish

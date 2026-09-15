@@ -297,6 +297,17 @@ bool copy_file(const char *src, const char *dst) {
     return copy_file_mode(src, dst, 0644);
 }
 
+/* EEXIST from mkdir() only means "a filesystem entry already has this
+ * name" -- not "it's a directory". Without this check, a path component
+ * blocked by a regular file (or anything else non-directory) would be
+ * silently treated as already set up, and the real failure would only
+ * surface later, far from here, as a confusing ENOTDIR trying to create
+ * something *inside* what everyone assumed was a directory. */
+static bool path_is_dir(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
 bool mkdir_p(const char *dir) {
     char *copy = xstrdup(dir);
     size_t len = strlen(copy);
@@ -315,10 +326,22 @@ bool mkdir_p(const char *dir) {
                 free(copy);
                 return false;
             }
+            if (!path_is_dir(copy)) {
+                errno = ENOTDIR;
+                free(copy);
+                return false;
+            }
             *p = '/';
         }
     }
-    bool ok = mkdir(copy, 0755) == 0 || errno == EEXIST;
+    if (mkdir(copy, 0755) != 0 && errno != EEXIST) {
+        free(copy);
+        return false;
+    }
+    bool ok = path_is_dir(copy);
+    if (!ok) {
+        errno = ENOTDIR;
+    }
     free(copy);
     return ok;
 }

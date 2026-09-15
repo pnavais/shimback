@@ -125,18 +125,37 @@ int cmd_remove(int argc, char **argv) {
         die("remove: failed to save config: %s", errbuf);
     }
 
+    bool symlink_removed_ok = true;
     if (have_managed_symlink && unlink(symlink_path) != 0) {
         warn("failed to remove symlink %s: %s", symlink_path, strerror(errno));
+        symlink_removed_ok = false;
     }
 
     /* Sweeps every one of the three potential split-config locations (see
      * split_config_all_paths, paths.h), not just wherever it happened to
      * resolve from above -- a stray copy left in another location would
      * otherwise keep dispatch resolving this "removed" shim right back
-     * into existence. Best-effort, same as the symlink removal above. */
+     * into existence. Best-effort (a real failure is still visible via its
+     * own warn(), from remove_split_configs itself). */
     remove_split_configs(name);
 
     bool colorize = stdout_is_color();
+    if (!symlink_removed_ok) {
+        /* config_save above already succeeded, so the config entry really
+         * is gone -- only the filesystem half of "remove" didn't fully
+         * land. Say so plainly and exit non-zero rather than claiming
+         * success: a script trusting "removed" here would otherwise have
+         * no way to notice the symlink is still there, still dispatching,
+         * with no config behind it (see `doctor`, which would now report
+         * it as an orphan). */
+        fprintf(stderr,
+                "shimback: '%s' partially removed -- its config entry is gone, but its "
+                "symlink could not be removed (see the warning above); run `shimback doctor "
+                "fix` or remove it manually\n",
+                name);
+        return 1;
+    }
+
     printf("shimback: %sremoved '%s'%s\n", colorize ? ANSI_GREEN : "", name,
            colorize ? ANSI_RESET : "");
     return 0;

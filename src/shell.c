@@ -79,8 +79,23 @@ static char *read_file_or_empty(const char *path) {
     }
     char *buf = xmalloc((size_t)size + 1);
     size_t n = fread(buf, 1, (size_t)size, f);
-    buf[n] = '\0';
+    bool read_error = ferror(f) || n != (size_t)size;
     fclose(f);
+    if (read_error) {
+        /* A short read here (genuine I/O error, or the file changing size
+         * underneath us) must not be silently treated as "here's the
+         * whole file" -- every caller goes on to compute a modified
+         * version of this content and write it straight back over the
+         * user's actual shell startup file, so a truncated read here
+         * would risk truncating *that* file for real. Refusing to
+         * continue is the safe failure mode; nothing this project does is
+         * worth risking someone's .zshrc for. */
+        free(buf);
+        die("failed to read %s completely (got %zu of %ld bytes) -- refusing to risk "
+            "overwriting it with a truncated copy",
+            path, n, size);
+    }
+    buf[n] = '\0';
     return buf;
 }
 

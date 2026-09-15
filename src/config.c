@@ -387,7 +387,20 @@ static ConfigStatus read_file_into_buffer(FILE *f, const char *path, char **out,
     }
     char *contents = xmalloc((size_t)size + 1);
     size_t n = fread(contents, 1, (size_t)size, f);
+    bool read_error = ferror(f) || n != (size_t)size;
     fclose(f);
+    if (read_error) {
+        /* A short read here means either a genuine I/O error or the file
+         * changing size underneath us between the ftell() above and this
+         * fread() -- either way, treating whatever partial bytes came
+         * through as "the whole file" would let a subsequent save quietly
+         * rewrite the file down to just that truncated prefix, discarding
+         * every entry after it. Fail instead of guessing. */
+        free(contents);
+        snprintf(errbuf, errbuf_size, "cannot read %s: incomplete read (got %zu of %ld bytes)",
+                 path, n, size);
+        return CONFIG_ERR_IO;
+    }
     contents[n] = '\0';
     *out = contents;
     return CONFIG_OK;
@@ -1121,6 +1134,13 @@ size_t remove_split_configs(const char *name) {
     for (int i = 0; i < 3; i++) {
         if (unlink(paths[i]) == 0) {
             removed++;
+        } else if (errno != ENOENT) {
+            /* Not existing is the common case, not an error -- only most
+             * locations have anything in them at all. A real failure
+             * (permissions, read-only filesystem, ...) is worth surfacing
+             * even though callers here treat this as best-effort: it's
+             * the only place that finds out at all. */
+            warn("failed to remove split config %s: %s", paths[i], strerror(errno));
         }
         free(paths[i]);
     }

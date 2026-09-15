@@ -10,8 +10,16 @@ if [ -z "$SHIMBACK" ] || [ ! -x "$SHIMBACK" ]; then
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
-    echo "python3 is required to drive the interactive wizard test" 1>&2
-    exit 1
+    echo "python3 not found -- skipping the interactive wizard test (see README.md: only a" 1>&2
+    echo "C11 compiler and CMake are required to build/run shimback itself; python3 is only" 1>&2
+    echo "needed to exercise this one PTY-driven test)" 1>&2
+    # 77 is the conventional "skipped" exit code (Automake's test harness,
+    # and CMake's own SKIP_RETURN_CODE docs, both use it) -- CMakeLists.txt
+    # sets this test's SKIP_RETURN_CODE to match, so ctest reports it as
+    # skipped rather than failed. A plain `exit 1` here would otherwise
+    # make a from-source build on a machine without python3 impossible to
+    # pass, despite the README never listing it as a prerequisite.
+    exit 77
 fi
 
 TEST_DIR="$(cd "$(dirname "$0")" && pwd)"

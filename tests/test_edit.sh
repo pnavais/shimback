@@ -30,6 +30,33 @@ assert_contains "edit: multi-word \$EDITOR's flag reached the editor" "$(cat "$C
     "--some-flag"
 rm -f "$CFG"
 
+# --- $EDITOR is word-split (for multi-word editors like "code --wait"),
+# never handed to a shell to interpret -- shell metacharacters and command
+# substitution in it must be refused, not executed (see review.md) ---
+PWNED_MARKER="$SANDBOX/pwned"
+rm -f "$PWNED_MARKER"
+EDITOR="true; touch $PWNED_MARKER" "$SHIMBACK" edit >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "edit: a \$EDITOR containing a shell command separator should be refused"
+fi
+if [ -e "$PWNED_MARKER" ]; then
+    fail "edit: \$EDITOR's ';'-separated command must never actually run"
+fi
+assert_contains "edit: explains why the ';' \$EDITOR was refused" "$(cat "$SANDBOX/err")" \
+    "doesn't look like a plain command"
+
+EDITOR="\$(touch $PWNED_MARKER)" "$SHIMBACK" edit >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "edit: a \$EDITOR containing command substitution should be refused"
+fi
+if [ -e "$PWNED_MARKER" ]; then
+    fail "edit: \$EDITOR's command substitution must never actually run"
+fi
+assert_contains "edit: explains why command substitution was refused" "$(cat "$SANDBOX/err")" \
+    "command substitution isn't allowed"
+
 # --- unset/empty $EDITOR falls back to nvim/vim/vi/nano/pico, in that
 # order -- with fake "vim" and fake "nano" both on PATH, vim (earlier in
 # the order) wins ---

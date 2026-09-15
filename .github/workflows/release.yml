@@ -52,6 +52,35 @@ jobs:
           cp README.md LICENSE-MIT LICENSE-APACHE "$pkg_dir/"
           tar -czf "$pkg_dir.tar.gz" "$pkg_dir"
 
+      # Re-derives everything from the tarball itself, on the same runner
+      # (so same OS/arch the release actually ships), rather than trusting
+      # the in-tree build dir -- catches a wrong archive layout, missing
+      # man page, bad permissions, or a mismatch with what install.sh
+      # expects, before it ever reaches upload-artifact/the release.
+      - name: Smoke-test the packaged archive
+        run: |
+          set -eu
+          pkg_dir="shimback-${{ matrix.os_name }}-${{ matrix.arch }}"
+          smoke_dir="$(mktemp -d)"
+          tar -xzf "$pkg_dir.tar.gz" -C "$smoke_dir"
+          extracted="$smoke_dir/$pkg_dir"
+
+          [ -x "$extracted/shimback" ] || { echo "::error::missing or non-executable shimback binary in the packaged archive"; exit 1; }
+          [ -f "$extracted/shimback.1" ] || { echo "::error::missing man page in the packaged archive"; exit 1; }
+          [ -f "$extracted/README.md" ] || { echo "::error::missing README.md in the packaged archive"; exit 1; }
+
+          version_out="$("$extracted/shimback" --version)"
+          case "$version_out" in
+            shimback\ *) ;;
+            *) echo "::error::packaged binary's --version output looks wrong: $version_out"; exit 1 ;;
+          esac
+          echo "packaged binary reports: $version_out"
+
+          install_prefix="$(mktemp -d)"
+          "$extracted/shimback" install --prefix "$install_prefix" --shell zsh
+          [ -x "$install_prefix/bin/shimback" ] || { echo "::error::install did not place a binary at <prefix>/bin/shimback"; exit 1; }
+          [ -f "$install_prefix/share/man/man1/shimback.1" ] || { echo "::error::install did not place the man page"; exit 1; }
+
       - uses: actions/upload-artifact@v7
         with:
           name: shimback-${{ matrix.os_name }}-${{ matrix.arch }}

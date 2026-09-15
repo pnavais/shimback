@@ -176,7 +176,16 @@ static void run_inherited(const char *exe, char *const argv[], int *raw_status) 
         fprintf(stderr, "shimback: exec %s: %s\n", exe, strerror(errno));
         _exit(127);
     }
-    xwaitpid(pid, raw_status);
+    if (xwaitpid(pid, raw_status) < 0) {
+        /* waitpid() itself failing (not the child's own exit status --
+         * that's handled by the caller) means something is wrong with the
+         * process/signal environment (e.g. SIGCHLD set to SIG_IGN, so
+         * there's nothing left to wait for) and *raw_status was never
+         * written -- decoding it as if it were a real exit status would
+         * be reading uninitialized memory. There's no meaningful fallback
+         * decision to make without knowing how the child actually ended. */
+        die("waitpid failed: %s", strerror(errno));
+    }
 }
 
 /* Milliseconds elapsed since `start` (CLOCK_MONOTONIC, so immune to wall-
@@ -306,7 +315,11 @@ static void run_captured(const char *exe, char *const argv[], DynBuf *out, DynBu
 
     close(out_pipe[0]);
     close(err_pipe[0]);
-    xwaitpid(pid, raw_status);
+    if (xwaitpid(pid, raw_status) < 0) {
+        /* See run_inherited's identical check above for why this can't
+         * just fall through: *raw_status was never written. */
+        die("waitpid failed: %s", strerror(errno));
+    }
 }
 
 static void replay(DynBuf *out, DynBuf *err) {
@@ -363,7 +376,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
      * route-args -- no invisible trial run, no retry if it fails. */
     if (entry->policy == POLICY_REWRITE) {
         char **rewritten_argv = build_rewritten_argv(entry, shim_name, argc, argv);
-        int status;
+        int status = 0;
         run_inherited(resolved_source, rewritten_argv, &status);
         free(rewritten_argv);
         return decode_exit_code(status);
@@ -413,7 +426,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
             warn("'%s': routing arg matched; running fallback %s", shim_name, resolved_fallback);
         }
 
-        int status;
+        int status = 0;
         run_inherited(target, route_argv, &status);
         free(filtered);
         return decode_exit_code(status);
@@ -459,7 +472,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
                      shim_name, resolved_fallback);
             }
 
-            int status;
+            int status = 0;
             run_inherited(target, split_argv, &status);
             free(filtered);
             return decode_exit_code(status);
@@ -482,7 +495,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         warn("'%s': source and fallback resolve to the same binary with the same arguments; "
              "running it directly",
              shim_name);
-        int status;
+        int status = 0;
         run_inherited(resolved_source, source_argv, &status);
         return decode_exit_code(status);
     }
@@ -491,7 +504,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     DynBuf err;
     dynbuf_init(&out);
     dynbuf_init(&err);
-    int status;
+    int status = 0;
     int effective_timeout_ms =
         entry->capture_timeout_set ? entry->capture_timeout_ms : cfg.capture_timeout_ms;
     size_t effective_limit_bytes =
@@ -550,7 +563,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         if (entry->diagnostic) {
             warn("'%s' failed; falling back to %s", shim_name, resolved_fallback);
         }
-        int fb_status;
+        int fb_status = 0;
         run_inherited(resolved_fallback, fallback_argv, &fb_status);
         return decode_exit_code(fb_status);
     }

@@ -26,41 +26,49 @@ static const char *USAGE =
  * via a temp-file-plus-rename in `dest`'s own directory. Returns false on any
  * failure (curl missing/erroring, network down, non-2xx response with -f). */
 static bool download_via_curl(const char *curl, const char *url, const char *dest) {
-    char tmp[4160];
-    snprintf(tmp, sizeof(tmp), "%s.tmp.%d.XXXXXX", dest, (int)getpid());
-    /* Claim an exclusively-created, unguessable name ourselves first --
-     * curl's own `-o` just opens whatever path it's given, which would
-     * silently follow a symlink pre-planted at a purely pid-based name.
-     * curl still has to reopen this same path itself (there's no way to
-     * hand it an already-open fd via -o), so this narrows the window
-     * rather than closing it outright: an attacker would now need to
-     * unlink and replace this exact file in the instant between our
-     * mkstemp() and curl's own open(), not just guess a pid in advance. */
-    int fd = mkstemp(tmp);
-    if (fd < 0) {
+    char *dest_dir = dir_of(dest);
+    char tmpl[4160];
+    snprintf(tmpl, sizeof(tmpl), "%s/.shimback-install-tmp.XXXXXX", dest_dir);
+    free(dest_dir);
+
+    /* mkdtemp() creates this with mode 0700, owned by us -- curl's own `-o`
+     * just opens whatever path it's given (there's no way to hand it an
+     * already-open fd instead), so without this, an attacker with write
+     * access to dest's directory (plausible if --prefix points somewhere
+     * shared) could unlink and replace a bare temp *file* with a symlink
+     * in the gap between us creating it and curl reopening it, making curl
+     * follow the symlink and overwrite whatever it points at. Putting the
+     * temp file inside a directory only we can write into closes that
+     * window outright rather than just narrowing it: nothing else can
+     * touch the name curl is about to open, symlink or otherwise. */
+    char *tmpdir = mkdtemp(tmpl);
+    if (!tmpdir) {
         return false;
     }
-    close(fd);
+
+    char tmp_file[4224];
+    snprintf(tmp_file, sizeof(tmp_file), "%s/shimback", tmpdir);
 
     pid_t pid = fork();
     if (pid < 0) {
-        unlink(tmp);
+        rmdir(tmpdir);
         return false;
     }
     if (pid == 0) {
-        execl(curl, curl, "-fsSL", url, "-o", tmp, (char *)NULL);
+        execl(curl, curl, "-fsSL", url, "-o", tmp_file, (char *)NULL);
         _exit(127);
     }
-    int status;
-    xwaitpid(pid, &status);
-    bool ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    int status = 0;
+    bool ok = xwaitpid(pid, &status) >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
     if (ok) {
-        chmod(tmp, 0644);
-        if (rename(tmp, dest) == 0) {
+        chmod(tmp_file, 0644);
+        if (rename(tmp_file, dest) == 0) {
+            rmdir(tmpdir);
             return true;
         }
     }
-    unlink(tmp);
+    unlink(tmp_file);
+    rmdir(tmpdir);
     return false;
 }
 
