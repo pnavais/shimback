@@ -154,6 +154,8 @@ int cmd_list(int argc, char **argv) {
         return 0;
     }
 
+    char *shim_dir = shim_bin_dir();
+
     /* Resolved once up front (not per pass) since a split entry is a
      * freshly heap-loaded ShimEntry -- loading it twice (once to measure
      * column widths, again to print) would be wasted work for no reason. */
@@ -201,8 +203,14 @@ int cmd_list(int argc, char **argv) {
     printf("\n");
 
     for (size_t i = 0; i < name_count; i++) {
+        char *symlink_path = path_join(shim_dir, names[i]);
+
         if (sources[i] == SHIM_SOURCE_ORPHAN) {
             print_orphan_row(names[i], name_w, colorize);
+            if (full) {
+                print_detail_line(colorize, "symlink", symlink_path);
+            }
+            free(symlink_path);
             continue;
         }
         ShimEntry *e = entries[i];
@@ -223,13 +231,16 @@ int cmd_list(int argc, char **argv) {
         printf("\n");
 
         if (full) {
+            print_detail_line(colorize, "symlink", symlink_path);
             if (sources[i] == SHIM_SOURCE_SPLIT) {
                 print_detail_line(colorize, "config", split_paths[i]);
             }
             print_full_details(e, colorize);
         }
+        free(symlink_path);
     }
 
+    free(shim_dir);
     for (size_t i = 0; i < name_count; i++) {
         if (sources[i] == SHIM_SOURCE_SPLIT) {
             shim_entry_free(entries[i]);

@@ -39,13 +39,17 @@ assert_contains "list --full: source_args shown for a plain exit-code shim" "$fu
 assert_contains "list --full: fallback_args shown for a plain exit-code shim" "$full" \
     "fallback args: -la"
 
-# --- list --full: a shim with nothing configured beyond the basics (sed)
-# gets no extra lines at all -- every detail line is indented 8 spaces, and
-# the only shims with anything to show are htool (1 line), xtool (1),
-# rtool (2), rwtool (1), and atool (2) = 7 total, so if sed contributed
-# one too this count would be 8. ---
+# --- list --full: every shim always contributes its own "symlink:" line
+# (6 shims: sed, htool, xtool, rtool, rwtool, atool = 6), plus whatever
+# policy-specific detail it has beyond that -- htool (1), xtool (1),
+# rtool (2), rwtool (1), and atool (2) = 7 -- for 13 total. sed itself
+# has nothing configured beyond the basics, so it contributes only its
+# one "symlink:" line and nothing else. ---
 detail_line_count="$(printf '%s\n' "$full" | grep -c '^        ')"
-assert_eq "list --full: a bare shim contributes no detail lines" "7" "$detail_line_count"
+assert_eq "list --full: symlink line for every shim, plus policy-specific extras" \
+    "13" "$detail_line_count"
+assert_contains "list --full: sed shows its own symlink line" "$full" \
+    "symlink: $(shim_path sed)"
 
 # --- ls --full is the same alias as list --full ---
 assert_eq "ls --full is an alias for list --full" "$full" "$("$SHIMBACK" ls --full)"
@@ -66,6 +70,8 @@ assert_contains "list: shows a split-config shim in the compact table" "$out" "s
 full="$("$SHIMBACK" list --full)"
 assert_contains "list --full: shows the split-config shim's own file path" "$full" \
     "config: $(dirname "$(config_file)")/splittool-config.toml"
+assert_contains "list --full: shows the split-config shim's symlink path too" "$full" \
+    "symlink: $(shim_path splittool)"
 
 # --- list surfaces a real shim symlink with no configuration anywhere
 # (its config.toml entry removed by hand, leaving the symlink behind) as
@@ -82,6 +88,9 @@ out="$("$SHIMBACK" list)"
 assert_contains "list: surfaces an orphaned symlink" "$out" "orphantool"
 assert_contains "list: explains why it's orphaned" "$out" \
     "orphaned symlink -- no config.toml entry or split config file found"
+full="$("$SHIMBACK" list --full)"
+assert_contains "list --full: shows an orphan's own symlink path too" "$full" \
+    "symlink: $(shim_path orphantool)"
 
 "$SHIMBACK" remove -y splittool >/dev/null
 "$SHIMBACK" doctor fix -y >/dev/null

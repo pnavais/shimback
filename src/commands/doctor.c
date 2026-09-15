@@ -109,7 +109,8 @@ static void fix_symlink_if_needed(const char *shim_dir, const char *name, const 
         unlink(link_path); /* drop the dangling symlink before recreating it */
     }
     if (symlink(self_exe, link_path) == 0) {
-        report_fixed("recreated %s symlink -> %s", missing ? "missing" : "dangling", self_exe);
+        report_fixed("recreated %s symlink %s -> %s", missing ? "missing" : "dangling", link_path,
+                     self_exe);
     } else {
         warn("doctor fix: failed to recreate symlink for '%s': %s", name, strerror(errno));
     }
@@ -274,7 +275,7 @@ static void check_symlink(int *issues, const char *shim_dir, const char *name) {
         report_fail(issues, "symlink %s -> %s, which is not executable", link_path,
                      target ? target : "?");
     } else {
-        report_ok("symlink -> %s", target);
+        report_ok("symlink %s -> %s", link_path, target);
     }
     free(target);
     free(link_path);
