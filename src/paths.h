@@ -26,6 +26,32 @@ char *config_file_path(void);
  * and what gets prepended to PATH. */
 char *shim_bin_dir(void);
 
+/* "<name>-config.toml" -- the filename (not a path) a shim's split config
+ * file must have, at whichever of the three split_config_all_paths
+ * locations it lives in. Newly allocated. */
+char *split_config_filename(const char *name);
+
+/* Fills paths[0..2] with the three locations, newly allocated and in
+ * resolve_split_config_path's priority order, where a "<name>-config.toml"
+ * split config file for shim `name` may live: the shim's own symlink
+ * directory (shim_bin_dir()), the real shimback binary's own directory
+ * (dir_of(self_exe_path())), and the shimback config directory
+ * (dir_of(config_file_path())). Does not check whether any of them
+ * actually exist -- for callers (remove, uninstall --full, add's
+ * non-split cleanup) that need to sweep every potential location rather
+ * than just resolve the one that currently wins. */
+void split_config_all_paths(const char *name, char *paths[3]);
+
+/* Searches split_config_all_paths's three locations, in order, for an
+ * existing "<name>-config.toml" and returns the first one found (newly
+ * allocated), or NULL if none exist. The order is deliberately
+ * most-specific-first: a copy living right next to the shim's own symlink
+ * wins over one next to the shimback binary, which in turn wins over the
+ * one in the shared config directory (where `add --split-config` always
+ * writes it initially) -- so moving a copy to a more specific location is
+ * how you override, without having to touch or delete the original. */
+char *resolve_split_config_path(const char *name);
+
 /* realpath(3) wrapper. Returns NULL if the path doesn't exist / can't be
  * resolved (errno is left as set by realpath). */
 char *canonicalize(const char *path);

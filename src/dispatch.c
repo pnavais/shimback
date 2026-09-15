@@ -326,6 +326,27 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     }
 
     ShimEntry *entry = config_find(&cfg, shim_name);
+
+    /* A <name>-config.toml split file, if present in any of its three
+     * potential locations, fully overrides any config.toml entry for this
+     * shim -- see resolve_split_config_path (paths.h) and config_load_split
+     * (config.h). */
+    ShimEntry split_entry;
+    memset(&split_entry, 0, sizeof(split_entry));
+    char *split_path = resolve_split_config_path(shim_name);
+    if (split_path) {
+        split_entry.name = xstrdup(shim_name);
+        split_entry.policy = POLICY_EXIT_CODE;
+        char split_errbuf[256];
+        ConfigStatus split_st =
+            config_load_split(split_path, &split_entry, split_errbuf, sizeof(split_errbuf));
+        free(split_path);
+        if (split_st != CONFIG_OK) {
+            die("failed to load split config for '%s': %s", shim_name, split_errbuf);
+        }
+        entry = &split_entry;
+    }
+
     if (!entry) {
         fprintf(stderr, "shimback: no shim configured for '%s'\n", shim_name);
         return 127;

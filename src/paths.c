@@ -85,6 +85,49 @@ char *shim_bin_dir(void) {
     return result;
 }
 
+char *split_config_filename(const char *name) {
+    size_t total = strlen(name) + strlen("-config.toml") + 1;
+    char *result = xmalloc(total);
+    snprintf(result, total, "%s-config.toml", name);
+    return result;
+}
+
+void split_config_all_paths(const char *name, char *paths[3]) {
+    char *filename = split_config_filename(name);
+
+    char *shim_dir = shim_bin_dir();
+    paths[0] = path_join(shim_dir, filename);
+    free(shim_dir);
+
+    char *self_exe = self_exe_path();
+    char *bin_dir = dir_of(self_exe);
+    paths[1] = path_join(bin_dir, filename);
+    free(self_exe);
+    free(bin_dir);
+
+    char *cfg_path = config_file_path();
+    char *cfg_dir = dir_of(cfg_path);
+    paths[2] = path_join(cfg_dir, filename);
+    free(cfg_path);
+    free(cfg_dir);
+
+    free(filename);
+}
+
+char *resolve_split_config_path(const char *name) {
+    char *paths[3];
+    split_config_all_paths(name, paths);
+    char *found = NULL;
+    for (int i = 0; i < 3; i++) {
+        if (!found && access(paths[i], F_OK) == 0) {
+            found = paths[i];
+        } else {
+            free(paths[i]);
+        }
+    }
+    return found;
+}
+
 char *canonicalize(const char *path) {
     /* realpath(path, NULL) is a POSIX.1-2008 extension that mallocs the
      * result buffer itself; supported on both macOS and Linux libc. */

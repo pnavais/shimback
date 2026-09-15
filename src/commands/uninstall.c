@@ -31,8 +31,12 @@ static const char *USAGE = "usage: shimback uninstall [--prefix <dir>] [--full]\
 /* Removes every symlink directly inside `shim_dir` (dangling or not -- the
  * whole directory is exclusively shimback's, by convention, so nothing else
  * should ever be there) and then the directory itself, if left empty.
- * Returns the number of symlinks removed. */
-static int remove_shim_symlinks(const char *shim_dir) {
+ * Returns the number of symlinks removed. If `removed_names` is non-NULL,
+ * each removed symlink's own name (i.e. the shim name) is pushed onto it --
+ * used by `--full` to know which shims to also sweep split-config files
+ * for, including ones that only ever existed via a split file with no
+ * config.toml entry at all. */
+static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
     DIR *d = opendir(shim_dir);
     if (!d) {
         return 0;
@@ -48,6 +52,9 @@ static int remove_shim_symlinks(const char *shim_dir) {
         if (lstat(entry_path, &lst) == 0 && S_ISLNK(lst.st_mode)) {
             if (unlink(entry_path) == 0) {
                 count++;
+                if (removed_names) {
+                    strvec_push(removed_names, xstrdup(ent->d_name));
+                }
             } else {
                 warn("uninstall: failed to remove %s: %s", entry_path, strerror(errno));
             }
@@ -128,7 +135,9 @@ int cmd_uninstall(int argc, char **argv) {
     }
 
     char *shim_dir = shim_bin_dir();
-    int removed = remove_shim_symlinks(shim_dir);
+    StrVec removed_shim_names;
+    strvec_init(&removed_shim_names);
+    int removed = remove_shim_symlinks(shim_dir, &removed_shim_names);
     if (removed > 0) {
         printf("shimback: removed %d shim symlink(s) from %s\n", removed, shim_dir);
     }
@@ -143,10 +152,36 @@ int cmd_uninstall(int argc, char **argv) {
     free(man_dest);
 
     if (full) {
+        /* Split-config files (see paths.h's split_config_all_paths) are
+         * just another storage form of the same shim data config.toml
+         * holds -- --full clearing "the config" needs to sweep them too,
+         * for every shim name we know of: both ones with a config.toml
+         * entry, and ones that only ever existed via a split file (whose
+         * symlink -- and so name -- we still just saw above, even though
+         * they'd have no entry in cfg at all). Read before remove_config()
+         * deletes config.toml out from under it. */
+        char *cfg_path_for_sweep = config_file_path();
+        Config cfg_for_sweep;
+        char sweep_errbuf[256];
+        ConfigStatus sweep_cst =
+            config_load(cfg_path_for_sweep, &cfg_for_sweep, sweep_errbuf, sizeof(sweep_errbuf));
+        if (sweep_cst == CONFIG_OK) {
+            for (size_t i = 0; i < removed_shim_names.count; i++) {
+                remove_split_configs(removed_shim_names.items[i]);
+            }
+            for (size_t i = 0; i < cfg_for_sweep.count; i++) {
+                remove_split_configs(cfg_for_sweep.shims[i].name);
+            }
+        } else {
+            warn("uninstall: could not parse existing config to sweep split-config files: %s",
+                 sweep_errbuf);
+        }
+        free(cfg_path_for_sweep);
+
         remove_config();
         remove_path_blocks();
-        printf("shimback: --full also cleared the config file and PATH blocks in shell startup "
-               "files\n");
+        printf("shimback: --full also cleared the config file, any split <name>-config.toml "
+               "files, and PATH blocks in shell startup files\n");
     }
 
     free(prefix);

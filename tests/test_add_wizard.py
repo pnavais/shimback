@@ -158,6 +158,7 @@ try:
     sb.send(b"/bin/cat" + ENTER)  # fallback
     sb.send(ENTER)          # fallback args: none
     sb.send(ENTER, 0.5)     # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("1a exit code", 0, code)
     cfg = sb.config_text()
@@ -184,6 +185,7 @@ try:
     sb.send(ENTER)                # finish list
     sb.send(b"y" + ENTER)         # strip-matched-args: yes
     sb.send(ENTER, 0.5)           # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("1b exit code", 0, code)
     cfg = sb.config_text()
@@ -206,6 +208,7 @@ try:
     sb.send(b"/bin/cat" + ENTER)
     sb.send(ENTER)       # fallback args: none
     sb.send(ENTER, 0.5)  # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("2 exit code", 0, code)
     cfg = sb.config_text()
@@ -234,6 +237,7 @@ try:
     sb.send(ENTER)                  # re-accept fallback unchanged -> advances into fallback_args
     sb.send(ENTER)                  # re-accept fallback_args unchanged (still empty) -> diagnostic
     sb.send(ENTER, 0.5)             # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("3 exit code", 0, code)
     cfg = sb.config_text()
@@ -263,6 +267,7 @@ try:
     sb.send(b"invalid option" + ENTER)  # pattern
     sb.send(ENTER)                  # finish list
     sb.send(ENTER, 0.5)             # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("4 exit code", 0, code)
     cfg = sb.config_text()
@@ -312,6 +317,7 @@ try:
     sb.send(b"/bin/cat" + ENTER)  # fallback
     sb.send(ENTER)                # fallback args: none
     sb.send(ENTER, 0.5)           # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("7 exit code", 0, code)
     cfg = sb.config_text()
@@ -335,6 +341,7 @@ try:
     sb.send(b"invalid option" + ENTER)  # add one item
     sb.send(ENTER)                       # now blank-finish is allowed
     sb.send(ENTER, 0.5)                  # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("8 exit code", 0, code)
     cfg = sb.config_text()
@@ -361,6 +368,7 @@ try:
     assert_contains("9: revisited page pre-fills the prior \"yes\"", out, "> y")
     sb.send(ENTER)                # re-confirm unchanged -> forward to diagnostic
     sb.send(ENTER, 0.5)           # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("9 exit code", 0, code)
     cfg = sb.config_text()
@@ -387,6 +395,7 @@ try:
     sb.send(b"-A" + ENTER)         # fallback arg 1
     sb.send(ENTER)                 # finish fallback args list
     sb.send(ENTER, 0.5)            # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("10 exit code", 0, code)
     cfg = sb.config_text()
@@ -413,6 +422,7 @@ try:
     sb.send(b"all=ls" + ENTER)    # rewrite rule
     sb.send(ENTER)                # finish list
     sb.send(ENTER, 0.5)           # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("11 exit code", 0, code)
     cfg = sb.config_text()
@@ -442,6 +452,7 @@ try:
     sb.send(b"-y" + ENTER)         # add a differentiating fallback arg
     sb.send(ENTER)                 # now blank-finish is allowed
     sb.send(ENTER, 0.5)            # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("12 exit code", 0, code)
     cfg = sb.config_text()
@@ -478,6 +489,7 @@ try:
     sb.send(ENTER)                 # finish fallback route args list
     sb.send(b"y" + ENTER)          # strip-matched-args: yes
     sb.send(ENTER, 0.5)            # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
     code = sb.wait()
     assert_eq("13 exit code", 0, code)
     cfg = sb.config_text()

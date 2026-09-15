@@ -154,6 +154,29 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
  * directories as needed. */
 ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size_t errbuf_size);
 
+/* Parses a "split config" file: the same per-shim keys a [shims.<name>]
+ * table in config.toml would have, but as bare `key = value` lines with no
+ * section header at all (the filename itself, "<name>-config.toml", is
+ * what supplies the name -- see split_config_all_paths in paths.h).
+ * `entry` must already have its name and policy set (as config_upsert
+ * would); a section header ('[' as the first non-blank character of a
+ * line) is a parse error, unlike in config.toml. Same validation as
+ * config_load applies once parsing finishes (a missing required fallback,
+ * a policy missing the fields it needs, ...). */
+ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf, size_t errbuf_size);
+
+/* Writes just `entry`'s fields (no name, no [shims.<name>] header) to
+ * `path` as bare key = value lines, atomically, creating parent
+ * directories as needed -- the counterpart to config_load_split. */
+ConfigStatus config_save_split(const ShimEntry *entry, const char *path, char *errbuf,
+                                size_t errbuf_size);
+
+/* Deletes any "<name>-config.toml" split file found in any of the three
+ * potential locations (see split_config_all_paths in paths.h).
+ * Best-effort: a location where nothing exists is silently skipped, not
+ * treated as an error. Returns the number of files actually removed. */
+size_t remove_split_configs(const char *name);
+
 /* Read-only lookup; NULL if not found. Only valid to call when no further
  * config_upsert calls are pending (the returned pointer can be invalidated
  * by a later upsert that grows the backing array). */

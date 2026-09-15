@@ -367,18 +367,13 @@ static bool parse_int_array(const char **cursor, int **out, size_t *out_count) {
     return true;
 }
 
-ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t errbuf_size) {
-    config_init(cfg);
-
-    FILE *f = fopen(path, "rb");
-    if (!f) {
-        if (errno == ENOENT) {
-            return CONFIG_OK; /* no config yet is not an error */
-        }
-        snprintf(errbuf, errbuf_size, "cannot open %s: %s", path, strerror(errno));
-        return CONFIG_ERR_IO;
-    }
-
+/* Reads the whole (already-opened) `f` into a newly allocated, NUL-terminated
+ * buffer, closing it either way. Shared by config_load and
+ * config_load_split, whose only difference is how a missing file is
+ * handled (empty-but-valid vs. an error) -- both, so, do their own fopen()
+ * and ENOENT-handling before calling this. */
+static ConfigStatus read_file_into_buffer(FILE *f, const char *path, char **out, char *errbuf,
+                                           size_t errbuf_size) {
     if (fseek(f, 0, SEEK_END) != 0) {
         fclose(f);
         snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, strerror(errno));
@@ -394,6 +389,292 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
     size_t n = fread(contents, 1, (size_t)size, f);
     fclose(f);
     contents[n] = '\0';
+    *out = contents;
+    return CONFIG_OK;
+}
+
+/* Parses one already-split `key`/`value_str` pair (value_str still raw,
+ * untrimmed-of-quotes TOML syntax) into `entry`. Shared by config_load's
+ * per-[shims.x]-line handling and config_load_split (a split file's every
+ * line is one of these, with no section header involved) so the two can
+ * never drift apart on what a shim's fields mean. */
+static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, char *value_str,
+                                            int line_no, char *errbuf, size_t errbuf_size) {
+    const char *cursor = value_str;
+
+    if (strcmp(key, "source") == 0) {
+        char *v = parse_quoted_string(&cursor);
+        if (!v) {
+            snprintf(errbuf, errbuf_size, "line %d: expected a string for 'source'", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        free(entry->source);
+        entry->source = v;
+    } else if (strcmp(key, "fallback") == 0) {
+        char *v = parse_quoted_string(&cursor);
+        if (!v) {
+            snprintf(errbuf, errbuf_size, "line %d: expected a string for 'fallback'", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        free(entry->fallback);
+        entry->fallback = v;
+    } else if (strcmp(key, "source_args") == 0) {
+        StrVec vec;
+        strvec_init(&vec);
+        if (!parse_string_array(&cursor, &vec)) {
+            strvec_free(&vec);
+            snprintf(errbuf, errbuf_size, "line %d: malformed 'source_args' array", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        for (size_t i = 0; i < entry->source_arg_count; i++) {
+            free(entry->source_args[i]);
+        }
+        free(entry->source_args);
+        entry->source_args = vec.items;
+        entry->source_arg_count = vec.count;
+    } else if (strcmp(key, "fallback_args") == 0) {
+        StrVec vec;
+        strvec_init(&vec);
+        if (!parse_string_array(&cursor, &vec)) {
+            strvec_free(&vec);
+            snprintf(errbuf, errbuf_size, "line %d: malformed 'fallback_args' array", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        for (size_t i = 0; i < entry->fallback_arg_count; i++) {
+            free(entry->fallback_args[i]);
+        }
+        free(entry->fallback_args);
+        entry->fallback_args = vec.items;
+        entry->fallback_arg_count = vec.count;
+    } else if (strcmp(key, "policy") == 0) {
+        char *v = parse_quoted_string(&cursor);
+        if (!v || !policy_from_string(v, &entry->policy)) {
+            snprintf(errbuf, errbuf_size,
+                     "line %d: 'policy' must be \"exit-code\", \"heuristic\", "
+                     "\"exit-code-match\", \"route-args\", or \"rewrite\"",
+                     line_no);
+            free(v);
+            return CONFIG_ERR_PARSE;
+        }
+        free(v);
+    } else if (strcmp(key, "exit_codes") == 0) {
+        int *items = NULL;
+        size_t count = 0;
+        if (!parse_int_array(&cursor, &items, &count)) {
+            snprintf(errbuf, errbuf_size, "line %d: malformed 'exit_codes' array (values "
+                                           "must be integers 0-255)",
+                     line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        free(entry->exit_codes);
+        entry->exit_codes = items;
+        entry->exit_code_count = count;
+    } else if (strcmp(key, "error_patterns") == 0) {
+        StrVec vec;
+        strvec_init(&vec);
+        if (!parse_string_array(&cursor, &vec)) {
+            strvec_free(&vec);
+            snprintf(errbuf, errbuf_size, "line %d: malformed 'error_patterns' array", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        for (size_t i = 0; i < entry->error_pattern_count; i++) {
+            free(entry->error_patterns[i]);
+        }
+        free(entry->error_patterns);
+        entry->error_patterns = vec.items;
+        entry->error_pattern_count = vec.count;
+    } else if (strcmp(key, "route_args") == 0) {
+        StrVec vec;
+        strvec_init(&vec);
+        if (!parse_string_array(&cursor, &vec)) {
+            strvec_free(&vec);
+            snprintf(errbuf, errbuf_size, "line %d: malformed 'route_args' array", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        for (size_t i = 0; i < entry->route_arg_count; i++) {
+            free(entry->route_args[i]);
+        }
+        free(entry->route_args);
+        entry->route_args = vec.items;
+        entry->route_arg_count = vec.count;
+    } else if (strcmp(key, "source_route_args") == 0) {
+        StrVec vec;
+        strvec_init(&vec);
+        if (!parse_string_array(&cursor, &vec)) {
+            strvec_free(&vec);
+            snprintf(errbuf, errbuf_size, "line %d: malformed 'source_route_args' array",
+                     line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        for (size_t i = 0; i < entry->source_route_arg_count; i++) {
+            free(entry->source_route_args[i]);
+        }
+        free(entry->source_route_args);
+        entry->source_route_args = vec.items;
+        entry->source_route_arg_count = vec.count;
+    } else if (strcmp(key, "fallback_route_args") == 0) {
+        StrVec vec;
+        strvec_init(&vec);
+        if (!parse_string_array(&cursor, &vec)) {
+            strvec_free(&vec);
+            snprintf(errbuf, errbuf_size, "line %d: malformed 'fallback_route_args' array",
+                     line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        for (size_t i = 0; i < entry->fallback_route_arg_count; i++) {
+            free(entry->fallback_route_args[i]);
+        }
+        free(entry->fallback_route_args);
+        entry->fallback_route_args = vec.items;
+        entry->fallback_route_arg_count = vec.count;
+    } else if (strcmp(key, "diagnostic") == 0) {
+        if (strcmp(value_str, "true") == 0) {
+            entry->diagnostic = true;
+        } else if (strcmp(value_str, "false") == 0) {
+            entry->diagnostic = false;
+        } else {
+            snprintf(errbuf, errbuf_size, "line %d: 'diagnostic' must be true or false", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+    } else if (strcmp(key, "force") == 0) {
+        if (strcmp(value_str, "true") == 0) {
+            entry->force = true;
+        } else if (strcmp(value_str, "false") == 0) {
+            entry->force = false;
+        } else {
+            snprintf(errbuf, errbuf_size, "line %d: 'force' must be true or false", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+    } else if (strcmp(key, "capture_timeout_ms") == 0) {
+        if (!parse_nonneg_int(value_str, &entry->capture_timeout_ms)) {
+            snprintf(errbuf, errbuf_size,
+                     "line %d: 'capture_timeout_ms' must be a non-negative integer", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        entry->capture_timeout_set = true;
+    } else if (strcmp(key, "capture_limit") == 0) {
+        char *v = parse_quoted_string(&cursor);
+        size_t bytes;
+        if (!v || !parse_size_bytes(v, &bytes)) {
+            snprintf(errbuf, errbuf_size,
+                     "line %d: 'capture_limit' must be a quoted size like \"8MiB\" or "
+                     "\"8388608\"",
+                     line_no);
+            free(v);
+            return CONFIG_ERR_PARSE;
+        }
+        free(v);
+        entry->capture_limit_bytes = bytes;
+        entry->capture_limit_set = true;
+    } else if (strcmp(key, "rewrite_from") == 0) {
+        StrVec vec;
+        strvec_init(&vec);
+        if (!parse_string_array(&cursor, &vec)) {
+            strvec_free(&vec);
+            snprintf(errbuf, errbuf_size, "line %d: malformed 'rewrite_from' array", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        for (size_t i = 0; i < entry->rewrite_from_count; i++) {
+            free(entry->rewrite_from[i]);
+        }
+        free(entry->rewrite_from);
+        entry->rewrite_from = vec.items;
+        entry->rewrite_from_count = vec.count;
+    } else if (strcmp(key, "rewrite_to") == 0) {
+        StrVec vec;
+        strvec_init(&vec);
+        if (!parse_string_array(&cursor, &vec)) {
+            strvec_free(&vec);
+            snprintf(errbuf, errbuf_size, "line %d: malformed 'rewrite_to' array", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        for (size_t i = 0; i < entry->rewrite_to_count; i++) {
+            free(entry->rewrite_to[i]);
+        }
+        free(entry->rewrite_to);
+        entry->rewrite_to = vec.items;
+        entry->rewrite_to_count = vec.count;
+    } else if (strcmp(key, "strip_matched_args") == 0) {
+        if (strcmp(value_str, "true") == 0) {
+            entry->strip_matched_args = true;
+        } else if (strcmp(value_str, "false") == 0) {
+            entry->strip_matched_args = false;
+        } else {
+            snprintf(errbuf, errbuf_size,
+                     "line %d: 'strip_matched_args' must be true or false", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+    } else {
+        warn("config: line %d: unknown key '%s' for shim '%s', ignoring", line_no, key,
+             entry->name);
+    }
+    return CONFIG_OK;
+}
+
+/* Per-entry validation shared by config_load (once for every shim, after
+ * the whole file parses) and config_load_split (immediately, since a
+ * split file only ever describes the one shim it's named after). */
+static ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf,
+                                         size_t errbuf_size) {
+    if (!entry->fallback && entry->policy != POLICY_REWRITE) {
+        snprintf(errbuf, errbuf_size, "shim '%s' is missing a required 'fallback'", entry->name);
+        return CONFIG_ERR_VALIDATION;
+    }
+    if (entry->rewrite_from_count != entry->rewrite_to_count) {
+        snprintf(errbuf, errbuf_size,
+                 "shim '%s' has %zu 'rewrite_from' entries but %zu 'rewrite_to' entries -- "
+                 "they must match up one-to-one",
+                 entry->name, entry->rewrite_from_count, entry->rewrite_to_count);
+        return CONFIG_ERR_VALIDATION;
+    }
+    if (entry->policy == POLICY_HEURISTIC && entry->error_pattern_count == 0) {
+        snprintf(errbuf, errbuf_size,
+                 "shim '%s' uses policy \"heuristic\" but has no error_patterns", entry->name);
+        return CONFIG_ERR_VALIDATION;
+    }
+    if (entry->policy == POLICY_EXIT_CODE_MATCH && entry->exit_code_count == 0) {
+        snprintf(errbuf, errbuf_size,
+                 "shim '%s' uses policy \"exit-code-match\" but has no exit_codes", entry->name);
+        return CONFIG_ERR_VALIDATION;
+    }
+    if (entry->policy == POLICY_ROUTE_ARGS && entry->route_arg_count == 0) {
+        snprintf(errbuf, errbuf_size,
+                 "shim '%s' uses policy \"route-args\" but has no route_args", entry->name);
+        return CONFIG_ERR_VALIDATION;
+    }
+    if (entry->policy == POLICY_SPLIT_ARGS &&
+        (entry->source_route_arg_count == 0 || entry->fallback_route_arg_count == 0)) {
+        snprintf(errbuf, errbuf_size,
+                 "shim '%s' uses policy \"split-args\" but needs at least one "
+                 "source_route_args and one fallback_route_args entry",
+                 entry->name);
+        return CONFIG_ERR_VALIDATION;
+    }
+    if (entry->policy == POLICY_REWRITE && entry->rewrite_from_count == 0) {
+        snprintf(errbuf, errbuf_size,
+                 "shim '%s' uses policy \"rewrite\" but has no rewrite rules", entry->name);
+        return CONFIG_ERR_VALIDATION;
+    }
+    return CONFIG_OK;
+}
+
+ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t errbuf_size) {
+    config_init(cfg);
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        if (errno == ENOENT) {
+            return CONFIG_OK; /* no config yet is not an error */
+        }
+        snprintf(errbuf, errbuf_size, "cannot open %s: %s", path, strerror(errno));
+        return CONFIG_ERR_IO;
+    }
+
+    char *contents;
+    ConfigStatus read_st = read_file_into_buffer(f, path, &contents, errbuf, errbuf_size);
+    if (read_st != CONFIG_OK) {
+        return read_st;
+    }
 
     ssize_t current_index = -1; /* -1 = top-level, no [shims.x] section yet */
     int line_no = 0;
@@ -490,230 +771,9 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
         }
 
         ShimEntry *entry = &cfg->shims[current_index];
-        const char *cursor = value_str;
-
-        if (strcmp(key, "source") == 0) {
-            char *v = parse_quoted_string(&cursor);
-            if (!v) {
-                snprintf(errbuf, errbuf_size, "line %d: expected a string for 'source'", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            free(entry->source);
-            entry->source = v;
-        } else if (strcmp(key, "fallback") == 0) {
-            char *v = parse_quoted_string(&cursor);
-            if (!v) {
-                snprintf(errbuf, errbuf_size, "line %d: expected a string for 'fallback'", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            free(entry->fallback);
-            entry->fallback = v;
-        } else if (strcmp(key, "source_args") == 0) {
-            StrVec vec;
-            strvec_init(&vec);
-            if (!parse_string_array(&cursor, &vec)) {
-                strvec_free(&vec);
-                snprintf(errbuf, errbuf_size, "line %d: malformed 'source_args' array", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            for (size_t i = 0; i < entry->source_arg_count; i++) {
-                free(entry->source_args[i]);
-            }
-            free(entry->source_args);
-            entry->source_args = vec.items;
-            entry->source_arg_count = vec.count;
-        } else if (strcmp(key, "fallback_args") == 0) {
-            StrVec vec;
-            strvec_init(&vec);
-            if (!parse_string_array(&cursor, &vec)) {
-                strvec_free(&vec);
-                snprintf(errbuf, errbuf_size, "line %d: malformed 'fallback_args' array", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            for (size_t i = 0; i < entry->fallback_arg_count; i++) {
-                free(entry->fallback_args[i]);
-            }
-            free(entry->fallback_args);
-            entry->fallback_args = vec.items;
-            entry->fallback_arg_count = vec.count;
-        } else if (strcmp(key, "policy") == 0) {
-            char *v = parse_quoted_string(&cursor);
-            if (!v || !policy_from_string(v, &entry->policy)) {
-                snprintf(errbuf, errbuf_size,
-                         "line %d: 'policy' must be \"exit-code\", \"heuristic\", "
-                         "\"exit-code-match\", \"route-args\", or \"rewrite\"",
-                         line_no);
-                free(v);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            free(v);
-        } else if (strcmp(key, "exit_codes") == 0) {
-            int *items = NULL;
-            size_t count = 0;
-            if (!parse_int_array(&cursor, &items, &count)) {
-                snprintf(errbuf, errbuf_size, "line %d: malformed 'exit_codes' array (values "
-                                               "must be integers 0-255)",
-                         line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            free(entry->exit_codes);
-            entry->exit_codes = items;
-            entry->exit_code_count = count;
-        } else if (strcmp(key, "error_patterns") == 0) {
-            StrVec vec;
-            strvec_init(&vec);
-            if (!parse_string_array(&cursor, &vec)) {
-                strvec_free(&vec);
-                snprintf(errbuf, errbuf_size, "line %d: malformed 'error_patterns' array", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            for (size_t i = 0; i < entry->error_pattern_count; i++) {
-                free(entry->error_patterns[i]);
-            }
-            free(entry->error_patterns);
-            entry->error_patterns = vec.items;
-            entry->error_pattern_count = vec.count;
-        } else if (strcmp(key, "route_args") == 0) {
-            StrVec vec;
-            strvec_init(&vec);
-            if (!parse_string_array(&cursor, &vec)) {
-                strvec_free(&vec);
-                snprintf(errbuf, errbuf_size, "line %d: malformed 'route_args' array", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            for (size_t i = 0; i < entry->route_arg_count; i++) {
-                free(entry->route_args[i]);
-            }
-            free(entry->route_args);
-            entry->route_args = vec.items;
-            entry->route_arg_count = vec.count;
-        } else if (strcmp(key, "source_route_args") == 0) {
-            StrVec vec;
-            strvec_init(&vec);
-            if (!parse_string_array(&cursor, &vec)) {
-                strvec_free(&vec);
-                snprintf(errbuf, errbuf_size, "line %d: malformed 'source_route_args' array",
-                         line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            for (size_t i = 0; i < entry->source_route_arg_count; i++) {
-                free(entry->source_route_args[i]);
-            }
-            free(entry->source_route_args);
-            entry->source_route_args = vec.items;
-            entry->source_route_arg_count = vec.count;
-        } else if (strcmp(key, "fallback_route_args") == 0) {
-            StrVec vec;
-            strvec_init(&vec);
-            if (!parse_string_array(&cursor, &vec)) {
-                strvec_free(&vec);
-                snprintf(errbuf, errbuf_size, "line %d: malformed 'fallback_route_args' array",
-                         line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            for (size_t i = 0; i < entry->fallback_route_arg_count; i++) {
-                free(entry->fallback_route_args[i]);
-            }
-            free(entry->fallback_route_args);
-            entry->fallback_route_args = vec.items;
-            entry->fallback_route_arg_count = vec.count;
-        } else if (strcmp(key, "diagnostic") == 0) {
-            if (strcmp(value_str, "true") == 0) {
-                entry->diagnostic = true;
-            } else if (strcmp(value_str, "false") == 0) {
-                entry->diagnostic = false;
-            } else {
-                snprintf(errbuf, errbuf_size, "line %d: 'diagnostic' must be true or false", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-        } else if (strcmp(key, "force") == 0) {
-            if (strcmp(value_str, "true") == 0) {
-                entry->force = true;
-            } else if (strcmp(value_str, "false") == 0) {
-                entry->force = false;
-            } else {
-                snprintf(errbuf, errbuf_size, "line %d: 'force' must be true or false", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-        } else if (strcmp(key, "capture_timeout_ms") == 0) {
-            if (!parse_nonneg_int(value_str, &entry->capture_timeout_ms)) {
-                snprintf(errbuf, errbuf_size,
-                         "line %d: 'capture_timeout_ms' must be a non-negative integer", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            entry->capture_timeout_set = true;
-        } else if (strcmp(key, "capture_limit") == 0) {
-            char *v = parse_quoted_string(&cursor);
-            size_t bytes;
-            if (!v || !parse_size_bytes(v, &bytes)) {
-                snprintf(errbuf, errbuf_size,
-                         "line %d: 'capture_limit' must be a quoted size like \"8MiB\" or "
-                         "\"8388608\"",
-                         line_no);
-                status = CONFIG_ERR_PARSE;
-                free(v);
-                break;
-            }
-            free(v);
-            entry->capture_limit_bytes = bytes;
-            entry->capture_limit_set = true;
-        } else if (strcmp(key, "rewrite_from") == 0) {
-            StrVec vec;
-            strvec_init(&vec);
-            if (!parse_string_array(&cursor, &vec)) {
-                strvec_free(&vec);
-                snprintf(errbuf, errbuf_size, "line %d: malformed 'rewrite_from' array", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            for (size_t i = 0; i < entry->rewrite_from_count; i++) {
-                free(entry->rewrite_from[i]);
-            }
-            free(entry->rewrite_from);
-            entry->rewrite_from = vec.items;
-            entry->rewrite_from_count = vec.count;
-        } else if (strcmp(key, "rewrite_to") == 0) {
-            StrVec vec;
-            strvec_init(&vec);
-            if (!parse_string_array(&cursor, &vec)) {
-                strvec_free(&vec);
-                snprintf(errbuf, errbuf_size, "line %d: malformed 'rewrite_to' array", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-            for (size_t i = 0; i < entry->rewrite_to_count; i++) {
-                free(entry->rewrite_to[i]);
-            }
-            free(entry->rewrite_to);
-            entry->rewrite_to = vec.items;
-            entry->rewrite_to_count = vec.count;
-        } else if (strcmp(key, "strip_matched_args") == 0) {
-            if (strcmp(value_str, "true") == 0) {
-                entry->strip_matched_args = true;
-            } else if (strcmp(value_str, "false") == 0) {
-                entry->strip_matched_args = false;
-            } else {
-                snprintf(errbuf, errbuf_size,
-                         "line %d: 'strip_matched_args' must be true or false", line_no);
-                status = CONFIG_ERR_PARSE;
-                break;
-            }
-        } else {
-            warn("config: line %d: unknown key '%s' in [shims.%s], ignoring", line_no, key,
-                 entry->name);
+        status = parse_shim_entry_field(entry, key, value_str, line_no, errbuf, errbuf_size);
+        if (status != CONFIG_OK) {
+            break;
         }
 
         line = strtok_r(NULL, "\n", &saveptr);
@@ -725,50 +785,84 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
     }
 
     for (size_t i = 0; i < cfg->count; i++) {
-        ShimEntry *entry = &cfg->shims[i];
-        if (!entry->fallback && entry->policy != POLICY_REWRITE) {
-            snprintf(errbuf, errbuf_size, "shim '%s' is missing a required 'fallback'", entry->name);
-            return CONFIG_ERR_VALIDATION;
-        }
-        if (entry->rewrite_from_count != entry->rewrite_to_count) {
-            snprintf(errbuf, errbuf_size,
-                     "shim '%s' has %zu 'rewrite_from' entries but %zu 'rewrite_to' entries -- "
-                     "they must match up one-to-one",
-                     entry->name, entry->rewrite_from_count, entry->rewrite_to_count);
-            return CONFIG_ERR_VALIDATION;
-        }
-        if (entry->policy == POLICY_HEURISTIC && entry->error_pattern_count == 0) {
-            snprintf(errbuf, errbuf_size,
-                     "shim '%s' uses policy \"heuristic\" but has no error_patterns", entry->name);
-            return CONFIG_ERR_VALIDATION;
-        }
-        if (entry->policy == POLICY_EXIT_CODE_MATCH && entry->exit_code_count == 0) {
-            snprintf(errbuf, errbuf_size,
-                     "shim '%s' uses policy \"exit-code-match\" but has no exit_codes",
-                     entry->name);
-            return CONFIG_ERR_VALIDATION;
-        }
-        if (entry->policy == POLICY_ROUTE_ARGS && entry->route_arg_count == 0) {
-            snprintf(errbuf, errbuf_size,
-                     "shim '%s' uses policy \"route-args\" but has no route_args", entry->name);
-            return CONFIG_ERR_VALIDATION;
-        }
-        if (entry->policy == POLICY_SPLIT_ARGS &&
-            (entry->source_route_arg_count == 0 || entry->fallback_route_arg_count == 0)) {
-            snprintf(errbuf, errbuf_size,
-                     "shim '%s' uses policy \"split-args\" but needs at least one "
-                     "source_route_args and one fallback_route_args entry",
-                     entry->name);
-            return CONFIG_ERR_VALIDATION;
-        }
-        if (entry->policy == POLICY_REWRITE && entry->rewrite_from_count == 0) {
-            snprintf(errbuf, errbuf_size,
-                     "shim '%s' uses policy \"rewrite\" but has no rewrite rules", entry->name);
-            return CONFIG_ERR_VALIDATION;
+        ConfigStatus vst = validate_shim_entry(&cfg->shims[i], errbuf, errbuf_size);
+        if (vst != CONFIG_OK) {
+            return vst;
         }
     }
 
     return CONFIG_OK;
+}
+
+ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
+                                size_t errbuf_size) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        snprintf(errbuf, errbuf_size, "cannot open %s: %s", path, strerror(errno));
+        return CONFIG_ERR_IO;
+    }
+
+    char *contents;
+    ConfigStatus read_st = read_file_into_buffer(f, path, &contents, errbuf, errbuf_size);
+    if (read_st != CONFIG_OK) {
+        return read_st;
+    }
+
+    int line_no = 0;
+    ConfigStatus status = CONFIG_OK;
+
+    char *saveptr = NULL;
+    char *line = strtok_r(contents, "\n", &saveptr);
+    while (line != NULL && status == CONFIG_OK) {
+        line_no++;
+        strip_trailing_comment(line);
+        char *trimmed = line;
+        trim(&trimmed, line + strlen(line));
+
+        if (*trimmed == '\0') {
+            line = strtok_r(NULL, "\n", &saveptr);
+            continue;
+        }
+
+        if (*trimmed == '[') {
+            snprintf(errbuf, errbuf_size,
+                     "line %d: split config files hold one shim's settings as bare key = value "
+                     "lines -- they can't contain a [shims.x] section header",
+                     line_no);
+            status = CONFIG_ERR_PARSE;
+            break;
+        }
+
+        char *eq = strchr(trimmed, '=');
+        if (!eq) {
+            snprintf(errbuf, errbuf_size, "line %d: expected 'key = value'", line_no);
+            status = CONFIG_ERR_PARSE;
+            break;
+        }
+        *eq = '\0';
+        char *key = trimmed;
+        char *value_str = eq + 1;
+        trim(&key, key + strlen(key));
+        {
+            char *vs = value_str;
+            trim(&vs, vs + strlen(vs));
+            value_str = vs;
+        }
+
+        status = parse_shim_entry_field(entry, key, value_str, line_no, errbuf, errbuf_size);
+        if (status != CONFIG_OK) {
+            break;
+        }
+
+        line = strtok_r(NULL, "\n", &saveptr);
+    }
+
+    free(contents);
+    if (status != CONFIG_OK) {
+        return status;
+    }
+
+    return validate_shim_entry(entry, errbuf, errbuf_size);
 }
 
 /* ---- Serialization ---- */
@@ -787,29 +881,13 @@ static void append_escaped_string(DynBuf *out, const char *s) {
     dynbuf_append_char(out, '"');
 }
 
-static void render_config(const Config *cfg, DynBuf *out) {
+/* Renders every field of `entry` except its name -- no [shims.<name>]
+ * header, no bare "name = ..." line either, since the name is implied by
+ * context (a section header render_config writes itself, or the filename
+ * for a split file -- see config_save_split). Shared by both. */
+static void render_shim_entry_body(const ShimEntry *entry, DynBuf *out) {
     char line[64];
-    snprintf(line, sizeof(line), "version = %d\n", cfg->version);
-    dynbuf_append_str(out, line);
-    if (cfg->verbose) {
-        dynbuf_append_str(out, "verbose = true\n");
-    }
-    if (cfg->capture_timeout_ms != SHIMBACK_DEFAULT_CAPTURE_TIMEOUT_MS) {
-        snprintf(line, sizeof(line), "capture_timeout_ms = %d\n", cfg->capture_timeout_ms);
-        dynbuf_append_str(out, line);
-    }
-    if (cfg->capture_limit_bytes != SHIMBACK_DEFAULT_CAPTURE_LIMIT_BYTES) {
-        snprintf(line, sizeof(line), "capture_limit = \"%zu\"\n", cfg->capture_limit_bytes);
-        dynbuf_append_str(out, line);
-    }
-
-    for (size_t i = 0; i < cfg->count; i++) {
-        const ShimEntry *entry = &cfg->shims[i];
-        dynbuf_append_char(out, '\n');
-        dynbuf_append_str(out, "[shims.");
-        dynbuf_append_str(out, entry->name);
-        dynbuf_append_str(out, "]\n");
-
+    {
         if (entry->source) {
             dynbuf_append_str(out, "source = ");
             append_escaped_string(out, entry->source);
@@ -945,6 +1023,32 @@ static void render_config(const Config *cfg, DynBuf *out) {
     }
 }
 
+static void render_config(const Config *cfg, DynBuf *out) {
+    char line[64];
+    snprintf(line, sizeof(line), "version = %d\n", cfg->version);
+    dynbuf_append_str(out, line);
+    if (cfg->verbose) {
+        dynbuf_append_str(out, "verbose = true\n");
+    }
+    if (cfg->capture_timeout_ms != SHIMBACK_DEFAULT_CAPTURE_TIMEOUT_MS) {
+        snprintf(line, sizeof(line), "capture_timeout_ms = %d\n", cfg->capture_timeout_ms);
+        dynbuf_append_str(out, line);
+    }
+    if (cfg->capture_limit_bytes != SHIMBACK_DEFAULT_CAPTURE_LIMIT_BYTES) {
+        snprintf(line, sizeof(line), "capture_limit = \"%zu\"\n", cfg->capture_limit_bytes);
+        dynbuf_append_str(out, line);
+    }
+
+    for (size_t i = 0; i < cfg->count; i++) {
+        const ShimEntry *entry = &cfg->shims[i];
+        dynbuf_append_char(out, '\n');
+        dynbuf_append_str(out, "[shims.");
+        dynbuf_append_str(out, entry->name);
+        dynbuf_append_str(out, "]\n");
+        render_shim_entry_body(entry, out);
+    }
+}
+
 ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size_t errbuf_size) {
     char *dir = xstrdup(path);
     char *slash = strrchr(dir, '/');
@@ -976,4 +1080,49 @@ ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size
     }
 
     return CONFIG_OK;
+}
+
+ConfigStatus config_save_split(const ShimEntry *entry, const char *path, char *errbuf,
+                                size_t errbuf_size) {
+    char *dir = xstrdup(path);
+    char *slash = strrchr(dir, '/');
+    if (slash) {
+        *slash = '\0';
+        if (!mkdir_p(dir)) {
+            snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, strerror(errno));
+            free(dir);
+            return CONFIG_ERR_IO;
+        }
+    }
+    free(dir);
+
+    DynBuf out;
+    dynbuf_init(&out);
+    render_shim_entry_body(entry, &out);
+
+    /* 0600: same reasoning as config_save -- a split file is just as much
+     * "which executable does this shim actually run" as an entry inside
+     * config.toml itself. */
+    bool ok = write_file_atomic(path, out.data, out.len, 0600);
+    dynbuf_free(&out);
+
+    if (!ok) {
+        snprintf(errbuf, errbuf_size, "cannot write %s: %s", path, strerror(errno));
+        return CONFIG_ERR_IO;
+    }
+
+    return CONFIG_OK;
+}
+
+size_t remove_split_configs(const char *name) {
+    char *paths[3];
+    split_config_all_paths(name, paths);
+    size_t removed = 0;
+    for (int i = 0; i < 3; i++) {
+        if (unlink(paths[i]) == 0) {
+            removed++;
+        }
+        free(paths[i]);
+    }
+    return removed;
 }

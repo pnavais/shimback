@@ -231,6 +231,56 @@ shimback add sed -f /usr/bin/sed
   likewise `M`/`MB`/`MiB` and `G`/`GB`/`GiB` — so `--capture-limit 8MiB`,
   `--capture-limit 8192KiB`, and `--capture-limit 8388608` all mean the
   same thing.
+- `--split-config` saves this shim's settings in their own file instead of
+  as a `[shims.<name>]` entry inside `config.toml` — see
+  [Splitting a shim's config into its own file](#splitting-a-shims-config-into-its-own-file)
+  below.
+
+#### Splitting a shim's config into its own file
+
+By default, every shim's settings live as a `[shims.<name>]` table inside
+the single shared `config.toml`. If that file is getting unwieldy — many
+shims, or one with a lot of policy-specific configuration — `add
+--split-config` instead writes just that shim's settings, as bare
+`key = value` lines with no section header, to a file named
+`<name>-config.toml`:
+
+```sh
+shimback add sed -f /usr/bin/sed --split-config
+```
+
+This writes `sed-config.toml` into shimback's config directory (next to
+`config.toml` itself) and, unlike a normal `add`, leaves no
+`[shims.sed]` entry in `config.toml` at all — the split file is now the
+*only* place `sed`'s settings live.
+
+You can freely move that file to either of two other locations, and
+shimback still finds it — every shim's effective config is resolved by
+checking, in this order, for a `<name>-config.toml`:
+
+1. next to the shim's own symlink (the shim directory reported by
+   `shimback doctor`, e.g. `~/.local/share/shimback/bin/sed-config.toml`);
+2. next to the `shimback` binary itself (e.g.
+   `~/.local/bin/sed-config.toml`);
+3. in the shared config directory, where `add --split-config` writes it
+   initially (e.g. `~/.config/shimback/sed-config.toml`).
+
+The first one found wins outright — it's used *instead of* `config.toml`,
+not merged with it, so moving a copy to a more specific location (say, to
+travel alongside the symlink itself) is enough to override the one
+`add --split-config` originally wrote, with nothing to delete. A
+`<name>-config.toml` can also exist with no `[shims.<name>]` entry in
+`config.toml` at all, and vice versa; whichever a shim currently has wins,
+independent of how it got there.
+
+`remove` and `uninstall --full` both sweep a shim's split file from every
+one of those three locations, not just wherever it currently resolves
+from — so nothing is ever left behind by moving one around. Re-running
+`add` on a shim *without* `--split-config` folds it back into
+`config.toml`, removing whichever split file(s) it finds; re-running it
+*with* `--split-config` does the reverse, removing the `config.toml`
+entry. The [interactive wizard](#interactive-wizard) asks about this too,
+as its very last page.
 
 #### Interactive wizard
 
@@ -242,7 +292,9 @@ failing, a small step-by-step wizard walks you through filling it in:
 name, policy (picked from a list), source, source's extra args, fallback,
 fallback's extra args, then whatever the chosen policy still needs (for
 `split-args`, that's two required list pages, one per side), then the
-diagnostic flag. The two extra-args pages are optional list pages, unlike
+diagnostic flag, and finally whether to
+[split its config into its own file](#splitting-a-shims-config-into-its-own-file).
+The two extra-args pages are optional list pages, unlike
 the policy-specific ones (which, like `--route-arg`/`--split-source-arg`/
 `--split-fallback-arg` themselves, need at least one entry to finish) —
 blank Enter finishes an optional list with zero items just as happily as
@@ -274,9 +326,11 @@ the command line, is still reachable and editable.
 shimback remove sed
 ```
 
-Removes the symlink and the config entry for `<name>`. It does **not**
-touch the PATH injection in your shell's startup file, since other shims
-(or a future `add`) may still need it.
+Removes the symlink and the config entry for `<name>` — including a
+[split `<name>-config.toml` file](#splitting-a-shims-config-into-its-own-file),
+if the shim has one, swept from all three of its potential locations. It
+does **not** touch the PATH injection in your shell's startup file, since
+other shims (or a future `add`) may still need it.
 
 If `<name>` doesn't match any configured shim, shimback prints the error
 first, then, on its own line right after, a `did you mean 'X'?` hint (in
@@ -479,8 +533,11 @@ binary `install` placed (default prefix: `~/.local`, matching `install`),
 and the man page installed alongside it. By default the config file and the
 `PATH` marker blocks in shell startup files are left alone, so a future
 `add`/`init` just picks up where things left off; pass `--full` to also
-delete the config file and remove those `PATH` blocks — a complete teardown.
-Safe to re-run: nothing left to remove is just reported as already gone.
+delete the config file, remove those `PATH` blocks, and sweep every shim's
+[split `<name>-config.toml` file](#splitting-a-shims-config-into-its-own-file)
+(including one that only ever existed that way, with no `config.toml`
+entry at all) — a complete teardown. Safe to re-run: nothing left to
+remove is just reported as already gone.
 
 ### `edit`
 
@@ -631,7 +688,9 @@ Config lives at `$XDG_CONFIG_HOME/shimback/config.toml`, falling back to
 `$HOME/.config/shimback/config.toml` if `XDG_CONFIG_HOME` is unset — this is
 honored even on macOS, not overridden by platform-native paths. The shim
 symlinks themselves live at `$XDG_DATA_HOME/shimback/bin` (fallback
-`$HOME/.local/share/shimback/bin`).
+`$HOME/.local/share/shimback/bin`). Any individual shim can instead live in
+its own `<name>-config.toml` file — see
+[Splitting a shim's config into its own file](#splitting-a-shims-config-into-its-own-file).
 
 A top-level `verbose = true` sets the default for `add`'s shell-startup-file
 PATH-update notices (see `add`, above); omitted or `false` keeps them silent
