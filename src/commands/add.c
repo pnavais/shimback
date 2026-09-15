@@ -28,7 +28,7 @@ static const char *USAGE =
     "                    [--route-arg <arg>]... [--strip-matched-args]\n"
     "                    [--split-source-arg <arg>]... [--split-fallback-arg <arg>]...\n"
     "                    [--rewrite <from>=<to>]... [--diagnostic] [--force] [-v|--verbose]\n"
-    "                    [--capture-timeout <ms>] [--capture-limit <size>]\n"
+    "                    [--capture-timeout <ms>] [--capture-limit <size>] [--split-config]\n"
     "-f/--fallback is required, except with --policy rewrite, where it's unused.\n"
     "--force allows source/fallback to point at a path (not a bare name) that doesn't\n"
     "exist yet; doctor skips its existence check for whichever of them still doesn't.\n"
@@ -37,7 +37,12 @@ static const char *USAGE =
     "--capture-timeout/--capture-limit override, for this shim only, how long or how much\n"
     "output an invisible trial run may accumulate before shimback gives up on hiding it\n"
     "and streams it live instead (global defaults: 2000ms / 8MiB). --capture-limit accepts\n"
-    "a unit suffix (B, K/KB, KiB, M/MB, MiB, G/GB, GiB, case-insensitive; no suffix = bytes).\n";
+    "a unit suffix (B, K/KB, KiB, M/MB, MiB, G/GB, GiB, case-insensitive; no suffix = bytes).\n"
+    "--split-config saves this shim's settings in their own <name>-config.toml file in the\n"
+    "config directory, instead of as a [shims.<name>] entry inside config.toml -- move that\n"
+    "file to the shimback binary's own directory, or the shim symlink's own directory, to\n"
+    "override it from there instead. Omitting --split-config on a shim that currently has\n"
+    "one removes it, folding the shim back into config.toml.\n";
 
 #define OPT_STRIP_MATCHED_ARGS 1000
 #define OPT_SOURCE_ARG 1001
@@ -47,6 +52,7 @@ static const char *USAGE =
 #define OPT_SPLIT_FALLBACK_ARG 1005
 #define OPT_CAPTURE_TIMEOUT 1006
 #define OPT_CAPTURE_LIMIT 1007
+#define OPT_SPLIT_CONFIG 1008
 
 static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
     if (*count == *cap) {
@@ -66,7 +72,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                        StrVec *route_args, bool strip_matched_args, StrVec *split_source_args,
                        StrVec *split_fallback_args, StrVec *rewrite_from, StrVec *rewrite_to,
                        bool diagnostic, bool force, bool verbose, bool capture_timeout_set,
-                       int capture_timeout_ms, bool capture_limit_set, size_t capture_limit_bytes) {
+                       int capture_timeout_ms, bool capture_limit_set, size_t capture_limit_bytes,
+                       bool split_config) {
     if (name[0] == '\0' || strchr(name, '/') != NULL || strcmp(name, "shimback") == 0) {
         die("add: invalid shim name '%s'", name);
     }
@@ -257,9 +264,42 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * isn't given. */
     bool effective_verbose = verbose || cfg.verbose;
 
+    /* --split-config: write this shim's data to its own <name>-config.toml
+     * in the config directory instead of config.toml, then drop it from
+     * cfg (in memory only, so far) so the config_save right below doesn't
+     * also leave a shadow copy of it there. The split file is written
+     * FIRST, and only removed from cfg (in memory) once that succeeds --
+     * so a failure here never loses data, it just leaves entry wherever it
+     * already was (in cfg, to be saved to config.toml as normal). */
+    char *split_target_path = NULL;
+    if (split_config) {
+        char *cfg_dir = dir_of(cfg_path);
+        char *split_filename = split_config_filename(name);
+        split_target_path = path_join(cfg_dir, split_filename);
+        free(cfg_dir);
+        free(split_filename);
+
+        ConfigStatus split_save_st =
+            config_save_split(entry, split_target_path, errbuf, sizeof(errbuf));
+        if (split_save_st != CONFIG_OK) {
+            die("add: failed to save split config: %s", errbuf);
+        }
+        config_remove(&cfg, name);
+    }
+
     ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
     if (save_st != CONFIG_OK) {
         die("add: failed to save config: %s", errbuf);
+    }
+
+    if (!split_config) {
+        /* Not split this time -- if a split file for this name is still
+         * sitting somewhere from an earlier `add --split-config`, it would
+         * otherwise keep winning over the config.toml entry just saved
+         * above (split always takes precedence at resolve time -- see
+         * dispatch.c), silently shadowing it. Best-effort: nothing to
+         * clean up is the common case, not an error. */
+        remove_split_configs(name);
     }
 
     /* Only now, with the config safely saved, do we touch the shim
@@ -289,6 +329,10 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
            reset, path_color, symlink_path, reset, fallback_color,
            resolved_fallback ? resolved_fallback : "none", reset, policy_color_str,
            policy_to_string(policy), reset);
+    if (split_config) {
+        printf("shimback: config for '%s%s%s' saved to %s%s%s\n", name_color, name, reset,
+               path_color, split_target_path, reset);
+    }
 
     ShellKind shell = detect_current_shell();
     shell_ensure_path(shell, shim_dir, effective_verbose);
@@ -312,6 +356,7 @@ int cmd_add(int argc, char **argv) {
     int capture_timeout_ms = 0;
     bool capture_limit_set = false;
     size_t capture_limit_bytes = 0;
+    bool split_config = false;
     StrVec source_args;
     strvec_init(&source_args);
     StrVec fallback_args;
@@ -350,6 +395,7 @@ int cmd_add(int argc, char **argv) {
         {"verbose", no_argument, 0, 'v'},
         {"capture-timeout", required_argument, 0, OPT_CAPTURE_TIMEOUT},
         {"capture-limit", required_argument, 0, OPT_CAPTURE_LIMIT},
+        {"split-config", no_argument, 0, OPT_SPLIT_CONFIG},
         {0, 0, 0, 0},
     };
 
@@ -413,6 +459,7 @@ int cmd_add(int argc, char **argv) {
                 capture_limit_set = true;
                 break;
             }
+            case OPT_SPLIT_CONFIG: split_config = true; break;
             default:
                 fprintf(stderr, "%s", USAGE);
                 return 1;
@@ -492,6 +539,7 @@ int cmd_add(int argc, char **argv) {
             .rewrite_from = &rewrite_from,
             .rewrite_to = &rewrite_to,
             .diagnostic = diagnostic,
+            .split_config = split_config,
         };
         WizardResult result;
         if (!run_add_wizard(&seed, &result)) {
@@ -505,12 +553,12 @@ int cmd_add(int argc, char **argv) {
                            &result.split_source_args, &result.split_fallback_args,
                            &result.rewrite_from, &result.rewrite_to, result.diagnostic, force,
                            verbose, capture_timeout_set, capture_timeout_ms, capture_limit_set,
-                           capture_limit_bytes);
+                           capture_limit_bytes, result.split_config);
     }
 
     return finish_add(name, source_arg, &source_args, fallback_arg, &fallback_args, policy,
                        &patterns, exit_codes, exit_code_count, &route_args, strip_matched_args,
                        &split_source_args, &split_fallback_args, &rewrite_from, &rewrite_to,
                        diagnostic, force, verbose, capture_timeout_set, capture_timeout_ms,
-                       capture_limit_set, capture_limit_bytes);
+                       capture_limit_set, capture_limit_bytes, split_config);
 }

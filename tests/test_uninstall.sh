@@ -96,4 +96,21 @@ if [ -e "$FISH_SNIPPET" ]; then
     fail "uninstall --full: fish conf.d snippet should be removed"
 fi
 
+# --- --full also sweeps split <name>-config.toml files (see
+# test_split_config.sh for the feature itself), for both a shim that also
+# has a config.toml entry and one that only ever existed via the split
+# file (its symlink is still how uninstall discovers the name) ---
+"$SHIMBACK" add splituninst -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --split-config >/dev/null
+SPLIT_CFG="$XDG_CONFIG_HOME/shimback/splituninst-config.toml"
+if [ ! -f "$SPLIT_CFG" ]; then
+    fail "setup: expected a split config file at $SPLIT_CFG"
+fi
+assert_not_contains "setup: split shim has no config.toml entry" "$(cat "$CFG" 2>/dev/null)" \
+    "[shims.splituninst]"
+
+"$SHIMBACK" uninstall --prefix "$PREFIX" --full >/dev/null
+if [ -e "$SPLIT_CFG" ]; then
+    fail "uninstall --full: split config file should be removed"
+fi
+
 finish

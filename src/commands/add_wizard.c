@@ -52,6 +52,7 @@ typedef enum {
     PAGE_STRIP_MATCHED,
     PAGE_REWRITE,
     PAGE_DIAGNOSTIC,
+    PAGE_SPLIT_CONFIG,
     PAGE_DONE,
 } PageId;
 
@@ -103,6 +104,8 @@ typedef struct {
     bool rewrite_set;
     bool diagnostic;
     bool diagnostic_set;
+    bool split_config;
+    bool split_config_set;
 } WizardState;
 
 typedef struct {
@@ -155,7 +158,8 @@ static PageId next_page(const WizardState *st, PageId current) {
         case PAGE_SPLIT_FALLBACK_ARGS: return PAGE_STRIP_MATCHED;
         case PAGE_STRIP_MATCHED: return PAGE_DIAGNOSTIC;
         case PAGE_REWRITE: return PAGE_DIAGNOSTIC;
-        case PAGE_DIAGNOSTIC:
+        case PAGE_DIAGNOSTIC: return PAGE_SPLIT_CONFIG;
+        case PAGE_SPLIT_CONFIG:
         case PAGE_DONE:
         default: return PAGE_DONE;
     }
@@ -229,6 +233,8 @@ static void reset_after_policy_change(WizardState *st) {
     st->rewrite_set = false;
     st->diagnostic = false;
     st->diagnostic_set = false;
+    st->split_config = false;
+    st->split_config_set = false;
 }
 
 static bool page_present(const WizardSeed *seed, const WizardState *st, PageId p) {
@@ -247,6 +253,7 @@ static bool page_present(const WizardSeed *seed, const WizardState *st, PageId p
         case PAGE_STRIP_MATCHED: return true;
         case PAGE_REWRITE: return seed->rewrite_from->count > 0;
         case PAGE_DIAGNOSTIC: return true;
+        case PAGE_SPLIT_CONFIG: return true;
         default: return false;
     }
 }
@@ -328,6 +335,10 @@ static void auto_commit_page(WizardState *st, const WizardSeed *seed, PageId p) 
         case PAGE_DIAGNOSTIC:
             st->diagnostic = seed->diagnostic;
             st->diagnostic_set = true;
+            break;
+        case PAGE_SPLIT_CONFIG:
+            st->split_config = seed->split_config;
+            st->split_config_set = true;
             break;
         default:
             break;
@@ -413,6 +424,9 @@ static void print_breadcrumb(const WizardState *st, const History *hist, size_t 
             case PAGE_DIAGNOSTIC:
                 printf("%s  diagnostic: %s%s\n", dim, st->diagnostic ? "yes" : "no", reset);
                 break;
+            case PAGE_SPLIT_CONFIG:
+                printf("%s  split config: %s%s\n", dim, st->split_config ? "yes" : "no", reset);
+                break;
             default:
                 break;
         }
@@ -476,6 +490,7 @@ static size_t input_row(const WizardState *st, size_t hist_pos, PageId page) {
         case PAGE_FALLBACK:
         case PAGE_STRIP_MATCHED:
         case PAGE_DIAGNOSTIC:
+        case PAGE_SPLIT_CONFIG:
             return row + 2; /* one header line, then the input line */
         case PAGE_SOURCE_ARGS:
             return row + 2 + st->source_args.count;
@@ -616,6 +631,13 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
                      hdr, reset);
             bar_line(colorize, "> %s", input);
             break;
+        case PAGE_SPLIT_CONFIG:
+            bar_line(colorize,
+                     "%sSave this shim's settings in their own <name>-config.toml file, instead "
+                     "of inside config.toml?%s [y/N]",
+                     hdr, reset);
+            bar_line(colorize, "> %s", input);
+            break;
         default:
             break;
     }
@@ -719,6 +741,12 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
                     break;
                 case PAGE_DIAGNOSTIC:
                     if (st.diagnostic_set && st.diagnostic) {
+                        snprintf(input, sizeof(input), "y");
+                        input_len = 1;
+                    }
+                    break;
+                case PAGE_SPLIT_CONFIG:
+                    if (st.split_config_set && st.split_config) {
                         snprintf(input, sizeof(input), "y");
                         input_len = 1;
                     }
@@ -1038,6 +1066,14 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
                 }
                 break;
 
+            case PAGE_SPLIT_CONFIG:
+                st.split_config = (input_len > 0 && (input[0] == 'y' || input[0] == 'Y'));
+                st.split_config_set = true;
+                if (advance_or_reuse(&st, &hist, &hist_pos)) {
+                    done = true;
+                }
+                break;
+
             default:
                 break;
         }
@@ -1084,5 +1120,6 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
     out->rewrite_from = st.rewrite_from;
     out->rewrite_to = st.rewrite_to;
     out->diagnostic = st.diagnostic;
+    out->split_config = st.split_config;
     return true;
 }

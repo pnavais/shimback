@@ -50,7 +50,18 @@ int cmd_remove(int argc, char **argv) {
         die("remove: %s", errbuf);
     }
 
-    if (!config_find(&cfg, name)) {
+    /* A shim can exist purely via a <name>-config.toml split file, with no
+     * entry in config.toml at all (see resolve_split_config_path in
+     * paths.h) -- config_find alone would false-negative on it. Fuzzy
+     * typo suggestions, below, still only search config.toml names: a
+     * split-only shim's name isn't discoverable without globbing all
+     * three split-config locations, which isn't worth it just for typo
+     * hints. */
+    char *split_path = resolve_split_config_path(name);
+    bool has_split_entry = split_path != NULL;
+    free(split_path);
+
+    if (!config_find(&cfg, name) && !has_split_entry) {
         const char **candidates = NULL;
         if (cfg.count > 0) {
             candidates = xmalloc(cfg.count * sizeof(char *));
@@ -67,10 +78,13 @@ int cmd_remove(int argc, char **argv) {
             char *unique = fuzzy_suggest_unique(name, candidates, cfg.count);
             if (unique) {
                 name = unique;
+                split_path = resolve_split_config_path(name);
+                has_split_entry = split_path != NULL;
+                free(split_path);
             }
         }
 
-        if (!config_find(&cfg, name)) {
+        if (!config_find(&cfg, name) && !has_split_entry) {
             fprintf(stderr, "shimback: remove: no shim configured for '%s'\n", name);
             if (candidates) {
                 char *hint = fuzzy_suggest(name, candidates, cfg.count);
@@ -114,6 +128,13 @@ int cmd_remove(int argc, char **argv) {
     if (have_managed_symlink && unlink(symlink_path) != 0) {
         warn("failed to remove symlink %s: %s", symlink_path, strerror(errno));
     }
+
+    /* Sweeps every one of the three potential split-config locations (see
+     * split_config_all_paths, paths.h), not just wherever it happened to
+     * resolve from above -- a stray copy left in another location would
+     * otherwise keep dispatch resolving this "removed" shim right back
+     * into existence. Best-effort, same as the symlink removal above. */
+    remove_split_configs(name);
 
     bool colorize = stdout_is_color();
     printf("shimback: %sremoved '%s'%s\n", colorize ? ANSI_GREEN : "", name,

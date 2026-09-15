@@ -28,6 +28,7 @@ typedef struct {
     StrVec *rewrite_from;
     StrVec *rewrite_to;
     bool diagnostic;
+    bool split_config;
 } WizardSeed;
 
 /* Mirrors the same set of fields cmd_add's shared "finish" tail expects.
@@ -49,6 +50,7 @@ typedef struct {
     StrVec rewrite_from;
     StrVec rewrite_to;
     bool diagnostic;
+    bool split_config;
 } WizardResult;
 
 /* Runs the interactive "add" wizard, pre-seeded from `seed`. Caller must
