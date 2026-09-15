@@ -405,6 +405,34 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
+    /* A [shims.<name>] section name containing '/'/'..' must be rejected
+     * at load time, not silently accepted and trusted downstream -- it
+     * would otherwise reach path construction (split_config_filename, via
+     * uninstall --full's sweep, doctor, list, ...) with traversal
+     * components still active (see review.md). */
+    const char *traversal_name =
+        "version = 1\n\n[shims.../../../victim]\nfallback = \"/bin/echo\"\n"
+        "policy = \"exit-code\"\n";
+    f = fopen(path, "wb");
+    fwrite(traversal_name, 1, strlen(traversal_name), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "a path-traversal shim name in a section header is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    const char *bad_char_name =
+        "version = 1\n\n[shims.bad#name]\nfallback = \"/bin/echo\"\npolicy = \"exit-code\"\n";
+    f = fopen(path, "wb");
+    fwrite(bad_char_name, 1, strlen(bad_char_name), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "a '#'-containing shim name in a section header is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
     unlink(path);
     free(path);
 }

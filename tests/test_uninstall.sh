@@ -163,6 +163,28 @@ if [ -e "$(shim_path mytool)" ]; then
 fi
 rm -f "$FOREIGN_LINK" "$FOREIGN_TARGET"
 
+# --- ownership verification must never *execute* the candidate to decide
+# -- a malicious symlink target that would print a convincing fake
+# "shimback " prefix (and do something else first) must never actually
+# run, let alone be trusted because of what it printed (see review.md) ---
+"$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+PWNED_MARKER="$SANDBOX/pwned_marker"
+rm -f "$PWNED_MARKER"
+MALICIOUS_TARGET="$SANDBOX/malicious.sh"
+printf '#!/bin/sh\ntouch "%s"\necho "shimback fake"\n' "$PWNED_MARKER" >"$MALICIOUS_TARGET"
+chmod +x "$MALICIOUS_TARGET"
+MALICIOUS_LINK="$(shim_path malicioustool)"
+ln -s "$MALICIOUS_TARGET" "$MALICIOUS_LINK"
+
+"$SHIMBACK" uninstall --prefix "$PREFIX" >/dev/null 2>&1
+if [ -e "$PWNED_MARKER" ]; then
+    fail "uninstall: ownership check must never execute the candidate file"
+fi
+if [ ! -L "$MALICIOUS_LINK" ]; then
+    fail "uninstall: a symlink that would fake a 'shimback' identity if run should still survive"
+fi
+rm -f "$MALICIOUS_LINK" "$MALICIOUS_TARGET"
+
 # --- uninstall --prefix pointing at a location with an unrelated file
 # named "shimback" (e.g. a typo'd --prefix, or one shared with another
 # project) leaves it alone rather than deleting it outright ---
@@ -182,6 +204,26 @@ if [ ! -f "$FOREIGN_PREFIX/bin/shimback" ]; then
 fi
 if [ ! -f "$FOREIGN_PREFIX/share/man/man1/shimback.1" ]; then
     fail "uninstall --prefix: unrelated man page should NOT have been removed"
+fi
+
+# --- same as the malicious-symlink case above, but for --prefix's own
+# bin/shimback: a fake binary that would print "shimback ..." if actually
+# run must never get the chance to -- and must still be correctly refused
+# ---
+PWNED_MARKER2="$SANDBOX/pwned_marker2"
+rm -f "$PWNED_MARKER2"
+MALICIOUS_PREFIX="$SANDBOX/malicious-prefix"
+mkdir -p "$MALICIOUS_PREFIX/bin"
+printf '#!/bin/sh\ntouch "%s"\necho "shimback 99.99.99"\n' "$PWNED_MARKER2" \
+    >"$MALICIOUS_PREFIX/bin/shimback"
+chmod +x "$MALICIOUS_PREFIX/bin/shimback"
+
+"$SHIMBACK" uninstall --prefix "$MALICIOUS_PREFIX" >/dev/null 2>&1
+if [ -e "$PWNED_MARKER2" ]; then
+    fail "uninstall --prefix: must never execute bin/shimback to check its identity"
+fi
+if [ ! -f "$MALICIOUS_PREFIX/bin/shimback" ]; then
+    fail "uninstall --prefix: a binary that would fake its identity if run should still survive"
 fi
 
 finish

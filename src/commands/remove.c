@@ -41,6 +41,21 @@ int cmd_remove(int argc, char **argv) {
     if (optind < argc) {
         die("remove: unexpected extra argument '%s'", argv[optind]);
     }
+    /* Before *anything* else touches `name`: unvalidated, it can reach
+     * split_config_filename()'s path construction (via
+     * resolve_split_config_path/remove_split_configs, both below) with
+     * '/'/'..' components still active, e.g. "remove ../../../victim"
+     * deleting a "victim-config.toml" outside shimback's own directories
+     * entirely wherever that path happens to land (see review.md).
+     * split_config_filename() now also refuses an invalid name itself as
+     * a last resort, but that's a die()-hard programming-error check, not
+     * a friendly one -- this is the actual, clean rejection for ordinary
+     * bad input. */
+    if (!is_valid_shim_name(name)) {
+        die("remove: invalid shim name '%s' -- names may only contain letters, digits, '.', "
+            "'_', '+', and '-'",
+            name);
+    }
 
     char *cfg_path = config_file_path();
     Config cfg;

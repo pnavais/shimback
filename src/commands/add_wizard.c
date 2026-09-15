@@ -18,32 +18,10 @@
  * must track this string's rendered width if it ever changes. */
 #define BAR_GLYPH "\xe2\x94\x83"
 
-/* Allowlist, not a denylist: a shim name is interpolated verbatim into a
- * `[shims.<name>]` TOML section header (config.c's render_config) and into
- * a `<name>-config.toml` filename (paths.c's split_config_filename), so
- * anything outside this set risks corrupting either -- most notably '#',
- * which config.c's parser treats as a comment marker even inside a section
- * header, silently truncating it on the next load (e.g. "bad#name" becomes
- * the unparseable "[shims.bad" and makes the *entire* config unloadable,
- * not just that one shim). Letters, digits, '.', '_', '+', and '-' cover
- * every real executable name likely to be shimmed (python3.11, g++,
- * my-tool, my_tool, ...) without opening that door. */
-static bool is_shim_name_char(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-           c == '.' || c == '_' || c == '+' || c == '-';
-}
-
-bool is_valid_shim_name(const char *name) {
-    if (name[0] == '\0' || strcmp(name, "shimback") == 0) {
-        return false;
-    }
-    for (const char *p = name; *p != '\0'; p++) {
-        if (!is_shim_name_char(*p)) {
-            return false;
-        }
-    }
-    return true;
-}
+/* is_valid_shim_name itself moved to paths.c/paths.h (already included
+ * above) -- see its own comment there for why. Both this file and add.c
+ * already used it via that shared declaration even before the move; only
+ * its previous definition (and declaration in add_wizard.h) lived here. */
 
 /* Mirrors finish_add's own source resolution (see add.c) so the wizard's
  * inline "would this be a no-op" check (PAGE_FALLBACK_ARGS, below) sees

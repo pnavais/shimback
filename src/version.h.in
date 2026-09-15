@@ -3,4 +3,15 @@
 
 #define SHIMBACK_VERSION "@SHIMBACK_VERSION@"
 
+/* A fixed byte sequence embedded in every shimback build (any version --
+ * this string itself never changes), referenced from main.c so it's
+ * guaranteed to end up in the compiled binary's data section regardless
+ * of optimization level. Lets `uninstall` recognize a shimback binary by
+ * statically reading its bytes, rather than executing it and trusting
+ * whatever it prints -- see uninstall.c's looks_like_shimback_binary and
+ * review.md. NUL-bounded so it can't be mistaken for a substring of
+ * ordinary printable text. */
+#define SHIMBACK_BINARY_MARKER "\x00shimback-binary-identity-marker-v1\x00"
+#define SHIMBACK_BINARY_MARKER_LEN (sizeof(SHIMBACK_BINARY_MARKER) - 1)
+
 #endif /* SHIMBACK_VERSION_H */
