@@ -107,11 +107,11 @@ shimback add <name> [-s <source>] [--source-arg <arg>]...
                      [--route-arg <arg>]... [--strip-matched-args]
                      [--split-source-arg <arg>]... [--split-fallback-arg <arg>]...
                      [--rewrite <from>=<to>]... [--diagnostic] [--force] [-v|--verbose]
-                     [--capture-timeout <ms>] [--capture-limit <size>]
+                     [--capture-timeout <ms>] [--capture-limit <size>] [--split-config]
 shimback remove [-y] <name>
 shimback init
 shimback list [--full]
-shimback doctor [fix]
+shimback doctor [fix [-y|--yes]]
 shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]
 shimback uninstall [--prefix <dir>] [--full]
 shimback edit
@@ -121,7 +121,13 @@ shimback --help | --version
 `--help` (and the usage printed on a missing/unknown command) uses styled,
 colored help when stdout is a terminal and `NO_COLOR` isn't set: section
 headers bold yellow, commands and flags bold green,
-placeholders (`<name>`, `<fallback>`, …) cyan.
+placeholders (`<name>`, `<fallback>`, …) cyan. Every command also has its
+own scoped help — `shimback add --help` (or `-h`) shows just `add`'s usage
+and description instead of the full list, the same way clap-rs's
+generated subcommand help does; it works no matter where `-h`/`--help`
+appears among that command's own arguments (`shimback doctor fix -y -h`
+works the same as `shimback doctor --help`), and an alias (`rm`, `ls`)
+shows its target command's help.
 
 ### `add`
 

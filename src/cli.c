@@ -52,13 +52,23 @@ static void print_markup(bool colorize, const char *markup) {
     }
 }
 
-static void print_usage(void) {
-    printf("shimback %s -- run a primary command, transparently fall back to another on failure\n"
-           "\n",
-           SHIMBACK_VERSION);
-    print_markup(
-        stdout_is_color(),
-        "\003USAGE:\003\n"
+/* One entry per real command (aliases -- rm, ls -- share their primary
+ * command's entry; see COMMAND_ALIASES below). `usage` is that command's
+ * own "shimback <cmd> ..." line(s) under the global USAGE: header, with
+ * no trailing blank line; `description` is its COMMANDS: paragraph,
+ * including the trailing blank line that separates it from the next
+ * command's -- so print_usage() below reproduces the exact same combined
+ * output by simply concatenating every entry's fields in order, and
+ * print_command_help() reproduces exactly one command's slice of it. */
+typedef struct {
+    const char *name;
+    const char *usage;
+    const char *description;
+} CommandHelp;
+
+static const CommandHelp COMMAND_HELP[] = {
+    {
+        "add",
         "  \001shimback add\001 \002<name>\002 [\001-s\001 \002<source>\002] "
         "[\001--source-arg\001 \002<arg>\002]...\n"
         "                      \001-f\001 \002<fallback>\002 [\001--fallback-arg\001 "
@@ -75,18 +85,8 @@ static void print_usage(void) {
         "                      [\001--rewrite\001 \002<from>\002=\002<to>\002]... "
         "[\001--diagnostic\001] [\001--force\001] [\001-v\001|\001--verbose\001]\n"
         "                      [\001--capture-timeout\001 \002<ms>\002] "
-        "[\001--capture-limit\001 \002<size>\002] [\001--split-config\001]\n"
-        "  \001shimback remove\001 [\001-y\001] \002<name>\002 (alias: \001rm\001)\n"
-        "  \001shimback init\001\n"
-        "  \001shimback list\001 [\001--full\001] (alias: \001ls\001)\n"
-        "  \001shimback doctor\001 [\001fix\001 [\001-y\001|\001--yes\001]]\n"
-        "  \001shimback install\001 [\001--prefix\001 \002<dir>\002] "
-        "[\001--shell\001 \002<shell>\002[,\002<shell>\002]... | \001--all\001]\n"
-        "  \001shimback uninstall\001 [\001--prefix\001 \002<dir>\002] [\001--full\001]\n"
-        "  \001shimback edit\001\n"
-        "  \001shimback --help\001 | \001--version\001\n"
-        "\n"
-        "\003COMMANDS:\003\n"
+        "[\001--capture-limit\001 \002<size>\002] [\001--split-config\001]\n",
+
         "  \001add\001       Create or update a shim named <name>, running \002<source>\002 "
         "first and\n"
         "            transparently retrying \002<fallback>\002 depending on the policy (see\n"
@@ -116,23 +116,43 @@ static void print_usage(void) {
         "            directory, or the shim symlink's own directory, to override it from\n"
         "            there instead. Re-running \001add\001 without \001--split-config\001 folds it back.\n"
         "              \004e.g. shimback add sed -f /usr/bin/sed\004\n"
-        "\n"
+        "\n",
+    },
+    {
+        "remove",
+        "  \001shimback remove\001 [\001-y\001] \002<name>\002 (alias: \001rm\001)\n",
+
         "  \001remove\001    Remove a shim's symlink and its config entry. Leaves the PATH\n"
         "            injection in your shell startup file alone. Also available as\n"
         "            \001rm\001. \001-y\001/\001--yes\001 auto-removes an unambiguous \"did you\n"
         "            mean\" match instead of just showing it.\n"
         "              \004e.g. shimback remove -y shed\004\n"
-        "\n"
+        "\n",
+    },
+    {
+        "init",
+        "  \001shimback init\001\n",
+
         "  \001init\001      Detect every installed shell (zsh, bash, fish) and add the shim\n"
         "            directory to PATH in each one, not just your current shell.\n"
         "              \004e.g. shimback init\004\n"
-        "\n"
+        "\n",
+    },
+    {
+        "list",
+        "  \001shimback list\001 [\001--full\001] (alias: \001ls\001)\n",
+
         "  \001list\001      List every shim (config.toml- or split-config-backed, plus any\n"
         "            orphan -- see \001doctor\001) as a table: name, source, fallback, policy,\n"
         "            and diagnostic flag. Also available as \001ls\001. \001--full\001 also prints\n"
         "            each shim's policy-specific configuration.\n"
         "              \004e.g. shimback list --full\004\n"
-        "\n"
+        "\n",
+    },
+    {
+        "doctor",
+        "  \001shimback doctor\001 [\001fix\001 [\001-y\001|\001--yes\001]]\n",
+
         "  \001doctor\001    Check the whole setup end to end -- dead symlinks, missing or\n"
         "            non-executable source/fallback binaries, a policy with nothing to\n"
         "            select on, and an orphaned shim symlink with no config.toml entry\n"
@@ -141,7 +161,13 @@ static void print_usage(void) {
         "            shim symlink it finds, and prompts to remove each orphan it finds\n"
         "            (\001-y\001/\001--yes\001 removes every orphan without asking).\n"
         "              \004e.g. shimback doctor fix -y\004\n"
-        "\n"
+        "\n",
+    },
+    {
+        "install",
+        "  \001shimback install\001 [\001--prefix\001 \002<dir>\002] "
+        "[\001--shell\001 \002<shell>\002[,\002<shell>\002]... | \001--all\001]\n",
+
         "  \001install\001   Copy the running shimback binary to a stable, PATH-ed location\n"
         "            (default: ~/.local/bin) so shim symlinks (which point at wherever\n"
         "            the binary was running from at `add` time) survive a rebuild. Also\n"
@@ -150,19 +176,94 @@ static void print_usage(void) {
         "            default only sets up PATH for the current shell; \001--shell\001 takes a\n"
         "            comma-separated list and \001--all\001 means every installed shell.\n"
         "              \004e.g. shimback install --prefix ~/.local --shell zsh,bash\004\n"
-        "\n"
+        "\n",
+    },
+    {
+        "uninstall",
+        "  \001shimback uninstall\001 [\001--prefix\001 \002<dir>\002] [\001--full\001]\n",
+
         "  \001uninstall\001 Remove every shim symlink shimback created, the installed binary,\n"
         "            and the man page. \001--full\001 also clears the config file and the\n"
         "            PATH blocks in shell startup files (left alone by default).\n"
         "              \004e.g. shimback uninstall --full\004\n"
-        "\n"
+        "\n",
+    },
+    {
+        "edit",
+        "  \001shimback edit\001\n",
+
         "  \001edit\001      Open config.toml in \002$EDITOR\002, or, if unset, the first of \002nvim\002,\n"
         "            \002vim\002, \002vi\002, \002nano\002, \002pico\002 found on \002PATH\002 -- fails if none of\n"
         "            those are found either. Warns (without failing) if the file no\n"
         "            longer parses once the editor exits successfully.\n"
         "              \004e.g. shimback edit\004\n"
-        "\n"
-        "\004Copyright (c) 2026 pnavais. MIT OR Apache-2.0.\004\n");
+        "\n",
+    },
+};
+
+#define COMMAND_HELP_COUNT (sizeof(COMMAND_HELP) / sizeof(COMMAND_HELP[0]))
+
+/* Maps an alias to the COMMAND_HELP entry that documents it -- both `rm`
+ * and `remove` (same for `ls`/`list`) show identical help, matching
+ * cli_run()'s own dispatch below. */
+static const CommandHelp *find_command_help(const char *name) {
+    if (strcmp(name, "rm") == 0) {
+        name = "remove";
+    } else if (strcmp(name, "ls") == 0) {
+        name = "list";
+    }
+    for (size_t i = 0; i < COMMAND_HELP_COUNT; i++) {
+        if (strcmp(COMMAND_HELP[i].name, name) == 0) {
+            return &COMMAND_HELP[i];
+        }
+    }
+    return NULL;
+}
+
+static void print_usage(void) {
+    printf("shimback %s -- run a primary command, transparently fall back to another on failure\n"
+           "\n",
+           SHIMBACK_VERSION);
+    bool colorize = stdout_is_color();
+    print_markup(colorize, "\003USAGE:\003\n");
+    for (size_t i = 0; i < COMMAND_HELP_COUNT; i++) {
+        print_markup(colorize, COMMAND_HELP[i].usage);
+    }
+    print_markup(colorize, "  \001shimback --help\001 | \001--version\001\n\n\003COMMANDS:\003\n");
+    for (size_t i = 0; i < COMMAND_HELP_COUNT; i++) {
+        print_markup(colorize, COMMAND_HELP[i].description);
+    }
+    print_markup(colorize, "\004Copyright (c) 2026 pnavais. MIT OR Apache-2.0.\004\n");
+}
+
+/* `shimback <cmd> --help`/`-h` (clap-rs-style per-subcommand help,
+ * checked anywhere in that command's own arguments -- see
+ * argv_has_help_flag below): just that command's slice of print_usage()'s
+ * combined output, so the two can never drift apart on wording. */
+static void print_command_help(const CommandHelp *help) {
+    printf("shimback %s -- run a primary command, transparently fall back to another on failure\n"
+           "\n",
+           SHIMBACK_VERSION);
+    bool colorize = stdout_is_color();
+    print_markup(colorize, "\003USAGE:\003\n");
+    print_markup(colorize, help->usage);
+    print_markup(colorize, "\n\003DESCRIPTION:\003\n");
+    print_markup(colorize, help->description);
+    print_markup(colorize,
+                  "\004Run `shimback --help` to see every command.\004\n\n"
+                  "\004Copyright (c) 2026 pnavais. MIT OR Apache-2.0.\004\n");
+}
+
+/* True if `-h`/`--help` appears anywhere in argv[0..argc-1] -- matching
+ * clap-rs, where --help short-circuits regardless of position rather than
+ * only being recognized as the very first/only argument. */
+static bool argv_has_help_flag(int argc, char **argv) {
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int cli_run(int argc, char **argv) {
@@ -178,6 +279,17 @@ int cli_run(int argc, char **argv) {
         printf("shimback %s\n", SHIMBACK_VERSION);
         return 0;
     }
+
+    /* `shimback <cmd> --help`/`-h` (clap-rs-style per-subcommand help),
+     * checked before dispatch so it short-circuits regardless of where in
+     * that command's own arguments the flag appears, and regardless of
+     * whether the rest of the command line would otherwise be valid. */
+    const CommandHelp *help = find_command_help(argv[1]);
+    if (help && argv_has_help_flag(argc - 2, argv + 2)) {
+        print_command_help(help);
+        return 0;
+    }
+
     if (strcmp(argv[1], "add") == 0) {
         return cmd_add(argc - 1, argv + 1);
     }
