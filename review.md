@@ -1,206 +1,173 @@
-# Follow-up security review
+# Follow-up review: remaining warnings
 
 ## Scope and verification
 
-This review covers the remediation commit and the remaining security and
-correctness risks identified after the previous review. The macOS Debug build
-completed successfully with warnings enabled, and all 12 CTest tests passed.
-The findings below were also verified with targeted sandboxed reproductions.
+This review checks the latest remediation commit against the previous follow-up
+findings. The macOS Debug build succeeds with `-Wall -Wextra -Werror`, and all
+12 CTest tests pass. The findings below were independently reproduced in
+sandboxed environments.
 
-## Critical (must fix before merge)
-
-### 1. Uninstall executes untrusted files to determine ownership
-
-**Location:** `src/commands/uninstall.c:45-81, 128-134, 292`
-
-**Problem:** `looks_like_shimback_binary()` executes a candidate executable with
-`--version` and treats output beginning with `shimback ` as proof that the file
-is Shimback-owned. This check is used both for installed binaries and for
-symlink targets in the shim directory.
-
-**Why it matters:** A foreign executable can print the expected prefix while
-performing arbitrary actions first. Running `uninstall` therefore executes
-untrusted code merely to decide whether it may be deleted. I verified this
-with a foreign symlink whose target wrote a marker file, printed `shimback
-fake`, and was then removed by `uninstall`.
-
-**Fix:** Do not execute candidate files for ownership verification. Use trusted
-installation metadata, or compare the candidate against a recorded identity
-such as a trusted hash or inode/device identity. For symlinks, preserve live
-links whose ownership cannot be established; do not infer ownership from
-program output.
-
-### 2. Path traversal remains possible through `remove`
-
-**Location:** `src/commands/remove.c:40-60, 102-137`;
-`src/paths.c:89-129`
-
-**Problem:** `remove` accepts an arbitrary user-supplied name and passes it to
-`split_config_filename()` and `remove_split_configs()` without validating it.
-`split_config_filename()` simply appends `-config.toml`, so `../` components
-remain active when the result is joined with the Shimback directories.
-
-**Why it matters:** A caller can delete a file outside the intended config
-directory when the corresponding traversal path exists. I verified that:
-
-```sh
-shimback remove ../../../victim
-```
-
-deleted a sandbox file named `victim-config.toml` outside the Shimback config
-directory. The same issue remains possible for unsafe section names loaded from
-hand-edited `config.toml`, including during `uninstall --full`.
-
-**Fix:** Validate names with the same `is_valid_shim_name()` allowlist before
-any path construction in `remove`, and reject invalid names while parsing
-`[shims.<name>]` sections in `config_load()`. Path-building helpers should also
-defensively reject names containing `/`, `..`, or other path separators rather
-than relying only on callers.
+No remaining Critical security issue was found: uninstall no longer executes
+candidate files, and traversal through `remove` is rejected.
 
 ## Warning (should address)
 
-### 3. `add` can still leave configuration behind when symlink creation fails
+### 1. Invalid symlink names can abort `uninstall --full`
 
-**Location:** `src/commands/add.c:292-334`
+**Location:** `src/commands/uninstall.c:282-286`;
+`src/paths.c:116-118`
 
-**Problem:** `add` saves `config.toml` (and, for split configuration, the split
-file) before creating a new symlink. The atomic rename fix protects an existing
-symlink, but there is still no rollback when creating a new symlink or the shim
-directory fails.
+**Problem:** `remove_shim_symlinks()` records every owned symlink name in
+`removed_names`, but `uninstall --full` later passes those names to
+`remove_split_configs()`. A manually created owned symlink with an invalid name
+such as `bad#name` reaches `split_config_filename()`, which calls `die()`.
 
-**Why it matters:** I verified that when the XDG data path is blocked by a
-regular file, `add` returns an error while leaving a new config entry behind
-with no corresponding symlink. This is a partially applied operation and can
-confuse later `list`, `doctor`, and dispatch behavior.
+**Why it matters:** The uninstall operation becomes partial: the symlink is
+removed, then the process exits before completing the config sweep and the rest
+of the uninstall. I reproduced this with a symlink named `bad#name`; the link
+was removed, but `uninstall --full` exited 1 with an unsafe-name error.
 
-**Fix:** Stage the config and symlink changes and commit them together where
-possible. At minimum, retain the previous config/split files and restore them
-if directory or symlink creation fails; for a new shim, remove the newly
-written config on failure.
+**Fix:** Validate names before adding them to `removed_names`, or skip invalid
+names while sweeping split configurations and emit a warning. Cleanup should
+never abort the entire uninstall because of a malformed filesystem entry.
 
-### 4. Temporary man-page download errors are ignored
+### 2. Failed `add --split-config` can delete an existing split config
 
-**Location:** `src/commands/install.c:63-71`
+**Location:** `src/commands/add.c:317-345, 352-378`
 
-**Problem:** `download_via_curl()` ignores failures from `chmod(tmp_file, 0644)`
-and `rmdir(tmpdir)`.
+**Problem:** When `add --split-config` updates an existing shim, it overwrites
+the existing split file before creating the symlink. If shim-directory creation
+or symlink creation then fails, rollback removes the new split file but does not
+restore the previous contents.
 
-**Why it matters:** If `chmod()` fails, the man page can still be renamed into
-place with unintended permissions. If cleanup fails, private temporary
-directories are left behind after successful or failed installs and can
-accumulate over repeated runs.
+**Why it matters:** A failed command can permanently destroy a previously valid
+configuration. I reproduced this by creating an existing split config and
+blocking the XDG data directory; `add` failed and the prior split config was
+gone afterward.
 
-**Fix:** Check `chmod()` and treat failure as an unsuccessful download before
-the rename. Check `rmdir()` on every exit path and report cleanup failures, or
-use a cleanup helper that guarantees the temporary directory is removed when
-possible.
+**Fix:** Preserve the previous split file by renaming it to a rollback backup
+or storing its contents before the update. Restore it if the filesystem phase
+fails; only delete the backup after the symlink operation succeeds.
+
+### 3. Temporary-directory cleanup is unchecked on `fork()` failure
+
+**Location:** `src/commands/install.c:44-55`
+
+**Problem:** If `fork()` fails after `mkdtemp()` succeeds, the code calls
+`rmdir(tmpdir)` but ignores its return value and does not report a cleanup
+failure.
+
+**Why it matters:** A private temporary directory can be left behind silently.
+This is a low-probability resource leak, but repeated failed installs could
+accumulate artifacts.
+
+**Fix:** Check and report the cleanup result, consistently with the other exit
+paths:
+
+```c
+if (rmdir(tmpdir) != 0) {
+    warn("install: failed to remove temporary directory %s: %s",
+         tmpdir, strerror(errno));
+}
+```
 
 ## Assessment
 
-The prior fixes for name validation during `add`, checksum verification,
-editor command parsing, temporary-file isolation, read errors, wait handling,
-Python test skipping, and packaging smoke tests appear to be working. The two
-Critical findings above still require correction before the project should be
-considered ready for release.
+The major security findings from the earlier rounds appear resolved, and the
+full test suite is green. Fixing the first two warnings is recommended before
+describing the project as fully release-ready; the third is minor hardening.
 
-## Response to the follow-up review (2026-09-15)
+## Response
 
-All 4 findings agreed with and fixed -- both Critical ones are genuine, and
-#1 in particular is a real regression my own previous round introduced
-(trading "delete without checking" for "execute untrusted code to check" is
-not actually progress). Verified on a clean macOS Debug build
-(`-Wall -Wextra -Werror`, zero warnings) and a fresh non-root `ubuntu:24.04`
-container, full 12-test suite green on both, plus direct reproductions of
-both Critical exploits exactly as you described them.
+All three findings are agreed with and fixed. I reproduced each exploit/bug
+first, confirmed the fix resolves it, added a permanent regression test for
+each, and verified with a clean macOS Debug build (`-Wall -Wextra -Werror`,
+zero warnings) plus a genuine non-root Docker build on `ubuntu:24.04` -- both
+12/12 CTest.
 
-### Critical
+### 1. Invalid symlink names can abort `uninstall --full` -- fixed
 
-**1. Uninstall executes untrusted files to determine ownership -- fixed.**
-Reproduced your exact exploit first (a symlink target that writes a marker
-file, prints `shimback fake`, gets removed) to confirm, then replaced
-`looks_like_shimback_binary()` entirely: it no longer executes anything.
-Every shimback build now embeds a fixed marker string
-(`SHIMBACK_BINARY_MARKER`, in `version.h.in`) -- referenced from a reachable
-line in `main.c` so no optimization level can strip it as unused, but never
-printed, so `--version`'s actual output is unchanged. The check is now a
-plain byte-scan for that marker in the candidate file's own bytes (bounded
-to a sane max size), used for both the shim-symlink-ownership check and the
-`--prefix`-derived binary check. This keeps the "any shimback build, not
-just this exact one" property from last round's fix, without executing
-anything -- reading a file's bytes can't run them, whatever they are. The
-man-page check was already non-executing (a static header sniff) and is
-unchanged. Re-ran your exact reproduction after the fix: the marker file is
-never created (the candidate is never executed), and the symlink correctly
-survives. Both scenarios (a malicious shim-directory symlink, and a
-malicious `--prefix`-derived `bin/shimback`) are now permanent regression
-tests in `test_uninstall.sh`.
+Agreed, and while investigating I found the same root cause also reaches
+`list`/`doctor`: both call `resolve_shim_entry()` for every name
+`collect_all_shim_names()` finds, which includes directory-scanned symlink
+names from `list_shim_symlink_names()` -- the exact same unvalidated source
+`uninstall --full` uses. A symlink named `bad#name` would have crashed
+`shimback list`/`shimback doctor` too, not just `uninstall --full`.
 
-**2. Path traversal through `remove` -- fixed**, at the three layers you
-described. `is_valid_shim_name()` moved from `add_wizard.c` to `paths.h`
-(config.c already depends on paths.c, so this was the only direction that
-didn't create a header cycle) and is now enforced in all three places:
-`remove` validates `name` before it ever touches `resolve_split_config_path`
-or `remove_split_configs`; `config_load()` rejects an invalid
-`[shims.<name>]` section header the same way it already rejects malformed
-header syntax (`CONFIG_ERR_PARSE`), closing the `uninstall --full`-via-
-hand-edited-config path you flagged; and `split_config_filename()` itself
-now `die()`s on an unvalidated name reaching it at all, as a last-resort
-invariant check for any future caller that forgets the first two. Re-ran
-`shimback remove '../../../victim'` exactly as you described: now refused
-up front with a clear "invalid shim name" error, victim file untouched.
-Both the CLI-argument path and the hand-edited-config.toml path are now
-covered by regression tests (`test_add_remove.sh`,
-`test_config_parser.c`).
+Rather than weaken `split_config_filename()`'s own `die()` (that stays a
+correct last-resort invariant check for the callers that *are* supposed to
+validate first -- `add.c`, `remove.c`, `config_load()`), I fixed it at the
+two entry points that legitimately receive unvalidated, directory-derived
+names: `resolve_split_config_path()` (`src/paths.c`) now returns `NULL` for
+an invalid name -- correct, since an invalid name can never have a
+legitimate split file (`add` refuses to create one), so "not found" is the
+right answer, not a crash. `remove_split_configs()` (`src/config.c`) now
+warns and returns `0` for an invalid name instead of reaching the `die()`.
+This also fixes the `list`/`doctor` exposure, not just the reported
+`uninstall --full` case.
 
-### Warning
+Reproduced: `ln -s "$SHIMBACK" "$SHIMDIR/bad#name"` then `uninstall --full`
+used to exit 1 partway through, leaving config.toml and PATH blocks
+untouched. After the fix it exits 0, prints `skipping split-config cleanup
+for invalid shim name 'bad#name'`, and completes the full sweep. New
+regression test in `tests/test_uninstall.sh`.
 
-**3. `add` can still leave configuration behind -- fixed for the case your
-reproduction actually hit** (a brand-new shim, shim-directory creation
-blocked). When `mkdir_p(shim_dir)` or the plain `symlink()` call fails for
-a shim that had *no* previous symlink, `add` now rolls back: reloads
-config.toml (or deletes the split file) and removes the entry it just
-committed, before `die()`-ing -- so a failed `add` no longer leaves a
-"configured" shim with nothing backing it. I didn't extend this to the
-*replacing an existing symlink* branch: last round's atomic-rename fix
-already guarantees the *old* symlink survives completely intact if the
-replacement fails, and since a shim symlink never encodes policy/source/
-fallback data itself (only its name matters; dispatch re-reads everything
-else fresh from config.toml/the split file every time it runs), that old
-symlink stays fully functional under whatever config now exists for it --
-there's no actual inconsistency left to roll back in that case, just a
-config entry that changed without its symlink needing to. Re-ran your
-exact reproduction (XDG data path blocked by a regular file): config.toml
-now shows no trace of the failed `add` afterward. New regression test in
-`test_add_remove.sh`.
+### 2. Failed `add --split-config` can delete an existing split config -- fixed
 
-**4. Ignored `chmod`/`rmdir` errors in the man-page downloader -- fixed.**
-A failed `chmod(tmp_file, 0644)` is now treated as a failed download (logged,
-`ok = false`) instead of proceeding to `rename()` a file into place with
-whatever mode it happened to get otherwise. `rmdir(tmpdir)` is now checked
-on every exit path (success and failure) and a failure is reported via
-`warn()` rather than silently leaving the private temp directory behind.
-Verified by inspection and a clean `test_install.sh` run; didn't add a
-dedicated automated test for this one specifically (forcing `chmod`/`rmdir`
-to fail portably needs fairly contrived sandbox setup for a narrow,
-low-likelihood edge case) -- same proportionate call as #9 from the
-previous round, which this review didn't flag as insufficient.
+Agreed. The bug wasn't specific to the symlink-replacement path -- it was
+that `config_save_split()`/`config_save()` overwrite their target files
+unconditionally, before the filesystem phase (`mkdir_p`/symlink) that can
+still fail afterward, and the old rollback only ever undid a *brand-new*
+entry, never a pre-existing file's prior content.
 
-### Summary
+Replaced that with a general backup/restore mechanism in `add.c`:
+`backup_file_if_exists()` copies whatever's currently at a path (a no-op if
+nothing's there yet) before it gets overwritten; `restore_from_backup()`
+either restores that backup (an existing file that was updated) or deletes
+what was just created (a file that didn't exist before) -- so it correctly
+unwinds both "updating an existing shim" and "creating a brand-new one" with
+the same logic. This now covers config.toml itself and the split file
+uniformly, and every failure point from the config save through the symlink
+step (`rollback_and_die()`) restores both before dying. Backups are
+discarded once everything succeeds. As a side effect this also fixes the
+analogous (unreported) case for a plain, non-split shim being updated: its
+config.toml entry is now restored too if a later step fails, not just the
+split-file case.
 
-4/4 agreed and fixed, all verified on both macOS and non-root Linux,
-including direct reproductions of both Critical exploits before and after
-the fix. New/updated tests: two new `uninstall` regression tests proving
-ownership verification never executes a candidate file (shim symlink and
-`--prefix` binary, both with a "would print a fake identity if run" payload
-that must never actually run); `remove`'s path-traversal rejection (new,
-`test_add_remove.sh`); `config_load`'s rejection of an invalid section-header
-name, both a traversal attempt and a `#`-containing one (new,
-`test_config_parser.c`); `add`'s config rollback on a blocked shim directory
-(new, `test_add_remove.sh`). The one design note worth flagging explicitly:
-#1's fix trades a "recognize any shimback binary via execution" guarantee
-for "recognize any shimback binary via a static marker, which a
-sufficiently motivated forger could in principle also embed" -- that's a
-deliberate, correct trade (no code execution is worth far more than
-resistance to a deliberately crafted decoy, which was never the actual
-threat model either finding was about), but flagging it in case a future
-round wants something stronger than a marker scan.
+I also moved the "sweep a stale split file left over from an earlier
+`add --split-config`" step (for a *non*-split add) to run only after
+everything else has succeeded, instead of right after the config save --
+otherwise a stale split file could be swept away by an `add` that itself
+went on to fail, deconfiguring the shim entirely.
+
+Reproduced exactly as described: created a split-config shim, blocked the
+shim directory (a plain file in its place, so `mkdir_p` fails), then ran
+`add --split-config` again with a different fallback -- the split file used
+to end up permanently overwritten with the new (never-applied) data. After
+the fix it's byte-for-byte unchanged, and no `.rollback.*` files are left
+behind. New regression test in `tests/test_split_config.sh`.
+
+### 3. Temporary-directory cleanup is unchecked on `fork()` failure -- fixed
+
+Agreed, applied exactly as suggested -- the `fork() < 0` branch in
+`download_via_curl()` now checks and warns on a failed `rmdir()`, matching
+the other two exit paths in the same function.
+
+### Unrelated: Linux build broke under a newer toolchain
+
+While running the full verification pipeline, a fresh pull of `ubuntu:24.04`
+(gcc 13.3.0, glibc 2.39) failed to build at all -- confirmed this reproduces
+on the already-reviewed commit too, so it's environment drift, not a
+regression from this round's changes. Two issues, both fixed:
+
+- `realpath()` (`src/paths.c`) is no longer visible under `-std=c11
+  -D_POSIX_C_SOURCE=200809L` on this glibc; it also needs `_XOPEN_SOURCE=700`
+  defined alongside it. Added in `CMakeLists.txt`.
+- `add_wizard.c` had several `snprintf()` calls formatting a 4096-byte input
+  buffer's contents into a 256-byte error message with a bare `%s`, which
+  newer gcc's `-Wformat-truncation` correctly flags as possibly truncating.
+  Bounded each with `%.190s` (still room for the surrounding literal text
+  within 256 bytes) so it's provably safe rather than just quieter.
+
+Both verified fixed under the same non-root `ubuntu:24.04` Docker build used
+for the rest of this round's verification.

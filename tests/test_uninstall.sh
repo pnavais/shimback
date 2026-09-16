@@ -226,4 +226,27 @@ if [ ! -f "$MALICIOUS_PREFIX/bin/shimback" ]; then
     fail "uninstall --prefix: a binary that would fake its identity if run should still survive"
 fi
 
+# --- a genuinely-owned shim symlink with a name outside `add`'s own
+# allowlist (hand-created with `ln -s`, or predating that restriction)
+# must not abort uninstall --full partway through: the symlink itself is
+# still safely removed (its *target* really is the shimback binary), but
+# the invalid name must be skipped -- with a warning, not a die() -- when
+# --full goes on to sweep split configs, so the rest of the cleanup (the
+# config file, PATH blocks) still completes (see review.md) ---
+"$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+BAD_NAME_LINK="$(shim_path 'bad#name')"
+ln -s "$SHIMBACK" "$BAD_NAME_LINK"
+
+out8="$("$SHIMBACK" uninstall --prefix "$PREFIX" --full 2>&1)"
+code8=$?
+assert_eq "uninstall --full: still exits 0 despite an invalidly-named owned symlink" "0" "$code8"
+assert_contains "uninstall --full: warns about the invalid name instead of dying" "$out8" \
+    "skipping split-config cleanup for invalid shim name 'bad#name'"
+if [ -e "$BAD_NAME_LINK" ]; then
+    fail "uninstall --full: the invalidly-named owned symlink should still have been removed"
+fi
+if [ -f "$CFG" ]; then
+    fail "uninstall --full: config file should still be removed despite the invalid name"
+fi
+
 finish

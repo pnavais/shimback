@@ -828,7 +828,12 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
                 if (input_len == 0) {
                     snprintf(error_msg, sizeof(error_msg), "Name is required.");
                 } else if (!is_valid_shim_name(input)) {
-                    snprintf(error_msg, sizeof(error_msg), "Invalid shim name '%s'.", input);
+                    /* %.190s (input can hold up to 4095 bytes, error_msg only
+                     * 256) bounds the substitution so gcc can prove this can
+                     * never truncate, instead of just warning that it might;
+                     * a wizard error label has no business echoing that much
+                     * back anyway. */
+                    snprintf(error_msg, sizeof(error_msg), "Invalid shim name '%.190s'.", input);
                 } else {
                     free(st.name);
                     st.name = xstrdup(input);
@@ -851,13 +856,13 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
                     char *resolved = resolve_binary_arg(input);
                     if (!resolved) {
                         snprintf(error_msg, sizeof(error_msg),
-                                 "'%s' does not exist, is not executable, or isn't on $PATH.",
+                                 "'%.190s' does not exist, is not executable, or isn't on $PATH.",
                                  input);
                         input[0] = '\0';
                         input_len = 0;
                     } else if (strcmp(resolved, self_exe) == 0) {
                         snprintf(error_msg, sizeof(error_msg),
-                                 "'%s' resolves back to the shimback binary itself.", input);
+                                 "'%.190s' resolves back to the shimback binary itself.", input);
                         free(resolved);
                         input[0] = '\0';
                         input_len = 0;
@@ -892,14 +897,15 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
                 char *resolved = resolve_binary_arg(input);
                 if (!resolved) {
                     snprintf(error_msg, sizeof(error_msg),
-                             "'%s' does not exist, is not executable, or isn't on $PATH.", input);
+                             "'%.190s' does not exist, is not executable, or isn't on $PATH.",
+                             input);
                     input[0] = '\0';
                     input_len = 0;
                     break;
                 }
                 if (strcmp(resolved, self_exe) == 0) {
                     snprintf(error_msg, sizeof(error_msg),
-                             "'%s' resolves back to the shimback binary itself.", input);
+                             "'%.190s' resolves back to the shimback binary itself.", input);
                     free(resolved);
                     input[0] = '\0';
                     input_len = 0;

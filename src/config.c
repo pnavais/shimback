@@ -1146,6 +1146,18 @@ ConfigStatus config_save_split(const ShimEntry *entry, const char *path, char *e
 }
 
 size_t remove_split_configs(const char *name) {
+    /* Same reasoning as resolve_split_config_path(): callers sweeping
+     * every name they can find (uninstall --full over list_shim_symlink_
+     * names(), in particular -- see review.md) can hand this an unsafe
+     * name that was never validated by add.c/remove.c/config_load(). An
+     * invalid name can never have a legitimate split file to remove, so
+     * skip it (with a warning, since it's still worth knowing about)
+     * instead of letting split_config_filename()'s defensive die() abort
+     * the whole sweep partway through. */
+    if (!is_valid_shim_name(name)) {
+        warn("skipping split-config cleanup for invalid shim name '%s'", name);
+        return 0;
+    }
     char *paths[3];
     split_config_all_paths(name, paths);
     size_t removed = 0;

@@ -21,7 +21,12 @@ set(CMAKE_C_EXTENSIONS OFF)
 # extensions (mkdtemp among them) that are normally exposed by default.
 # _DARWIN_C_SOURCE restores those on top of the same strict POSIX baseline
 # -- a no-op on Linux, where glibc doesn't look at it at all.
-add_compile_definitions(_POSIX_C_SOURCE=200809L _DARWIN_C_SOURCE)
+#
+# _XOPEN_SOURCE=700 (the XSI/SUSv4 counterpart to POSIX.1-2008) is needed
+# alongside _POSIX_C_SOURCE on glibc for realpath()'s prototype specifically
+# -- glibc's own feature-test-macro logic doesn't expose it from
+# _POSIX_C_SOURCE alone, unlike strtok_r/clock_gettime/etc. above.
+add_compile_definitions(_POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700 _DARWIN_C_SOURCE)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
