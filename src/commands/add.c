@@ -246,6 +246,27 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                 "manually first",
                 symlink_path);
         }
+        /* This ownership check and the eventual rename() that replaces
+         * symlink_path (see below) aren't atomic with each other -- config
+         * I/O runs in between, which takes measurable time. A directory
+         * that anyone besides its owner can write into would let a
+         * concurrent process swap symlink_path for something else in that
+         * window, so the later rename() would silently replace whatever
+         * got swapped in, not what was actually just checked (see
+         * review.md). Refusing outright when the directory isn't
+         * owner-only-writable is the "at minimum" bar for this: it can't
+         * close the window by itself (a single-writer directory still has
+         * one), but it rules out the actual precondition the race needs
+         * -- another user able to write here at all. shim_dir always
+         * exists at this point, since symlink_path (inside it) was just
+         * found. */
+        struct stat dir_st;
+        if (stat(shim_dir, &dir_st) == 0 && (dir_st.st_mode & (S_IWGRP | S_IWOTH))) {
+            die("add: %s is writable by more than just its owner, which would let a "
+                "concurrent process race the replacement of an existing shim symlink -- "
+                "restrict its permissions first (e.g. chmod go-w %s)",
+                shim_dir, shim_dir);
+        }
         replacing_existing_symlink = true;
     }
 
@@ -415,6 +436,23 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
             rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
                               "add: failed to create replacement symlink %s: %s", tmp_link,
                               strerror(errno));
+        }
+        /* Revalidate right before the swap: this is as close as a plain
+         * rename() gets to closing the TOCTOU window from the ownership
+         * check above, shrinking it from "however long config I/O took"
+         * down to the handful of syscalls between here and rename()
+         * itself (see review.md). */
+        struct stat recheck_st;
+        char *recheck_resolved = NULL;
+        bool still_ours = lstat(symlink_path, &recheck_st) == 0 && S_ISLNK(recheck_st.st_mode) &&
+                           (recheck_resolved = canonicalize(symlink_path)) != NULL &&
+                           strcmp(recheck_resolved, self_exe) == 0;
+        free(recheck_resolved);
+        if (!still_ours) {
+            unlink(tmp_link);
+            rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
+                              "add: %s changed since it was checked; refusing to replace it",
+                              symlink_path);
         }
         if (rename(tmp_link, symlink_path) != 0) {
             unlink(tmp_link);

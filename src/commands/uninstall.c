@@ -54,7 +54,22 @@ static const char *USAGE = "usage: shimback uninstall [--prefix <dir>] [--full]\
  * delete it is itself a code-execution risk, not a safety check (see
  * review.md). A plain byte-scan can still be fooled by a file that
  * happens to embed the same marker bytes, but reading them can never
- * execute anything, which is the actual property this needs. */
+ * execute anything, which is the actual property this needs.
+ *
+ * This is best-effort identification, not authenticated ownership proof
+ * -- SHIMBACK_BINARY_MARKER is a fixed public byte sequence compiled into
+ * every build (readable with `strings` on any shimback binary), so
+ * nothing stops a different file from embedding the same bytes and being
+ * misclassified as ours (see review.md). Deliberately not hardened
+ * further than this: doing so would mean either trusting some other piece
+ * of locally-writable state (an installed-binary manifest, a recorded
+ * hash) that's exactly as forgeable by anything that can already write to
+ * shimback's own directories, or verifying a real cryptographic identity,
+ * which is disproportionate for a single-user CLI tool with no privilege
+ * boundary to defend -- whoever could plant a convincing forgery here
+ * already has write access to the same directory uninstall is cleaning
+ * up, and so could just delete or replace the file directly without
+ * needing this check's cooperation at all. */
 static bool looks_like_shimback_binary(const char *path) {
     struct stat st;
     if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {

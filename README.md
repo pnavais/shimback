@@ -582,6 +582,11 @@ delete the config file, remove those `PATH` blocks, and sweep every shim's
 entry at all) — a complete teardown. Safe to re-run: nothing left to
 remove is just reported as already gone.
 
+`uninstall` identifies its own binary and shim symlink targets by
+statically checking for a marker embedded in every shimback build — a
+best-effort identification hint, not cryptographic proof of ownership.
+It never executes a candidate file to ask what it is.
+
 ### `edit`
 
 ```sh

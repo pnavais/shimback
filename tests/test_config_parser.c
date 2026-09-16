@@ -433,6 +433,86 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
+    /* Trailing garbage after a value must be a parse error, not silently
+     * ignored -- an operator mistake like `fallback = "/bin/echo" garbage`
+     * used to be accepted, with " garbage" simply dropped (and then
+     * dropped for good the next time shimback rewrote the file), hiding
+     * what was actually a malformed line instead of rejecting it. Checked
+     * across a quoted-string field, an array field, a scalar-within-a-
+     * quoted-string field (capture_limit), and the top-level version key,
+     * both at global and per-shim scope where that distinction exists (see
+     * review.md). */
+    const char *trailing_garbage_fallback =
+        "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\" garbage\n"
+        "policy = \"exit-code\"\n";
+    const char *trailing_garbage_policy =
+        "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\n"
+        "policy = \"exit-code\" garbage\n";
+    const char *trailing_garbage_array =
+        "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"exit-code\"\n"
+        "source_args = [\"-n\"] garbage\n";
+    const char *trailing_garbage_capture_limit_shim =
+        "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"exit-code\"\n"
+        "capture_limit = \"8MiB\" garbage\n";
+    const char *trailing_garbage_capture_limit_global =
+        "version = 1\ncapture_limit = \"8MiB\" garbage\n";
+    const char *trailing_garbage_version = "version = 1 garbage\n";
+
+    f = fopen(path, "wb");
+    fwrite(trailing_garbage_fallback, 1, strlen(trailing_garbage_fallback), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "trailing garbage after a quoted-string value is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(trailing_garbage_policy, 1, strlen(trailing_garbage_policy), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "trailing garbage after 'policy' is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(trailing_garbage_array, 1, strlen(trailing_garbage_array), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "trailing garbage after an array value is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(trailing_garbage_capture_limit_shim, 1, strlen(trailing_garbage_capture_limit_shim), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "trailing garbage after per-shim 'capture_limit' is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(trailing_garbage_capture_limit_global, 1, strlen(trailing_garbage_capture_limit_global),
+           f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "trailing garbage after global 'capture_limit' is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(trailing_garbage_version, 1, strlen(trailing_garbage_version), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "trailing garbage after 'version' is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
     unlink(path);
     free(path);
 }

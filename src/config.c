@@ -406,6 +406,20 @@ static ConfigStatus read_file_into_buffer(FILE *f, const char *path, char **out,
     return CONFIG_OK;
 }
 
+/* After a value's own syntax (a quoted string, an array, ...) has already
+ * been parsed and *cursor advanced past it, requires only trailing
+ * whitespace remains -- an inline comment is already stripped before
+ * parsing ever starts (see strip_trailing_comment), so in practice this
+ * just means end of the line. Without this, something like
+ * `fallback = "/bin/echo" garbage` is silently accepted with the trailing
+ * garbage simply ignored -- and then silently dropped for good the next
+ * time shimback rewrites the file, hiding what was actually a malformed
+ * line instead of rejecting it (see review.md). */
+static bool no_trailing_garbage(const char *cursor) {
+    skip_ws(&cursor);
+    return *cursor == '\0';
+}
+
 /* Parses one already-split `key`/`value_str` pair (value_str still raw,
  * untrimmed-of-quotes TOML syntax) into `entry`. Shared by config_load's
  * per-[shims.x]-line handling and config_load_split (a split file's every
@@ -417,7 +431,8 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
 
     if (strcmp(key, "source") == 0) {
         char *v = parse_quoted_string(&cursor);
-        if (!v) {
+        if (!v || !no_trailing_garbage(cursor)) {
+            free(v);
             snprintf(errbuf, errbuf_size, "line %d: expected a string for 'source'", line_no);
             return CONFIG_ERR_PARSE;
         }
@@ -425,7 +440,8 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
         entry->source = v;
     } else if (strcmp(key, "fallback") == 0) {
         char *v = parse_quoted_string(&cursor);
-        if (!v) {
+        if (!v || !no_trailing_garbage(cursor)) {
+            free(v);
             snprintf(errbuf, errbuf_size, "line %d: expected a string for 'fallback'", line_no);
             return CONFIG_ERR_PARSE;
         }
@@ -434,7 +450,7 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     } else if (strcmp(key, "source_args") == 0) {
         StrVec vec;
         strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec)) {
+        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
             strvec_free(&vec);
             snprintf(errbuf, errbuf_size, "line %d: malformed 'source_args' array", line_no);
             return CONFIG_ERR_PARSE;
@@ -448,7 +464,7 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     } else if (strcmp(key, "fallback_args") == 0) {
         StrVec vec;
         strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec)) {
+        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
             strvec_free(&vec);
             snprintf(errbuf, errbuf_size, "line %d: malformed 'fallback_args' array", line_no);
             return CONFIG_ERR_PARSE;
@@ -461,7 +477,7 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
         entry->fallback_arg_count = vec.count;
     } else if (strcmp(key, "policy") == 0) {
         char *v = parse_quoted_string(&cursor);
-        if (!v || !policy_from_string(v, &entry->policy)) {
+        if (!v || !no_trailing_garbage(cursor) || !policy_from_string(v, &entry->policy)) {
             snprintf(errbuf, errbuf_size,
                      "line %d: 'policy' must be \"exit-code\", \"heuristic\", "
                      "\"exit-code-match\", \"route-args\", or \"rewrite\"",
@@ -473,7 +489,8 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     } else if (strcmp(key, "exit_codes") == 0) {
         int *items = NULL;
         size_t count = 0;
-        if (!parse_int_array(&cursor, &items, &count)) {
+        if (!parse_int_array(&cursor, &items, &count) || !no_trailing_garbage(cursor)) {
+            free(items);
             snprintf(errbuf, errbuf_size, "line %d: malformed 'exit_codes' array (values "
                                            "must be integers 0-255)",
                      line_no);
@@ -485,7 +502,7 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     } else if (strcmp(key, "error_patterns") == 0) {
         StrVec vec;
         strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec)) {
+        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
             strvec_free(&vec);
             snprintf(errbuf, errbuf_size, "line %d: malformed 'error_patterns' array", line_no);
             return CONFIG_ERR_PARSE;
@@ -499,7 +516,7 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     } else if (strcmp(key, "route_args") == 0) {
         StrVec vec;
         strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec)) {
+        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
             strvec_free(&vec);
             snprintf(errbuf, errbuf_size, "line %d: malformed 'route_args' array", line_no);
             return CONFIG_ERR_PARSE;
@@ -513,7 +530,7 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     } else if (strcmp(key, "source_route_args") == 0) {
         StrVec vec;
         strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec)) {
+        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
             strvec_free(&vec);
             snprintf(errbuf, errbuf_size, "line %d: malformed 'source_route_args' array",
                      line_no);
@@ -528,7 +545,7 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     } else if (strcmp(key, "fallback_route_args") == 0) {
         StrVec vec;
         strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec)) {
+        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
             strvec_free(&vec);
             snprintf(errbuf, errbuf_size, "line %d: malformed 'fallback_route_args' array",
                      line_no);
@@ -568,7 +585,7 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     } else if (strcmp(key, "capture_limit") == 0) {
         char *v = parse_quoted_string(&cursor);
         size_t bytes;
-        if (!v || !parse_size_bytes(v, &bytes)) {
+        if (!v || !no_trailing_garbage(cursor) || !parse_size_bytes(v, &bytes)) {
             snprintf(errbuf, errbuf_size,
                      "line %d: 'capture_limit' must be a quoted size like \"8MiB\" or "
                      "\"8388608\"",
@@ -582,7 +599,7 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     } else if (strcmp(key, "rewrite_from") == 0) {
         StrVec vec;
         strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec)) {
+        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
             strvec_free(&vec);
             snprintf(errbuf, errbuf_size, "line %d: malformed 'rewrite_from' array", line_no);
             return CONFIG_ERR_PARSE;
@@ -596,7 +613,7 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     } else if (strcmp(key, "rewrite_to") == 0) {
         StrVec vec;
         strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec)) {
+        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
             strvec_free(&vec);
             snprintf(errbuf, errbuf_size, "line %d: malformed 'rewrite_to' array", line_no);
             return CONFIG_ERR_PARSE;
@@ -762,7 +779,12 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
 
         if (current_index < 0) {
             if (strcmp(key, "version") == 0) {
-                cfg->version = (int)strtol(value_str, NULL, 10);
+                if (!parse_nonneg_int(value_str, &cfg->version)) {
+                    snprintf(errbuf, errbuf_size, "line %d: 'version' must be a non-negative "
+                                                   "integer",
+                             line_no);
+                    status = CONFIG_ERR_PARSE;
+                }
             } else if (strcmp(key, "verbose") == 0) {
                 if (strcmp(value_str, "true") == 0) {
                     cfg->verbose = true;
@@ -784,7 +806,7 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                 const char *cursor = value_str;
                 char *v = parse_quoted_string(&cursor);
                 size_t bytes;
-                if (!v || !parse_size_bytes(v, &bytes)) {
+                if (!v || !no_trailing_garbage(cursor) || !parse_size_bytes(v, &bytes)) {
                     snprintf(errbuf, errbuf_size,
                              "line %d: 'capture_limit' must be a quoted size like \"8MiB\" or "
                              "\"8388608\"",
