@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,44 +63,70 @@ static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
     (*arr)[(*count)++] = value;
 }
 
-/* Undoes a config commit that finish_add already made durable, for a
- * *brand-new* shim (no previous symlink existed) whose shim-directory
- * creation or symlink creation then failed -- without this, `add` would
- * return an error while leaving a fully "configured" shim behind with no
- * working symlink at all, confusing later `list`/`doctor`/dispatch (see
- * review.md). Not needed for the *replacing an existing symlink* case:
- * that path already builds the new symlink at a temp name and rename()s
- * it into place atomically, so on failure the *old* symlink survives
- * completely intact -- and since a shim symlink only ever redirects to
- * the shimback binary (never encodes policy/source/fallback data itself,
- * all of which dispatch re-reads fresh from config.toml/the split file
- * every time), that old symlink is still fully functional under whatever
- * config now exists for it. Best-effort: if the rollback write itself
- * fails too, that's reported, but the process still ends via the
- * caller's own die() either way. */
-static void rollback_new_shim_config(const char *name, const char *cfg_path, bool split_config,
-                                      const char *split_target_path) {
-    char errbuf[256];
-    if (split_config) {
-        if (split_target_path && unlink(split_target_path) != 0 && errno != ENOENT) {
-            warn("add: failed to roll back split config %s: %s", split_target_path,
-                 strerror(errno));
+/* Backs up `path` to `backup_path` if `path` currently exists, so a later
+ * failure can restore exactly what was there before finish_add overwrites
+ * it (config.toml itself, and/or a split config file being updated in
+ * place). Returns true and does nothing if `path` doesn't exist yet --
+ * there's nothing to preserve, and restore_from_backup() below knows to
+ * treat "no backup" as "delete whatever got created" in that case. Only
+ * fails when `path` exists but couldn't be copied. */
+static bool backup_file_if_exists(const char *path, const char *backup_path) {
+    if (access(path, F_OK) != 0) {
+        return true;
+    }
+    return copy_file(path, backup_path);
+}
+
+/* Undoes whatever finish_add wrote to `path`, using a prior
+ * backup_file_if_exists() backup: if the backup exists, moves it back over
+ * `path` (restoring the previous content of an existing file that was
+ * updated); if it doesn't (because `path` didn't exist before this add),
+ * removes whatever was just created at `path` instead. Either way, `path`
+ * ends up exactly as it was before this finish_add call started. Applies
+ * equally to a brand-new shim and to one being replaced/updated -- unlike
+ * the shim symlink itself (which never encodes policy/source/fallback data,
+ * so the atomic temp+rename swap already protects it), config.toml and a
+ * split config file *are* the data, so a failure after either has already
+ * been overwritten must restore the previous version, not just abandon
+ * whatever's newest. Best-effort: a failure here is reported but never
+ * fatal, since the caller is already on its way to die() over the original
+ * failure. */
+static void restore_from_backup(const char *path, const char *backup_path) {
+    if (access(backup_path, F_OK) == 0) {
+        if (rename(backup_path, path) != 0) {
+            warn("add: failed to restore %s from backup: %s", path, strerror(errno));
         }
-        return;
+    } else if (unlink(path) != 0 && errno != ENOENT) {
+        warn("add: failed to remove %s while rolling back: %s", path, strerror(errno));
     }
-    Config cfg;
-    ConfigStatus load_st = config_load(cfg_path, &cfg, errbuf, sizeof(errbuf));
-    if (load_st != CONFIG_OK) {
-        warn("add: failed to roll back config entry for '%s': %s", name, errbuf);
-        return;
+}
+
+/* Discards a backup once the operation it was guarding against has fully
+ * succeeded. Best-effort: a leftover backup file is harmless clutter, not a
+ * correctness problem. */
+static void discard_backup(const char *backup_path) {
+    if (unlink(backup_path) != 0 && errno != ENOENT) {
+        warn("add: failed to remove rollback backup %s: %s", backup_path, strerror(errno));
     }
-    if (config_remove(&cfg, name)) {
-        ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
-        if (save_st != CONFIG_OK) {
-            warn("add: failed to roll back config entry for '%s': %s", name, errbuf);
-        }
+}
+
+/* Restores config.toml and (if split_target_path is non-NULL) the split
+ * config file from their backups, then dies with the given message --
+ * shared by every failure point after either file has been overwritten, so
+ * none of them can forget to roll back before exiting. */
+static void rollback_and_die(const char *cfg_path, const char *cfg_backup_path,
+                              const char *split_target_path, const char *split_backup_path,
+                              const char *fmt, ...) {
+    restore_from_backup(cfg_path, cfg_backup_path);
+    if (split_target_path) {
+        restore_from_backup(split_target_path, split_backup_path);
     }
-    config_free(&cfg);
+    char msg[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+    die("%s", msg);
 }
 
 /* Everything from policy validation through creating the symlink and
@@ -309,11 +336,14 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     /* --split-config: write this shim's data to its own <name>-config.toml
      * in the config directory instead of config.toml, then drop it from
      * cfg (in memory only, so far) so the config_save right below doesn't
-     * also leave a shadow copy of it there. The split file is written
-     * FIRST, and only removed from cfg (in memory) once that succeeds --
-     * so a failure here never loses data, it just leaves entry wherever it
-     * already was (in cfg, to be saved to config.toml as normal). */
+     * also leave a shadow copy of it there. Before overwriting either file,
+     * back up whatever's currently there (a no-op if it doesn't exist yet)
+     * so a failure anywhere below -- including in config_save/mkdir_p/the
+     * symlink step, all of which run after these writes -- can restore the
+     * previous, still-valid content instead of leaving it destroyed by a
+     * command that itself reported failure (see review.md). */
     char *split_target_path = NULL;
+    char *split_backup_path = NULL;
     if (split_config) {
         char *cfg_dir = dir_of(cfg_path);
         char *split_filename = split_config_filename(name);
@@ -321,27 +351,41 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         free(cfg_dir);
         free(split_filename);
 
+        size_t split_backup_len = strlen(split_target_path) + 32;
+        split_backup_path = xmalloc(split_backup_len);
+        snprintf(split_backup_path, split_backup_len, "%s.rollback.%d", split_target_path,
+                 (int)getpid());
+        if (!backup_file_if_exists(split_target_path, split_backup_path)) {
+            die("add: failed to back up existing split config %s before updating it",
+                split_target_path);
+        }
+
         ConfigStatus split_save_st =
             config_save_split(entry, split_target_path, errbuf, sizeof(errbuf));
         if (split_save_st != CONFIG_OK) {
+            restore_from_backup(split_target_path, split_backup_path);
             die("add: failed to save split config: %s", errbuf);
         }
         config_remove(&cfg, name);
     }
 
-    ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
-    if (save_st != CONFIG_OK) {
-        die("add: failed to save config: %s", errbuf);
+    char *cfg_backup_path;
+    {
+        size_t cfg_backup_len = strlen(cfg_path) + 32;
+        cfg_backup_path = xmalloc(cfg_backup_len);
+        snprintf(cfg_backup_path, cfg_backup_len, "%s.rollback.%d", cfg_path, (int)getpid());
+        if (!backup_file_if_exists(cfg_path, cfg_backup_path)) {
+            if (split_target_path) {
+                restore_from_backup(split_target_path, split_backup_path);
+            }
+            die("add: failed to back up existing config %s before updating it", cfg_path);
+        }
     }
 
-    if (!split_config) {
-        /* Not split this time -- if a split file for this name is still
-         * sitting somewhere from an earlier `add --split-config`, it would
-         * otherwise keep winning over the config.toml entry just saved
-         * above (split always takes precedence at resolve time -- see
-         * dispatch.c), silently shadowing it. Best-effort: nothing to
-         * clean up is the common case, not an error. */
-        remove_split_configs(name);
+    ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
+    if (save_st != CONFIG_OK) {
+        rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
+                          "add: failed to save config: %s", errbuf);
     }
 
     /* Only now, with the config safely saved, do we touch the shim
@@ -350,10 +394,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * behind with no matching config entry, which used to happen when the
      * symlink was created first. */
     if (!mkdir_p(shim_dir)) {
-        if (!replacing_existing_symlink) {
-            rollback_new_shim_config(name, cfg_path, split_config, split_target_path);
-        }
-        die("add: failed to create shim directory %s", shim_dir);
+        rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
+                          "add: failed to create shim directory %s", shim_dir);
     }
     if (replacing_existing_symlink) {
         /* Build the replacement at a temp name first and rename() it over
@@ -362,20 +404,43 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
          * place) or fail before ever touching the existing one (old
          * symlink still intact) -- never the unlink-succeeded-but-
          * symlink-failed gap in between that would otherwise leave the
-         * name pointing at nothing at all. */
+         * name pointing at nothing at all. The symlink itself never
+         * encodes policy/source/fallback data, so its own survival doesn't
+         * need a rollback -- but the config data it now resolves to does,
+         * which is exactly what the backups above and below restore. */
         size_t tmp_len = strlen(symlink_path) + 32;
         char *tmp_link = xmalloc(tmp_len);
         snprintf(tmp_link, tmp_len, "%s.tmp.%d", symlink_path, (int)getpid());
         if (symlink(self_exe, tmp_link) != 0) {
-            die("add: failed to create replacement symlink %s: %s", tmp_link, strerror(errno));
+            rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
+                              "add: failed to create replacement symlink %s: %s", tmp_link,
+                              strerror(errno));
         }
         if (rename(tmp_link, symlink_path) != 0) {
             unlink(tmp_link);
-            die("add: failed to replace existing symlink %s: %s", symlink_path, strerror(errno));
+            rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
+                              "add: failed to replace existing symlink %s: %s", symlink_path,
+                              strerror(errno));
         }
     } else if (symlink(self_exe, symlink_path) != 0) {
-        rollback_new_shim_config(name, cfg_path, split_config, split_target_path);
-        die("add: failed to create symlink %s: %s", symlink_path, strerror(errno));
+        rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
+                          "add: failed to create symlink %s: %s", symlink_path, strerror(errno));
+    }
+
+    /* Everything succeeded -- the new config is durable and the symlink is
+     * live, so the backups are no longer needed. Only now, with the split
+     * file (if any) safely in place, is it also safe to sweep away a stale
+     * split file left over from an earlier `add --split-config` for this
+     * same name when this add *isn't* split this time: doing this sweep
+     * any earlier (right after config_save, as before) would permanently
+     * discard that leftover file even if a later step -- mkdir_p, the
+     * symlink itself -- went on to fail. Best-effort: nothing to clean up
+     * is the common case, not an error. */
+    discard_backup(cfg_backup_path);
+    if (split_target_path) {
+        discard_backup(split_backup_path);
+    } else {
+        remove_split_configs(name);
     }
 
     bool colorize = stdout_is_color();

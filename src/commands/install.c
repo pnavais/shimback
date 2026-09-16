@@ -51,7 +51,10 @@ static bool download_via_curl(const char *curl, const char *url, const char *des
 
     pid_t pid = fork();
     if (pid < 0) {
-        rmdir(tmpdir);
+        if (rmdir(tmpdir) != 0) {
+            warn("install: failed to remove temporary directory %s: %s", tmpdir,
+                 strerror(errno));
+        }
         return false;
     }
     if (pid == 0) {

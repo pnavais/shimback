@@ -145,6 +145,18 @@ void split_config_all_paths(const char *name, char *paths[3]) {
 }
 
 char *resolve_split_config_path(const char *name) {
+    /* Unlike split_config_filename()'s own die() (a last-resort invariant
+     * for names that were *supposed* to already be validated), `name` here
+     * can legitimately be something nobody ever validated: list/doctor and
+     * uninstall --full all resolve every name list_shim_symlink_names()
+     * finds by scanning the shim directory, including a symlink somebody
+     * created or renamed by hand with an unsafe name. An invalid name can
+     * never have a legitimate split config file (add.c refuses to create
+     * one for it), so "not found" is the correct, crash-free answer, not
+     * an error. */
+    if (!is_valid_shim_name(name)) {
+        return NULL;
+    }
     char *paths[3];
     split_config_all_paths(name, paths);
     char *found = NULL;

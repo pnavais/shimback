@@ -97,4 +97,38 @@ fi
 
 "$SHIMBACK" remove -y toggletool >/dev/null
 
+# --- a failed `add --split-config` on an EXISTING split shim must not
+# destroy the previous, still-valid split file: back it up before
+# overwriting, and restore it if a later step (here, shim-directory
+# creation) fails (see review.md) ---
+"$SHIMBACK" add rollbacktool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --split-config >/dev/null
+ROLLBACK_SPLIT_CFG="$CFG_DIR/rollbacktool-config.toml"
+if [ ! -f "$ROLLBACK_SPLIT_CFG" ]; then
+    fail "setup: expected a split file for rollbacktool"
+fi
+ORIGINAL_SPLIT_CONTENT="$(cat "$ROLLBACK_SPLIT_CFG")"
+
+SHIM_DIR="$XDG_DATA_HOME/shimback/bin"
+rm -rf "$SHIM_DIR"
+# A plain file where the shim directory should be makes mkdir_p() fail.
+touch "$SHIM_DIR"
+
+set +e
+"$SHIMBACK" add rollbacktool -s "$FAKE_PRIMARY" -f "$FAKE_ECHO" --split-config >/dev/null 2>&1
+rollback_code=$?
+set -e
+if [ "$rollback_code" -eq 0 ]; then
+    fail "add --split-config: expected a non-zero exit when the shim directory is blocked"
+fi
+
+assert_eq "add --split-config (rollback): split file content unchanged" \
+    "$ORIGINAL_SPLIT_CONTENT" "$(cat "$ROLLBACK_SPLIT_CFG" 2>/dev/null)"
+if ls "$CFG_DIR"/*.rollback.* >/dev/null 2>&1; then
+    fail "add --split-config (rollback): no rollback backup files should be left behind"
+fi
+
+rm -f "$SHIM_DIR"
+mkdir -p "$SHIM_DIR"
+"$SHIMBACK" remove -y rollbacktool >/dev/null
+
 finish
