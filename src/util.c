@@ -189,7 +189,16 @@ bool parse_size_bytes(const char *s, size_t *out) {
         return false;
     }
     char *end;
+    errno = 0;
     unsigned long long value = strtoull(s, &end, 10);
+    if (errno == ERANGE) {
+        /* strtoull() clamps to ULLONG_MAX on overflow instead of failing --
+         * on a 64-bit system that's frequently == SIZE_MAX, which would
+         * otherwise slip straight past the multiplier-overflow check below
+         * (ULLONG_MAX > SIZE_MAX / 1 is false) and get accepted as a huge,
+         * unintended capture_limit (see review.md). */
+        return false;
+    }
     const char *suffix = end;
 
     char buf[8];

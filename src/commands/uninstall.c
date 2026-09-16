@@ -16,14 +16,6 @@
 #include "../paths.h"
 #include "../shell.h"
 #include "../util.h"
-#include "version.h"
-
-/* Bounds how much of a candidate file looks_like_shimback_binary will read
- * into memory -- shimback itself is a few MB at most; nothing legitimate
- * it would ever be asked to check is anywhere near this size, so this is
- * just a sanity bound against an implausibly huge file, not a real limit
- * in practice. */
-#define SHIMBACK_BINARY_CHECK_MAX_SIZE (256 * 1024 * 1024)
 
 /* The single tag every command shares (add/init/install all merge their
  * directory into the same block -- see shell.c). "shimback-bin" was a
@@ -36,76 +28,7 @@
 
 static const char *USAGE = "usage: shimback uninstall [--prefix <dir>] [--full]\n";
 
-/* Statically scans `path`'s own bytes for SHIMBACK_BINARY_MARKER -- a
- * fixed sequence every shimback build embeds (see main.c and
- * version.h.in) -- to confirm a file is actually a shimback binary (any
- * version/build of it, not just this exact one) before either deleting
- * it (bin_dest, below -- built from user-controlled --prefix, which
- * could point anywhere) or treating a shim's symlink target as
- * legitimately ours (remove_shim_symlinks, below -- a shim can be
- * created by a different shimback binary/build than whichever one
- * happens to be running `uninstall`, e.g. after an upgrade).
- *
- * Deliberately does NOT execute the candidate to ask it what it is
- * (e.g. `path --version`, this function's own earlier design): a foreign
- * executable placed at a shimback-owned path can print whatever it likes
- * -- including a convincing "shimback " prefix -- while doing something
- * else first, so running an untrusted file just to decide whether to
- * delete it is itself a code-execution risk, not a safety check (see
- * review.md). A plain byte-scan can still be fooled by a file that
- * happens to embed the same marker bytes, but reading them can never
- * execute anything, which is the actual property this needs.
- *
- * This is best-effort identification, not authenticated ownership proof
- * -- SHIMBACK_BINARY_MARKER is a fixed public byte sequence compiled into
- * every build (readable with `strings` on any shimback binary), so
- * nothing stops a different file from embedding the same bytes and being
- * misclassified as ours (see review.md). Deliberately not hardened
- * further than this: doing so would mean either trusting some other piece
- * of locally-writable state (an installed-binary manifest, a recorded
- * hash) that's exactly as forgeable by anything that can already write to
- * shimback's own directories, or verifying a real cryptographic identity,
- * which is disproportionate for a single-user CLI tool with no privilege
- * boundary to defend -- whoever could plant a convincing forgery here
- * already has write access to the same directory uninstall is cleaning
- * up, and so could just delete or replace the file directly without
- * needing this check's cooperation at all. */
-static bool looks_like_shimback_binary(const char *path) {
-    struct stat st;
-    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
-        return false;
-    }
-    if (st.st_size < (off_t)SHIMBACK_BINARY_MARKER_LEN ||
-        st.st_size > (off_t)SHIMBACK_BINARY_CHECK_MAX_SIZE) {
-        return false;
-    }
-    if (!is_executable_file(path)) {
-        return false;
-    }
-
-    FILE *f = fopen(path, "rb");
-    if (!f) {
-        return false;
-    }
-    size_t size = (size_t)st.st_size;
-    char *buf = xmalloc(size);
-    size_t n = fread(buf, 1, size, f);
-    fclose(f);
-
-    bool found = false;
-    if (n == size) {
-        for (size_t i = 0; i + SHIMBACK_BINARY_MARKER_LEN <= n; i++) {
-            if (memcmp(buf + i, SHIMBACK_BINARY_MARKER, SHIMBACK_BINARY_MARKER_LEN) == 0) {
-                found = true;
-                break;
-            }
-        }
-    }
-    free(buf);
-    return found;
-}
-
-/* Same idea as looks_like_shimback_binary, but for the man page: no need
+/* Same idea as looks_like_shimback_binary (paths.c), but for the man page: no need
  * to execute anything for this one -- shimback's own man page always
  * starts with a recognizable ".TH SHIMBACK" troff header (see
  * man/shimback.1), so a plain read is enough. */
@@ -129,8 +52,21 @@ static bool looks_like_shimback_man_page(const char *path) {
  * *this* running binary specifically, since a shim can predate an
  * upgrade/reinstall) -- and leaves anything else alone (a live symlink
  * resolving to something other than shimback, e.g. hand-placed by the
- * user or another tool in this directory despite the convention). Then
- * removes the directory itself, if left empty. Returns the number of
+ * user or another tool in this directory despite the convention).
+ *
+ * This isn't an inconsistency between the dangling and live-foreign
+ * cases, even though they end up treated oppositely by default (see
+ * review.md) -- a live symlink can be positively checked against
+ * something concrete (its target's own bytes), giving real evidence
+ * either way; a dangling one has no target left to check at all, so
+ * there is no equivalent way to positively prove it *isn't* shimback's.
+ * Any policy for that case is necessarily a default made in the absence
+ * of evidence, and given the directory's own documented contract --
+ * nothing else is meant to live here -- defaulting to "probably a stale
+ * shim" is the choice that actually matches that contract, not one that
+ * contradicts the live-symlink handling above it.
+ *
+ * Then removes the directory itself, if left empty. Returns the number of
  * symlinks actually removed. If `removed_names` is non-NULL, each removed
  * symlink's own name (i.e. the shim name) is pushed onto it -- used by
  * `--full` to know which shims to also sweep split-config files for,
@@ -171,6 +107,12 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
         free(entry_path);
     }
     closedir(d);
+    /* The shim-dir lock file (see shim_dir_lock_acquire, paths.c) is a
+     * regular file, never a symlink, so nothing in the loop above ever
+     * touches it -- without removing it here first, it would be the one
+     * thing left behind keeping the directory "non-empty" and silently
+     * breaking the rmdir() below every time. */
+    shim_dir_lock_file_remove(shim_dir);
     rmdir(shim_dir); /* best-effort: harmless failure if non-empty (e.g. a foreign symlink
                        * deliberately left alone above) or already gone */
     return count;

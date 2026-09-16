@@ -99,6 +99,28 @@ static char *read_file_or_empty(const char *path) {
     return buf;
 }
 
+/* Finds `marker` in `content` only where it occupies a complete line by
+ * itself -- immediately preceded by the start of the string or a newline,
+ * and immediately followed by a newline or the end of the string. Plain
+ * strstr() would match the marker text anywhere it occurs, including
+ * mid-line inside unrelated content (a comment, a string, a command) that
+ * happens to contain the same bytes -- which could then make PATH setup
+ * or uninstall treat content shimback never wrote as its own managed
+ * block, and edit or delete it (see review.md). */
+static const char *find_marker_line(const char *content, const char *marker) {
+    size_t marker_len = strlen(marker);
+    const char *p = content;
+    while ((p = strstr(p, marker)) != NULL) {
+        bool line_start = (p == content) || (p[-1] == '\n');
+        bool line_end = (p[marker_len] == '\0') || (p[marker_len] == '\n');
+        if (line_start && line_end) {
+            return p;
+        }
+        p += 1;
+    }
+    return NULL;
+}
+
 /* Finds the tag-marked block in `content`: [*block_start, *block_end) covers
  * the whole block including both marker lines and the trailing newline;
  * [*body_start, *body_end) covers just the interior, between them. Returns
@@ -113,11 +135,11 @@ static bool find_block(const char *content, const char *tag, const char *rc_path
     snprintf(mark_start, sizeof(mark_start), "# >>> %s >>>", tag);
     snprintf(mark_end, sizeof(mark_end), "# <<< %s <<<", tag);
 
-    const char *s = strstr(content, mark_start);
+    const char *s = find_marker_line(content, mark_start);
     if (!s) {
         return false;
     }
-    const char *e = strstr(s, mark_end);
+    const char *e = find_marker_line(s, mark_end);
     if (!e) {
         warn("found a %s start marker without a matching end marker in %s; leaving it alone", tag,
              rc_path);
