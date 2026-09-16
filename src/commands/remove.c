@@ -116,7 +116,20 @@ int cmd_remove(int argc, char **argv) {
 
     char *shim_dir = shim_bin_dir();
     char *symlink_path = path_join(shim_dir, name);
-    char *self_exe = self_exe_path();
+
+    /* Held from the ownership check through the unlink() below (released
+     * right after, on every path) -- serializes this whole check-then-
+     * unlink sequence against a concurrent `add`/`remove`/`doctor fix`
+     * racing the same symlink as the same user, so the unlink() below can
+     * never act on something a *different* concurrent command's check
+     * saw instead of this one's own (see review.md). Only meaningful if
+     * shim_dir already exists; if it doesn't, there's nothing to lock or
+     * remove either way. */
+    int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
+    if (shim_lock_fd < 0 && errno != ENOENT) {
+        die("remove: failed to acquire the shim directory lock on %s: %s", shim_dir,
+            strerror(errno));
+    }
 
     /* Read-only pre-flight: figure out whether there's a shimback-managed
      * symlink to remove, without touching it yet. The config is saved
@@ -126,8 +139,11 @@ int cmd_remove(int argc, char **argv) {
     bool have_managed_symlink = false;
     struct stat st;
     if (lstat(symlink_path, &st) == 0 && S_ISLNK(st.st_mode)) {
+        /* Recognizes any shimback build/install location as ours, not
+         * just this exact running binary's own path -- see the matching
+         * comment in add.c and review.md. */
         char *resolved = canonicalize(symlink_path);
-        if (resolved && strcmp(resolved, self_exe) == 0) {
+        if (resolved && looks_like_shimback_binary(resolved)) {
             have_managed_symlink = true;
         } else {
             warn("%s is not a shimback-managed symlink; leaving it alone", symlink_path);
@@ -145,6 +161,7 @@ int cmd_remove(int argc, char **argv) {
         warn("failed to remove symlink %s: %s", symlink_path, strerror(errno));
         symlink_removed_ok = false;
     }
+    shim_dir_lock_release(shim_lock_fd);
 
     /* Sweeps every one of the three potential split-config locations (see
      * split_config_all_paths, paths.h), not just wherever it happened to

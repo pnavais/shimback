@@ -239,8 +239,14 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
             die("add: %s already exists and is not a symlink; remove it manually first",
                 symlink_path);
         }
+        /* Recognizes any shimback build/install location as ours, not
+         * just this exact running binary's own path -- an exact self_exe
+         * match here used to refuse to update a shim created by an older
+         * or relocated shimback binary even though it's still genuinely
+         * shimback's, and disagreed with uninstall's own (marker-based)
+         * recognition of the very same symlink (see review.md). */
         char *existing_resolved = canonicalize(symlink_path);
-        bool shimback_owned = existing_resolved && strcmp(existing_resolved, self_exe) == 0;
+        bool shimback_owned = existing_resolved && looks_like_shimback_binary(existing_resolved);
         if (!shimback_owned) {
             die("add: %s already exists and is not a shimback-managed symlink; remove it "
                 "manually first",
@@ -268,6 +274,22 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                 shim_dir, shim_dir);
         }
         replacing_existing_symlink = true;
+    }
+
+    /* Held from here through the final rename() below (or released early
+     * by any die()/rollback_and_die() in between, via ordinary process
+     * exit) -- serializes this whole check-then-replace sequence against
+     * a concurrent `add`/`remove`/`doctor fix` racing the same symlink as
+     * the same user, closing the gap the permission check above can't (see
+     * review.md and shim_dir_lock_acquire's own comment). Only needed for
+     * the replace path: a brand-new shim has no prior state to race. */
+    int shim_lock_fd = -1;
+    if (replacing_existing_symlink) {
+        shim_lock_fd = shim_dir_lock_acquire(shim_dir);
+        if (shim_lock_fd < 0) {
+            die("add: failed to acquire the shim directory lock on %s: %s", shim_dir,
+                strerror(errno));
+        }
     }
 
     char *cfg_path = config_file_path();
@@ -446,7 +468,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         char *recheck_resolved = NULL;
         bool still_ours = lstat(symlink_path, &recheck_st) == 0 && S_ISLNK(recheck_st.st_mode) &&
                            (recheck_resolved = canonicalize(symlink_path)) != NULL &&
-                           strcmp(recheck_resolved, self_exe) == 0;
+                           looks_like_shimback_binary(recheck_resolved);
         free(recheck_resolved);
         if (!still_ours) {
             unlink(tmp_link);
@@ -480,6 +502,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     } else {
         remove_split_configs(name);
     }
+    shim_dir_lock_release(shim_lock_fd);
 
     bool colorize = stdout_is_color();
     const char *reset = colorize ? ANSI_RESET : "";

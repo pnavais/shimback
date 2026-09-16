@@ -405,6 +405,35 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
+    /* A capture_limit one past ULLONG_MAX must be rejected outright, not
+     * silently accepted as ULLONG_MAX (which strtoull() itself does on
+     * overflow) and then slip past the multiplier-overflow check too,
+     * since ULLONG_MAX == SIZE_MAX on a 64-bit system makes
+     * "value > SIZE_MAX / 1" false (see review.md). */
+    const char *overflow_capture_limit_shim =
+        "version = 1\n\n[shims.sed]\nfallback = \"/usr/bin/sed\"\npolicy = \"exit-code\"\n"
+        "capture_limit = \"18446744073709551616\"\n";
+    const char *overflow_capture_limit_global =
+        "version = 1\ncapture_limit = \"18446744073709551616\"\n";
+
+    f = fopen(path, "wb");
+    fwrite(overflow_capture_limit_shim, 1, strlen(overflow_capture_limit_shim), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "overflowing per-shim capture_limit is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(overflow_capture_limit_global, 1, strlen(overflow_capture_limit_global), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "overflowing global capture_limit is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
     /* A [shims.<name>] section name containing '/'/'..' must be rejected
      * at load time, not silently accepted and trusted downstream -- it
      * would otherwise reach path construction (split_config_filename, via
@@ -561,6 +590,15 @@ static void test_parse_size_bytes(void) {
     check(!parse_size_bytes("5 MB", &v), "parse_size_bytes: whitespace before suffix rejected");
     check(!parse_size_bytes("99999999999999999999999999GiB", &v),
           "parse_size_bytes: overflow rejected");
+
+    /* One past ULLONG_MAX, no suffix (multiplier 1): strtoull() itself
+     * clamps this to ULLONG_MAX on overflow instead of failing, and on a
+     * 64-bit system ULLONG_MAX is frequently == SIZE_MAX, which used to
+     * slip straight past the multiplier-overflow check below it
+     * ("ULLONG_MAX > SIZE_MAX / 1" is false) and get accepted as a huge,
+     * unintended capture_limit (see review.md). */
+    check(!parse_size_bytes("18446744073709551616", &v),
+          "parse_size_bytes: value one past ULLONG_MAX (no suffix) rejected");
 }
 
 int main(void) {

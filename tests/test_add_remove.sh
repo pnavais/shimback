@@ -382,4 +382,77 @@ out2="$("$SHIMBACK" add racetool -s "$FAKE_PRIMARY" -f "$FAKE_ECHO" 2>&1)"
 code2=$?
 assert_eq "add: the same replace succeeds once the directory is owner-only again" "0" "$code2"
 
+# --- shell marker matching only recognizes a marker line that occupies a
+# complete line by itself -- unrelated content that happens to contain the
+# exact marker text mid-line (a comment, a quoted string) must never be
+# mistaken for shimback's own managed block and edited/removed (see
+# review.md) ---
+printf '# a comment mentioning # >>> shimback >>> mid-sentence, not a real marker\necho "unrelated line with # <<< shimback <<< embedded too"\nexport MY_OWN_VAR=1\n' \
+    >"$ZSHRC"
+fake_marker_content_before="$(cat "$ZSHRC")"
+
+"$SHIMBACK" add markertest -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+
+assert_contains "add: unrelated mid-line fake markers are left untouched" "$(cat "$ZSHRC")" \
+    "$fake_marker_content_before"
+assert_contains "add: a real marker block was still added correctly" "$(cat "$ZSHRC")" \
+    "# >>> shimback >>>"
+
+# The real regression this guards against: find_block() must locate
+# shimback's *own* real block when a later command searches for it, not
+# get thrown off by the fake mid-line text -- so `uninstall --full`
+# (which removes the PATH block) must remove exactly the real block and
+# leave the fake content alone, not fail to find anything (leaving a
+# stale block) or, worse, mistake the fake lines for the start of a
+# block and mangle them.
+"$SHIMBACK" uninstall --full >/dev/null 2>&1
+# A plain substring check can't tell a real standalone marker *line* apart
+# from the fake mid-line text that also happens to contain the same bytes
+# on purpose (that's the whole point of this fixture) -- grep -x for an
+# exact full-line match is what actually distinguishes them.
+if grep -qxF '# >>> shimback >>>' "$ZSHRC"; then
+    fail "uninstall --full: the real marker block should be gone (a standalone marker line is \
+still present)"
+fi
+assert_contains "uninstall --full: the fake mid-line content still survives untouched" \
+    "$(cat "$ZSHRC")" "$fake_marker_content_before"
+
+# --- add/remove/doctor fix hold a directory lock across their own
+# check-then-mutate sequence on a shim symlink, so a concurrent shimback
+# command racing the same symlink as the same user can't interleave with
+# it (see review.md). Verified against a real concurrent holder, not just
+# "doesn't crash": if `add` genuinely blocks on the lock, replacing an
+# existing shim while something else holds it must take at least as long
+# as the holder keeps it, not succeed instantly regardless. Uses Python's
+# fcntl.flock(), which is the same underlying kernel primitive as the C
+# side's flock() -- interoperable regardless of language. ---
+if command -v python3 >/dev/null 2>&1; then
+    "$SHIMBACK" add locktest -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+    LOCK_FILE="$(dirname "$(shim_path locktest)")/.shimback.lock"
+
+    python3 -c "
+import fcntl, time
+f = open('$LOCK_FILE', 'a')
+fcntl.flock(f, fcntl.LOCK_EX)
+time.sleep(2)
+" &
+    HOLDER_PID=$!
+    sleep 1 # let the holder actually acquire the lock before we race it
+
+    start=$(date +%s)
+    "$SHIMBACK" add locktest -s "$FAKE_PRIMARY" -f "$FAKE_ECHO" >/dev/null 2>&1
+    replace_code=$?
+    end=$(date +%s)
+    wait "$HOLDER_PID"
+
+    elapsed=$((end - start))
+    if [ "$elapsed" -lt 1 ]; then
+        fail "add: should have blocked on the shim directory lock held by a concurrent \
+process (took only ${elapsed}s)"
+    fi
+    assert_eq "add: the replace still succeeds once the lock is released" "0" "$replace_code"
+
+    "$SHIMBACK" remove -y locktest >/dev/null
+fi
+
 finish

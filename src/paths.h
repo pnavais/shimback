@@ -96,6 +96,14 @@ char *dir_of(const char *path);
 
 bool is_executable_file(const char *path);
 
+/* Best-effort check that `path` is actually a shimback binary (any
+ * version/build, any install location), by statically scanning its own
+ * bytes for a fixed marker every build embeds -- never executes the
+ * candidate. Shared by every command that needs a consistent answer to
+ * "is this shimback's" for the same symlink/binary (see paths.c). Not
+ * authenticated ownership proof; see paths.c for the full reasoning. */
+bool looks_like_shimback_binary(const char *path);
+
 /* Copies `src` to `dst` (as an executable, mode 0755), atomically via a
  * temp-file-plus-rename in `dst`'s own directory. Returns false on any I/O
  * failure, leaving `dst` untouched. */
@@ -136,6 +144,19 @@ char *force_resolve_binary_arg(const char *arg);
 /* mkdir -p equivalent. Returns true on success (including "already exists
  * as a directory"). */
 bool mkdir_p(const char *dir);
+
+/* Acquires/releases an exclusive advisory lock on a shim directory, so
+ * add/remove/doctor fix can serialize their own check-then-mutate
+ * sequence on a shim symlink against each other (see paths.c). Returns an
+ * fd, or -1 on failure; release() is a no-op on -1. `shim_dir` must
+ * already exist. */
+int shim_dir_lock_acquire(const char *shim_dir);
+void shim_dir_lock_release(int fd);
+
+/* Removes the lock file shim_dir_lock_acquire() creates inside `shim_dir`,
+ * if present. For uninstall's own cleanup, once every shim symlink is
+ * gone, before it tries to rmdir() the now-supposedly-empty directory. */
+void shim_dir_lock_file_remove(const char *shim_dir);
 
 /* Joins two path components with a single '/', avoiding a double slash if
  * `a` already ends in one. Newly allocated; caller owns it. */

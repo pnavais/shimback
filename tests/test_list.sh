@@ -95,6 +95,30 @@ assert_contains "list --full: shows an orphan's own symlink path too" "$full" \
 "$SHIMBACK" remove -y splittool >/dev/null
 "$SHIMBACK" doctor fix -y >/dev/null
 
+# --- a shim symlink pointing at a DIFFERENT (but still genuinely
+# shimback) binary -- e.g. left behind by an older build, or one
+# installed at a different location -- must still be recognized as a
+# real (if unconfigured) shim, not silently invisible to `list`/`doctor`
+# just because it doesn't resolve to *this* exact running binary's own
+# path (see review.md) ---
+OLD_BUILD_COPY="$SANDBOX/shimback-old-build-copy"
+cp "$SHIMBACK" "$OLD_BUILD_COPY"
+chmod +x "$OLD_BUILD_COPY"
+RELOCATED_LINK="$(shim_path relocatedtool)"
+ln -sf "$OLD_BUILD_COPY" "$RELOCATED_LINK"
+
+out="$("$SHIMBACK" list)"
+assert_contains "list: recognizes a shim pointing at a different shimback build" "$out" \
+    "relocatedtool"
+assert_contains "list: it's reported as orphaned (no config), not silently dropped" "$out" \
+    "orphaned symlink -- no config.toml entry or split config file found"
+
+"$SHIMBACK" doctor fix -y >/dev/null 2>&1
+if [ -e "$RELOCATED_LINK" ]; then
+    fail "doctor fix: the orphaned relocated-build symlink should have been offered for removal"
+fi
+rm -f "$OLD_BUILD_COPY"
+
 # --- empty config with --full is still just the empty-config message ---
 "$SHIMBACK" remove -y sed >/dev/null
 "$SHIMBACK" remove -y htool >/dev/null

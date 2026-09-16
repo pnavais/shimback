@@ -89,6 +89,20 @@ static void report_warn(const char *fmt, ...) {
 static void fix_symlink_if_needed(const char *shim_dir, const char *name, const char *self_exe) {
     char *link_path = path_join(shim_dir, name);
 
+    /* Held across the whole check-then-recreate sequence below, so a
+     * concurrent `add`/`remove`/`doctor fix` racing the same symlink as
+     * the same user can't land in between the check and the unlink()+
+     * symlink() that acts on it (see review.md). shim_dir is guaranteed
+     * to exist here -- this is only ever reached for an already-known
+     * shim entry. */
+    int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
+    if (shim_lock_fd < 0) {
+        warn("doctor fix: failed to acquire the shim directory lock on %s: %s -- skipping '%s'",
+             shim_dir, strerror(errno), name);
+        free(link_path);
+        return;
+    }
+
     struct stat lst;
     int lst_rc = lstat(link_path, &lst);
     bool is_link = lst_rc == 0 && S_ISLNK(lst.st_mode);
@@ -101,6 +115,7 @@ static void fix_symlink_if_needed(const char *shim_dir, const char *name, const 
     bool missing = lst_rc != 0;
 
     if (!missing && !dangling) {
+        shim_dir_lock_release(shim_lock_fd);
         free(link_path);
         return;
     }
@@ -114,6 +129,7 @@ static void fix_symlink_if_needed(const char *shim_dir, const char *name, const 
     } else {
         warn("doctor fix: failed to recreate symlink for '%s': %s", name, strerror(errno));
     }
+    shim_dir_lock_release(shim_lock_fd);
     free(link_path);
 }
 
@@ -464,13 +480,41 @@ int cmd_doctor(int argc, char **argv) {
 
         if (source == SHIM_SOURCE_ORPHAN) {
             if (fix_mode && confirm_remove_orphan(name, auto_yes)) {
+                /* Held from here through the unlink() below -- deliberately
+                 * NOT across confirm_remove_orphan() above, which can wait
+                 * indefinitely on user input; holding the lock that long
+                 * would block every other shimback command for no reason.
+                 * Orphan status is re-verified fresh inside the lock
+                 * before acting, since a concurrent `add` could have
+                 * legitimately reclaimed this exact name while the prompt
+                 * was waiting (see review.md). */
                 char *link_path = path_join(shim_dir, name);
+                int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
+                if (shim_lock_fd < 0) {
+                    warn("doctor fix: failed to acquire the shim directory lock on %s: %s -- "
+                         "skipping '%s'",
+                         shim_dir, strerror(errno), name);
+                    free(link_path);
+                    continue;
+                }
+                char *recheck_split = resolve_split_config_path(name);
+                bool still_orphan = !config_find(&cfg, name) && !recheck_split;
+                free(recheck_split);
+                if (!still_orphan) {
+                    warn("doctor fix: '%s' is no longer orphaned (a config entry appeared since "
+                         "it was checked) -- leaving its symlink alone",
+                         name);
+                    shim_dir_lock_release(shim_lock_fd);
+                    free(link_path);
+                    continue;
+                }
                 if (unlink(link_path) == 0) {
                     report_fixed("removed orphaned symlink (no configuration found for it)");
                 } else {
                     warn("doctor fix: failed to remove orphaned symlink for '%s': %s", name,
                          strerror(errno));
                 }
+                shim_dir_lock_release(shim_lock_fd);
                 free(link_path);
             } else {
                 report_fail(&issues,

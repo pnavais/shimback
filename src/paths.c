@@ -2,14 +2,17 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include "util.h"
+#include "version.h"
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -172,7 +175,6 @@ char *resolve_split_config_path(const char *name) {
 
 char **list_shim_symlink_names(size_t *out_count) {
     char *shim_dir = shim_bin_dir();
-    char *self_exe = self_exe_path();
 
     char **names = NULL;
     size_t count = 0;
@@ -188,8 +190,16 @@ char **list_shim_symlink_names(size_t *out_count) {
             char *entry_path = path_join(shim_dir, ent->d_name);
             struct stat lst;
             if (lstat(entry_path, &lst) == 0 && S_ISLNK(lst.st_mode)) {
+                /* Recognizes any shimback build/install location as ours,
+                 * not just this exact running binary's own path -- an
+                 * exact self_exe_path() match used to make a shim from a
+                 * relocated or pre-upgrade binary invisible to list/doctor
+                 * even though uninstall's own sweep (also built on this
+                 * same check) would still recognize and clean it up,
+                 * giving inconsistent answers about the same symlink
+                 * depending which command asked (see review.md). */
                 char *resolved = canonicalize(entry_path);
-                if (resolved && strcmp(resolved, self_exe) == 0) {
+                if (resolved && looks_like_shimback_binary(resolved)) {
                     if (count == cap) {
                         cap = cap == 0 ? 8 : cap * 2;
                         names = xrealloc(names, cap * sizeof(char *));
@@ -204,7 +214,6 @@ char **list_shim_symlink_names(size_t *out_count) {
     }
 
     free(shim_dir);
-    free(self_exe);
     *out_count = count;
     return names;
 }
@@ -280,6 +289,87 @@ bool is_executable_file(const char *path) {
         return false;
     }
     return access(path, X_OK) == 0;
+}
+
+/* Bounds how much of a candidate file looks_like_shimback_binary will read
+ * into memory -- shimback itself is a few MB at most; nothing legitimate
+ * it would ever be asked to check is anywhere near this size, so this is
+ * just a sanity bound against an implausibly huge file, not a real limit
+ * in practice. */
+#define SHIMBACK_BINARY_CHECK_MAX_SIZE (256 * 1024 * 1024)
+
+/* Statically scans `path`'s own bytes for SHIMBACK_BINARY_MARKER -- a
+ * fixed sequence every shimback build embeds (see main.c and
+ * version.h.in) -- to confirm a file is actually a shimback binary (any
+ * version/build of it, not just this exact one, and regardless of where
+ * it's installed). Shared by every command that needs to recognize a
+ * shim symlink or installed binary as shimback's own: list/doctor (via
+ * list_shim_symlink_names, below), add/remove (deciding whether an
+ * existing symlink is theirs to replace/remove), and uninstall (deciding
+ * whether to delete bin_dest, built from user-controlled --prefix, or a
+ * shim symlink target). All of them need the same answer to "is this
+ * actually shimback's" for the same symlink -- using an exact match
+ * against *this* running binary's own path in some of them and this
+ * marker scan in others used to give different answers for a shim that
+ * predates an upgrade or binary relocation (see review.md).
+ *
+ * Deliberately does NOT execute the candidate to ask it what it is (e.g.
+ * `path --version`): a foreign executable placed at a shimback-owned
+ * path can print whatever it likes -- including a convincing "shimback "
+ * prefix -- while doing something else first, so running an untrusted
+ * file just to decide whether to trust/delete it is itself a
+ * code-execution risk, not a safety check (see review.md). A plain
+ * byte-scan can still be fooled by a file that happens to embed the same
+ * marker bytes, but reading them can never execute anything, which is
+ * the actual property this needs.
+ *
+ * This is best-effort identification, not authenticated ownership proof
+ * -- SHIMBACK_BINARY_MARKER is a fixed public byte sequence compiled into
+ * every build (readable with `strings` on any shimback binary), so
+ * nothing stops a different file from embedding the same bytes and being
+ * misclassified as ours (see review.md). Deliberately not hardened
+ * further than this: doing so would mean either trusting some other piece
+ * of locally-writable state (an installed-binary manifest, a recorded
+ * hash) that's exactly as forgeable by anything that can already write to
+ * shimback's own directories, or verifying a real cryptographic identity,
+ * which is disproportionate for a single-user CLI tool with no privilege
+ * boundary to defend -- whoever could plant a convincing forgery here
+ * already has write access to the same directory being managed, and so
+ * could just delete or replace the file directly without needing this
+ * check's cooperation at all. */
+bool looks_like_shimback_binary(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+        return false;
+    }
+    if (st.st_size < (off_t)SHIMBACK_BINARY_MARKER_LEN ||
+        st.st_size > (off_t)SHIMBACK_BINARY_CHECK_MAX_SIZE) {
+        return false;
+    }
+    if (!is_executable_file(path)) {
+        return false;
+    }
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        return false;
+    }
+    size_t size = (size_t)st.st_size;
+    char *buf = xmalloc(size);
+    size_t n = fread(buf, 1, size, f);
+    fclose(f);
+
+    bool found = false;
+    if (n == size) {
+        for (size_t i = 0; i + SHIMBACK_BINARY_MARKER_LEN <= n; i++) {
+            if (memcmp(buf + i, SHIMBACK_BINARY_MARKER, SHIMBACK_BINARY_MARKER_LEN) == 0) {
+                found = true;
+                break;
+            }
+        }
+    }
+    free(buf);
+    return found;
 }
 
 static bool copy_file_mode(const char *src, const char *dst, mode_t mode) {
@@ -385,6 +475,71 @@ bool mkdir_p(const char *dir) {
     }
     free(copy);
     return ok;
+}
+
+/* Name of the advisory lock file shim_dir_lock_acquire() creates inside a
+ * shim directory. Shared with uninstall.c, which needs to remove it as
+ * part of its own cleanup -- otherwise this one regular file (never a
+ * symlink, so none of the symlink-sweeping logic elsewhere ever touches
+ * it) would be the one thing left behind, and rmdir() on the now
+ * "non-empty" shim directory would quietly stop working. */
+#define SHIM_DIR_LOCK_FILENAME ".shimback.lock"
+
+/* Acquires an exclusive advisory lock (flock()) on a fixed lock file inside
+ * `shim_dir`, blocking until it's available. `add`/`remove`/`doctor fix`
+ * each hold this across their own check-then-mutate sequence on a shim
+ * symlink (the ownership/dangling/orphan check, and the unlink()/rename()
+ * that acts on it) -- without it, two shimback commands (or two runs of
+ * the same one) running concurrently as the same user could interleave
+ * between the check and the mutation, so the mutation ends up acting on
+ * whatever a *different* concurrent command's check saw, not what this
+ * one just verified (see review.md). Doesn't defend against a directory
+ * writable by other users -- that's the separate, already-rejected
+ * precondition checked before this is ever called -- only against two
+ * same-user shimback invocations racing each other.
+ *
+ * Returns an fd to later pass to shim_dir_lock_release(), or -1 on
+ * failure (the lock file couldn't be created/opened, or flock() itself
+ * failed) -- the caller decides how fatal that is. `shim_dir` must
+ * already exist. */
+int shim_dir_lock_acquire(const char *shim_dir) {
+    char *lock_path = path_join(shim_dir, SHIM_DIR_LOCK_FILENAME);
+    int fd = open(lock_path, O_CREAT | O_RDWR, 0600);
+    int open_errno = errno; /* free() below isn't guaranteed not to touch
+                              * errno, and callers (remove.c) distinguish
+                              * ENOENT ("shim_dir doesn't exist, nothing to
+                              * lock") from a real failure. */
+    free(lock_path);
+    if (fd < 0) {
+        errno = open_errno;
+        return -1;
+    }
+    if (flock(fd, LOCK_EX) != 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+/* Releases a lock acquired by shim_dir_lock_acquire(). Best-effort and
+ * safe to call with -1 (a no-op) so callers don't need to track whether
+ * acquisition actually succeeded before cleaning up. */
+void shim_dir_lock_release(int fd) {
+    if (fd >= 0) {
+        flock(fd, LOCK_UN);
+        close(fd);
+    }
+}
+
+/* Removes the lock file shim_dir_lock_acquire() creates inside `shim_dir`,
+ * if present -- for a caller (uninstall) about to try to rmdir() that
+ * directory once every shim symlink is gone; the lock file itself would
+ * otherwise be the one thing left behind keeping it non-empty. Safe to
+ * call whether or not a lock was ever taken (ENOENT is not an error). */
+void shim_dir_lock_file_remove(const char *shim_dir) {
+    char *lock_path = path_join(shim_dir, SHIM_DIR_LOCK_FILENAME);
+    unlink(lock_path);
+    free(lock_path);
 }
 
 char *path_search(const char *name, const char *exclude_dir,
