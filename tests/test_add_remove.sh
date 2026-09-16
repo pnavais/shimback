@@ -359,4 +359,27 @@ if [ ! -e "$VICTIM" ]; then
 fi
 rm -f "$VICTIM"
 
+# --- add refuses to replace an existing shim symlink when the shim
+# directory is writable by more than its owner -- that's the precondition
+# a concurrent process would need to race the ownership check against the
+# later rename() (see review.md); with owner-only permissions restored,
+# the same replace succeeds normally again ---
+"$SHIMBACK" add racetool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+RACETOOL_LINK="$(shim_path racetool)"
+SHIM_DIR="$(dirname "$RACETOOL_LINK")"
+chmod go+w "$SHIM_DIR"
+
+out="$("$SHIMBACK" add racetool -s "$FAKE_PRIMARY" -f "$FAKE_ECHO" 2>&1)"
+code=$?
+chmod go-w "$SHIM_DIR"
+if [ "$code" -eq 0 ]; then
+    fail "add: replacing a shim in a group/other-writable directory should be refused"
+fi
+assert_contains "add: refuses to replace a shim in an insecure directory" "$out" \
+    "writable by more than just its owner"
+
+out2="$("$SHIMBACK" add racetool -s "$FAKE_PRIMARY" -f "$FAKE_ECHO" 2>&1)"
+code2=$?
+assert_eq "add: the same replace succeeds once the directory is owner-only again" "0" "$code2"
+
 finish
