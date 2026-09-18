@@ -40,8 +40,15 @@
  * fall back. Runs with live/inherited stdio only when a side actually won
  * outright; the "neither matched" case goes through the normal captured
  * trial run like every fallback-on-failure policy.
+ * POLICY_ROUTE_MAP: like POLICY_ROUTE_ARGS, but generalized from one
+ * fallback to an ordered list of `routes` (see RouteEntry): the first
+ * route whose `match` exactly equals one of the invocation's arguments
+ * runs, with its own fixed `args` prepended to whatever's forwarded. No
+ * route matching falls through to source, exactly like route-args' own
+ * source/fallback default. Unlike route-args, two different routes may
+ * point at the very same command with different `args` (see RouteEntry).
  *
- * Independent of all six: source_args/fallback_args (see ShimEntry) let
+ * Independent of all seven: source_args/fallback_args (see ShimEntry) let
  * any shim, under any policy, also work as a plain alias with flags baked
  * in -- e.g. source "ls" with source_args ["-ltrah"] always runs
  * "ls -ltrah <whatever else was typed>", the same way `alias cools='ls
@@ -53,7 +60,25 @@ typedef enum {
     POLICY_ROUTE_ARGS,
     POLICY_REWRITE,
     POLICY_SPLIT_ARGS,
+    POLICY_ROUTE_MAP,
 } Policy;
+
+/* One entry in a POLICY_ROUTE_MAP shim's `routes` list. Unlike
+ * route-args' single fallback, `command` isn't required to be unique
+ * across routes -- the same command can appear in two routes with
+ * different `args`, which is the whole point of this policy over
+ * route-args (see config_load's validate_shim_entry for the one thing
+ * that *is* rejected: two routes with an identical (command, args)
+ * pair, which would just be dead, unreachable duplication). */
+typedef struct {
+    char *match;      /* owned; exact argv token that triggers this route */
+    char *command;    /* owned; resolved, absolute path -- same treatment
+                        * as source/fallback (see add.c) */
+    char **args;      /* owned array of owned strings; fixed args always
+                        * prepended before whatever's forwarded, when this
+                        * route fires. NULL/0 if none configured. */
+    size_t arg_count;
+} RouteEntry;
 
 typedef struct {
     char *name;               /* owned; never NULL */
@@ -86,9 +111,14 @@ typedef struct {
     char **fallback_route_args;  /* owned array of owned strings; only meaningful for
                                    * POLICY_SPLIT_ARGS -- fallback's own discriminating args. */
     size_t fallback_route_arg_count;
-    bool strip_matched_args;     /* meaningful for POLICY_ROUTE_ARGS and POLICY_SPLIT_ARGS:
-                                   * remove whichever route args actually matched before
-                                   * forwarding to whichever of source/fallback won */
+    RouteEntry *routes;          /* owned array of owned RouteEntry; only meaningful for
+                                   * POLICY_ROUTE_MAP. NULL/0 is invalid for that policy
+                                   * (validate_shim_entry requires at least one route). */
+    size_t route_count;
+    bool strip_matched_args;     /* meaningful for POLICY_ROUTE_ARGS, POLICY_SPLIT_ARGS, and
+                                   * POLICY_ROUTE_MAP: remove whichever route arg(s) actually
+                                   * matched before forwarding to whichever of source/fallback/
+                                   * the matched route won */
     char **rewrite_from;         /* owned array of owned strings; only meaningful for
                                    * POLICY_REWRITE. Parallel to rewrite_to: rewrite_from[i]
                                    * -> rewrite_to[i]. Tracked as two separate counts (not
@@ -153,6 +183,17 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
 /* Writes `cfg` to `path` atomically (temp file + rename), creating parent
  * directories as needed. */
 ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size_t errbuf_size);
+
+/* The same per-entry checks config_load/config_load_split already run on
+ * every entry they parse (at least one route_args/rewrite rule/route/etc.
+ * where a policy requires it, no two identical POLICY_ROUTE_MAP routes,
+ * ...) -- exposed so a command that builds/mutates a ShimEntry in memory
+ * (add.c's finish_add) can run the same check before writing it to disk,
+ * instead of only finding out the config is invalid the next time
+ * something reloads it (see review.md-style reasoning: a gap here once
+ * already let `add` write a config that every other command then refused
+ * to load). */
+ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t errbuf_size);
 
 /* Parses a "split config" file: the same per-shim keys a [shims.<name>]
  * table in config.toml would have, but as bare `key = value` lines with no

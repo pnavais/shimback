@@ -52,15 +52,17 @@ typedef enum {
     PAGE_SPLIT_FALLBACK_ARGS,
     PAGE_STRIP_MATCHED,
     PAGE_REWRITE,
+    PAGE_ROUTE_MAP,
     PAGE_DIAGNOSTIC,
     PAGE_SPLIT_CONFIG,
     PAGE_DONE,
 } PageId;
 
-#define POLICY_COUNT 6
+#define POLICY_COUNT 7
 
 static const char *const POLICY_NAMES[POLICY_COUNT] = {
-    "exit-code", "heuristic", "exit-code-match", "route-args", "rewrite", "split-args",
+    "exit-code",       "heuristic", "exit-code-match", "route-args",
+    "rewrite",         "split-args", "route-map",
 };
 static const char *const POLICY_DESCRIPTIONS[POLICY_COUNT] = {
     "Fall back whenever source exits non-zero (the default).",
@@ -69,6 +71,7 @@ static const char *const POLICY_DESCRIPTIONS[POLICY_COUNT] = {
     "Pick source or fallback up front, based on the invocation's arguments.",
     "Always run source, rewriting matched arguments first; no fallback used.",
     "Pick source or fallback up front, from each side's own most-discriminating args.",
+    "Route to any number of other commands, based on the invocation's arguments.",
 };
 
 /* Working state for the whole wizard: one field (plus a "committed yet"
@@ -103,6 +106,9 @@ typedef struct {
     StrVec rewrite_from;
     StrVec rewrite_to;
     bool rewrite_set;
+    StrVec route_match;
+    StrVec route_command;
+    bool route_map_set;
     bool diagnostic;
     bool diagnostic_set;
     bool split_config;
@@ -134,6 +140,7 @@ static PageId after_fallback(Policy policy) {
         case POLICY_ROUTE_ARGS: return PAGE_ROUTE_ARGS;
         case POLICY_REWRITE: return PAGE_REWRITE;
         case POLICY_SPLIT_ARGS: return PAGE_SPLIT_SOURCE_ARGS;
+        case POLICY_ROUTE_MAP: return PAGE_ROUTE_MAP;
         case POLICY_EXIT_CODE:
         default: return PAGE_DIAGNOSTIC;
     }
@@ -159,6 +166,7 @@ static PageId next_page(const WizardState *st, PageId current) {
         case PAGE_SPLIT_FALLBACK_ARGS: return PAGE_STRIP_MATCHED;
         case PAGE_STRIP_MATCHED: return PAGE_DIAGNOSTIC;
         case PAGE_REWRITE: return PAGE_DIAGNOSTIC;
+        case PAGE_ROUTE_MAP: return PAGE_STRIP_MATCHED;
         case PAGE_DIAGNOSTIC: return PAGE_SPLIT_CONFIG;
         case PAGE_SPLIT_CONFIG:
         case PAGE_DONE:
@@ -232,6 +240,11 @@ static void reset_after_policy_change(WizardState *st) {
     strvec_free(&st->rewrite_to);
     strvec_init(&st->rewrite_to);
     st->rewrite_set = false;
+    strvec_free(&st->route_match);
+    strvec_init(&st->route_match);
+    strvec_free(&st->route_command);
+    strvec_init(&st->route_command);
+    st->route_map_set = false;
     st->diagnostic = false;
     st->diagnostic_set = false;
     st->split_config = false;
@@ -244,7 +257,9 @@ static bool page_present(const WizardSeed *seed, const WizardState *st, PageId p
         case PAGE_POLICY: return true;
         case PAGE_SOURCE: return true;
         case PAGE_SOURCE_ARGS: return true;
-        case PAGE_FALLBACK: return seed->fallback_arg != NULL || st->policy == POLICY_REWRITE;
+        case PAGE_FALLBACK:
+            return seed->fallback_arg != NULL || st->policy == POLICY_REWRITE ||
+                   st->policy == POLICY_ROUTE_MAP;
         case PAGE_FALLBACK_ARGS: return true;
         case PAGE_PATTERNS: return seed->patterns->count > 0;
         case PAGE_EXIT_CODES: return seed->exit_code_count > 0;
@@ -253,6 +268,7 @@ static bool page_present(const WizardSeed *seed, const WizardState *st, PageId p
         case PAGE_SPLIT_FALLBACK_ARGS: return seed->split_fallback_args->count > 0;
         case PAGE_STRIP_MATCHED: return true;
         case PAGE_REWRITE: return seed->rewrite_from->count > 0;
+        case PAGE_ROUTE_MAP: return seed->route_match->count > 0;
         case PAGE_DIAGNOSTIC: return true;
         case PAGE_SPLIT_CONFIG: return true;
         default: return false;
@@ -332,6 +348,13 @@ static void auto_commit_page(WizardState *st, const WizardSeed *seed, PageId p) 
                 strvec_push(&st->rewrite_to, xstrdup(seed->rewrite_to->items[i]));
             }
             st->rewrite_set = true;
+            break;
+        case PAGE_ROUTE_MAP:
+            for (size_t i = 0; i < seed->route_match->count; i++) {
+                strvec_push(&st->route_match, xstrdup(seed->route_match->items[i]));
+                strvec_push(&st->route_command, xstrdup(seed->route_command->items[i]));
+            }
+            st->route_map_set = true;
             break;
         case PAGE_DIAGNOSTIC:
             st->diagnostic = seed->diagnostic;
@@ -422,6 +445,9 @@ static void print_breadcrumb(const WizardState *st, const History *hist, size_t 
                 printf("%s  rewrite rules: %zu configured%s\n", dim, st->rewrite_from.count,
                        reset);
                 break;
+            case PAGE_ROUTE_MAP:
+                printf("%s  routes:     %zu configured%s\n", dim, st->route_match.count, reset);
+                break;
             case PAGE_DIAGNOSTIC:
                 printf("%s  diagnostic: %s%s\n", dim, st->diagnostic ? "yes" : "no", reset);
                 break;
@@ -509,6 +535,8 @@ static size_t input_row(const WizardState *st, size_t hist_pos, PageId page) {
             return row + 2 + st->exit_code_count;
         case PAGE_REWRITE:
             return row + 2 + st->rewrite_from.count;
+        case PAGE_ROUTE_MAP:
+            return row + 2 + st->route_match.count;
         case PAGE_POLICY:
         default:
             return 0;
@@ -622,6 +650,17 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
             }
             bar_line(colorize, "> %s", input);
             break;
+        case PAGE_ROUTE_MAP:
+            bar_line(colorize,
+                     "Routes, as <match>=<command> (at least one required; blank line to "
+                     "finish once you have one). The first route whose <match> equals one of "
+                     "the invocation's arguments runs <command> instead of source:");
+            for (size_t i = 0; i < st->route_match.count; i++) {
+                bar_line(colorize, "  %zu. %s=%s", i + 1, st->route_match.items[i],
+                         st->route_command.items[i]);
+            }
+            bar_line(colorize, "> %s", input);
+            break;
         case PAGE_STRIP_MATCHED:
             bar_line(colorize, "%sStrip matched route args before forwarding?%s [y/N]", hdr,
                      reset);
@@ -666,6 +705,8 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
     strvec_init(&st.split_fallback_args);
     strvec_init(&st.rewrite_from);
     strvec_init(&st.rewrite_to);
+    strvec_init(&st.route_match);
+    strvec_init(&st.route_command);
     st.policy = seed->policy;
 
     History hist = {0};
@@ -681,6 +722,8 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
         strvec_free(&st.split_fallback_args);
         strvec_free(&st.rewrite_from);
         strvec_free(&st.rewrite_to);
+        strvec_free(&st.route_match);
+        strvec_free(&st.route_command);
         free(st.exit_codes);
         free(st.name);
         free(st.source_arg);
@@ -879,11 +922,11 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
                 break;
 
             case PAGE_FALLBACK: {
-                bool optional = (st.policy == POLICY_REWRITE);
+                bool optional = (st.policy == POLICY_REWRITE || st.policy == POLICY_ROUTE_MAP);
                 if (input_len == 0) {
                     if (!optional) {
                         snprintf(error_msg, sizeof(error_msg),
-                                 "Fallback is required (except with policy rewrite).");
+                                 "Fallback is required (except with policy rewrite or route-map).");
                     } else {
                         free(st.fallback_arg);
                         st.fallback_arg = NULL;
@@ -1057,6 +1100,60 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
                 }
                 break;
 
+            case PAGE_ROUTE_MAP:
+                if (input_len == 0) {
+                    if (st.route_match.count == 0) {
+                        snprintf(error_msg, sizeof(error_msg), "At least one is required.");
+                    } else {
+                        st.route_map_set = true;
+                        if (advance_or_reuse(&st, &hist, &hist_pos)) {
+                            done = true;
+                        }
+                    }
+                } else {
+                    char *eq = strchr(input, '=');
+                    if (!eq || eq == input || eq[1] == '\0') {
+                        snprintf(error_msg, sizeof(error_msg), "Must be '<match>=<command>'.");
+                        input[0] = '\0';
+                        input_len = 0;
+                        break;
+                    }
+                    /* The route's command gets the same resolution
+                     * treatment source/fallback already get above --
+                     * immediate feedback here, same as those, rather than
+                     * deferring to finish_add's own (equally strict)
+                     * check. Unlike the CLI path, the wizard has no
+                     * --force escape hatch to bypass this with, matching
+                     * how source/fallback already work interactively. */
+                    char *route_match_str = xstrndup(input, (size_t)(eq - input));
+                    char *resolved_route = resolve_binary_arg(eq + 1);
+                    if (!resolved_route) {
+                        snprintf(error_msg, sizeof(error_msg),
+                                 "'%.190s' does not exist, is not executable, or isn't on "
+                                 "$PATH.",
+                                 eq + 1);
+                        free(route_match_str);
+                        input[0] = '\0';
+                        input_len = 0;
+                        break;
+                    }
+                    if (strcmp(resolved_route, self_exe) == 0) {
+                        snprintf(error_msg, sizeof(error_msg),
+                                 "'%.190s' resolves back to the shimback binary itself.", eq + 1);
+                        free(resolved_route);
+                        free(route_match_str);
+                        input[0] = '\0';
+                        input_len = 0;
+                        break;
+                    }
+                    free(resolved_route);
+                    strvec_push(&st.route_match, route_match_str);
+                    strvec_push(&st.route_command, xstrdup(eq + 1));
+                    input[0] = '\0';
+                    input_len = 0;
+                }
+                break;
+
             case PAGE_STRIP_MATCHED:
                 st.strip_matched_args = (input_len > 0 && (input[0] == 'y' || input[0] == 'Y'));
                 st.strip_matched_set = true;
@@ -1104,6 +1201,8 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
         strvec_free(&st.split_fallback_args);
         strvec_free(&st.rewrite_from);
         strvec_free(&st.rewrite_to);
+        strvec_free(&st.route_match);
+        strvec_free(&st.route_command);
         free(st.exit_codes);
         free(st.name);
         free(st.source_arg);
@@ -1126,6 +1225,8 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
     out->split_fallback_args = st.split_fallback_args;
     out->rewrite_from = st.rewrite_from;
     out->rewrite_to = st.rewrite_to;
+    out->route_match = st.route_match;
+    out->route_command = st.route_command;
     out->diagnostic = st.diagnostic;
     out->split_config = st.split_config;
     return true;

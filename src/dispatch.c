@@ -382,7 +382,69 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         return decode_exit_code(status);
     }
 
-    /* Every other policy needs a fallback to potentially run. */
+    /* route-map is the other policy that never looks at fallback (which is
+     * why it's optional for this one too, like rewrite) -- it picks the
+     * first route whose match exactly equals one of the invocation's
+     * arguments, or source if none do, then runs only that one with live/
+     * inherited stdio. Unlike route-args, a route's own command is
+     * resolved fresh here rather than upfront alongside source/fallback,
+     * since there can be any number of them and most invocations only
+     * ever need at most one resolved. */
+    if (entry->policy == POLICY_ROUTE_MAP) {
+        const RouteEntry *matched_route = NULL;
+        for (int i = 1; i < argc && !matched_route; i++) {
+            for (size_t j = 0; j < entry->route_count; j++) {
+                if (strcmp(argv[i], entry->routes[j].match) == 0) {
+                    matched_route = &entry->routes[j];
+                    break;
+                }
+            }
+        }
+
+        const char *target = resolved_source;
+        char *const *extra = entry->source_args;
+        size_t extra_count = entry->source_arg_count;
+        char *resolved_route_command = NULL;
+
+        if (matched_route) {
+            if (!is_executable_file(matched_route->command)) {
+                fprintf(stderr,
+                        "shimback: route command '%s' for '%s' not found or not executable\n",
+                        matched_route->command, shim_name);
+                return 127;
+            }
+            resolved_route_command = canonicalize(matched_route->command);
+            if (!resolved_route_command) {
+                fprintf(stderr,
+                        "shimback: route command '%s' for '%s' not found or not executable\n",
+                        matched_route->command, shim_name);
+                return 127;
+            }
+            target = resolved_route_command;
+            extra = matched_route->args;
+            extra_count = matched_route->arg_count;
+        }
+
+        char **route_argv = build_argv(shim_name, extra, extra_count, argc, argv);
+        if (matched_route && entry->strip_matched_args) {
+            char **filtered = strip_matching_argv(shim_name, extra, extra_count,
+                                                   &matched_route->match, 1, argc, argv);
+            free(route_argv);
+            route_argv = filtered;
+        }
+
+        if (matched_route && entry->diagnostic) {
+            warn("'%s': route '%s' matched; running %s", shim_name, matched_route->match, target);
+        }
+
+        int status = 0;
+        run_inherited(target, route_argv, &status);
+        free(route_argv);
+        free(resolved_route_command);
+        return decode_exit_code(status);
+    }
+
+    /* Every remaining policy needs a fallback to potentially run. */
     if (!is_executable_file(entry->fallback)) {
         fprintf(stderr, "shimback: fallback '%s' for '%s' not found or not executable\n",
                 entry->fallback, shim_name);

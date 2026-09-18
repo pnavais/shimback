@@ -117,5 +117,7 @@ add_test(NAME test_edit
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_edit.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_split_config
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_split_config.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_route_map
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_route_map.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_help
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_help.sh $<TARGET_FILE:shimback>)
