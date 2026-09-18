@@ -27,18 +27,26 @@ use_color() {
 
 print_banner() {
     if use_color; then
-        printf '\033[1;34m'
+        blue="$(printf '\033[1;34m')"
+        grey="$(printf '\033[90m')"
+        white="$(printf '\033[97m')"
+        reset="$(printf '\033[0m')"
+    else
+        blue=''
+        grey=''
+        white=''
+        reset=''
     fi
-    cat <<'BANNER'
-   _____ __  ________  _______  ___   ________ __
-  / ___// / / /  _/  |/  / __ )/   | / ____/ //_/
-  \__ \/ /_/ // // /|_/ / __  / /| |/ /   / ,<
- ___/ / __  // // /  / / /_/ / ___ / /___/ /| |
-/____/_/ /_/___/_/  /_/_____/_/  |_\____/_/ |_|
-BANNER
-    if use_color; then
-        printf '\033[0m'
-    fi
+    printf '%s  >>%s%s%s%s%s\n' "$blue" "$grey" \
+        '   _____ __  ________  ' "$white" '_______  ___   ________ __' "$reset"
+    printf '%s  >>%s%s%s%s%s\n' "$blue" "$grey" \
+        '  / ___// / / /  _/  |/  ' "$white" '/ __ )/   | / ____/ //_/' "$reset"
+    printf '%s  >>%s%s%s%s%s\n' "$blue" "$grey" \
+        '  \__ \/ /_/ // // /|_/ / ' "$white" '/ __  / /| |/ /   / ,<' "$reset"
+    printf '%s  >>%s%s%s%s%s\n' "$blue" "$grey" \
+        ' ___/ / __  // // /  / / ' "$white" '/ /_/ / ___ / /___/ /| |' "$reset"
+    printf '%s  >>%s%s%s%s%s\n' "$blue" "$grey" \
+        '/____/_/ /_/___/_/  /_/ ' "$white" '_____/ _/  |_\____/_/ |_|' "$reset"
     echo "  >> run a primary command, transparently fall back to another >>"
     echo "  Copyright (c) 2026 pnavais -- MIT OR Apache-2.0"
     echo
