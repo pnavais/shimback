@@ -347,6 +347,18 @@ static void test_validation_errors(void) {
     const char *orphaned_route_block =
         "version = 1\n\n[[shims.sed.routes]]\nmatch = \"--v8\"\n"
         "command = \"/opt/java8/bin/java\"\n";
+    const char *route_missing_command =
+        "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"route-map\"\n"
+        "[[shims.sed.routes]]\nmatch = \"--v8\"\n";
+    const char *route_missing_match =
+        "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"route-map\"\n"
+        "[[shims.sed.routes]]\ncommand = \"/opt/java8/bin/java\"\n";
+    const char *route_empty_command =
+        "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"route-map\"\n"
+        "[[shims.sed.routes]]\nmatch = \"--v8\"\ncommand = \"\"\n";
+    const char *route_empty_match =
+        "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"route-map\"\n"
+        "[[shims.sed.routes]]\nmatch = \"\"\ncommand = \"/opt/java8/bin/java\"\n";
     const char *mismatched_route_section_name =
         "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"route-map\"\n"
         "[[shims.other.routes]]\nmatch = \"--v8\"\ncommand = \"/opt/java8/bin/java\"\n";
@@ -437,6 +449,22 @@ static void test_validation_errors(void) {
           "two route-map routes with an identical (command, args) pair are rejected");
     if (st == CONFIG_OK) {
         config_free(&cfg);
+    }
+
+    const char *incomplete_route_cases[] = {route_missing_command, route_missing_match,
+                                            route_empty_command, route_empty_match};
+    const char *incomplete_route_descs[] = {
+        "a route missing 'command' is rejected", "a route missing 'match' is rejected",
+        "a route with an empty 'command' is rejected", "a route with an empty 'match' is rejected"};
+    for (size_t i = 0; i < 4; i++) {
+        f = fopen(path, "wb");
+        fwrite(incomplete_route_cases[i], 1, strlen(incomplete_route_cases[i]), f);
+        fclose(f);
+        st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+        check(st == CONFIG_ERR_VALIDATION, incomplete_route_descs[i]);
+        if (st == CONFIG_OK) {
+            config_free(&cfg);
+        }
     }
 
     f = fopen(path, "wb");

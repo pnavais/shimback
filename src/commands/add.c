@@ -50,7 +50,8 @@ static const char *USAGE =
     "of source (with --strip-matched-args removing that one matched argument first, same as\n"
     "route-args). No match runs source, exactly like route-args' own source/fallback default.\n"
     "Each route's own extra fixed arguments aren't settable from this flag -- edit the\n"
-    "resulting config.toml's `args = [...]` under that route's [[shims.<name>.routes]] block.\n";
+    "resulting config.toml's `args = [...]` under that route's [[shims.<name>.routes]] block.\n"
+    "Re-running add keeps those args for any route whose <match> and <command> are unchanged.\n";
 
 #define OPT_STRIP_MATCHED_ARGS 1000
 #define OPT_SOURCE_ARG 1001
@@ -433,6 +434,24 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     free(entry->rewrite_to);
     entry->rewrite_to = rewrite_to->items; /* ownership transferred */
     entry->rewrite_to_count = rewrite_to->count;
+    /* --route can't express per-route args, so a hand-edited `args = [...]`
+     * on an existing route would otherwise be silently lost on every
+     * re-add. Carry them over to the new route with the same match and
+     * resolved command; each old route's args are claimed at most once. */
+    for (size_t i = 0; i < route_count; i++) {
+        for (size_t j = 0; j < entry->route_count; j++) {
+            RouteEntry *old_route = &entry->routes[j];
+            if (old_route->arg_count == 0 || strcmp(old_route->match, resolved_routes[i].match) != 0 ||
+                strcmp(old_route->command, resolved_routes[i].command) != 0) {
+                continue;
+            }
+            resolved_routes[i].args = old_route->args;
+            resolved_routes[i].arg_count = old_route->arg_count;
+            old_route->args = NULL;
+            old_route->arg_count = 0;
+            break;
+        }
+    }
     for (size_t i = 0; i < entry->route_count; i++) {
         RouteEntry *old_route = &entry->routes[i];
         free(old_route->match);
