@@ -590,7 +590,27 @@ int cmd_doctor(int argc, char **argv) {
     printf("\n");
 
     if (config_dirty) {
+        /* Narrowly held around just this save, not doctor's whole
+         * (potentially long, interactive) run from its initial
+         * config_load above -- matching the same "lock right before the
+         * actual mutation" approach already used for orphan removal, not
+         * the wider "lock the whole operation" one add/remove use, since
+         * doctor's own run can span an unbounded interactive prompt
+         * (see review.md). This prevents a concurrent add/remove from
+         * racing *this* save specifically; it doesn't fully close the
+         * separate, narrower risk of doctor's own in-memory `cfg` having
+         * gone stale relative to a change made by something else earlier
+         * in a long interactive session -- an accepted, lower-priority
+         * residual gap for a distinctly less frequent, human-supervised
+         * operation than add/remove's much tighter loop. */
+        int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
+        if (shim_lock_fd < 0) {
+            warn("doctor fix: failed to acquire the shim directory lock on %s: %s -- saving "
+                 "config anyway",
+                 shim_dir, strerror(errno));
+        }
         ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
+        shim_dir_lock_release(shim_lock_fd);
         if (save_st != CONFIG_OK) {
             warn("doctor fix: failed to save config: %s", errbuf);
         } else {

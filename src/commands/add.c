@@ -276,20 +276,36 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         replacing_existing_symlink = true;
     }
 
-    /* Held from here through the final rename() below (or released early
-     * by any die()/rollback_and_die() in between, via ordinary process
-     * exit) -- serializes this whole check-then-replace sequence against
-     * a concurrent `add`/`remove`/`doctor fix` racing the same symlink as
-     * the same user, closing the gap the permission check above can't (see
-     * review.md and shim_dir_lock_acquire's own comment). Only needed for
-     * the replace path: a brand-new shim has no prior state to race. */
-    int shim_lock_fd = -1;
-    if (replacing_existing_symlink) {
-        shim_lock_fd = shim_dir_lock_acquire(shim_dir);
-        if (shim_lock_fd < 0) {
-            die("add: failed to acquire the shim directory lock on %s: %s", shim_dir,
-                strerror(errno));
-        }
+    /* Ensures shim_dir exists before we try to lock it -- for a brand-new
+     * shim this is the earliest point it actually needs to exist on
+     * disk. Doing this now (before we even know whether this ends up
+     * creating a new shim or replacing one) is safe on its own: an empty
+     * directory encodes no shim state, unlike the *symlink* itself,
+     * which still waits until the config is safely saved below -- so
+     * this doesn't reintroduce the "dangling symlink with no config
+     * entry" risk that ordering was originally protecting against. */
+    if (!mkdir_p(shim_dir)) {
+        die("add: failed to create shim directory %s", shim_dir);
+    }
+
+    /* Held for this whole operation -- config load through the symlink
+     * create/replace and the shell PATH update -- not just the symlink
+     * replace path as originally scoped. Two concurrent `add`/`remove`
+     * calls could otherwise each load the same old config.toml, mutate
+     * their own in-memory copy, and atomically save it, with the second
+     * save silently discarding whatever the first one added or removed
+     * (a lost update) -- and the same for the shell startup file's own
+     * read-merge-write cycle in shell_ensure_path (see review.md). This
+     * reuses the same lock the original TOCTOU fix introduced, widened
+     * to serialize the whole operation against a concurrent
+     * add/remove/doctor fix, not just the one narrow symlink-swap race
+     * that motivated it first. Released at the very end, on the success
+     * path (or early by any die()/rollback_and_die() in between, via
+     * ordinary process exit). */
+    int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
+    if (shim_lock_fd < 0) {
+        die("add: failed to acquire the shim directory lock on %s: %s", shim_dir,
+            strerror(errno));
     }
 
     char *cfg_path = config_file_path();
@@ -431,15 +447,12 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                           "add: failed to save config: %s", errbuf);
     }
 
-    /* Only now, with the config safely saved, do we touch the shim
-     * directory -- this way a failure above (an unreadable/invalid
-     * existing config, or a failed save) never leaves a dangling symlink
-     * behind with no matching config entry, which used to happen when the
-     * symlink was created first. */
-    if (!mkdir_p(shim_dir)) {
-        rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
-                          "add: failed to create shim directory %s", shim_dir);
-    }
+    /* shim_dir itself was already created earlier (before the lock was
+     * even acquired) -- what matters is that we only get here, to touch
+     * the *symlink*, once the config is safely saved: a failure above
+     * (an unreadable/invalid existing config, or a failed save) must
+     * never leave a dangling symlink behind with no matching config
+     * entry, which used to happen when the symlink was created first. */
     if (replacing_existing_symlink) {
         /* Build the replacement at a temp name first and rename() it over
          * the old one, rather than unlink-then-symlink: rename() is
@@ -502,7 +515,6 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     } else {
         remove_split_configs(name);
     }
-    shim_dir_lock_release(shim_lock_fd);
 
     bool colorize = stdout_is_color();
     const char *reset = colorize ? ANSI_RESET : "";
@@ -527,6 +539,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         printf("Restart your shell (or re-source its startup file) for the PATH change to take "
                "effect.\n");
     }
+    shim_dir_lock_release(shim_lock_fd);
 
     return 0;
 }

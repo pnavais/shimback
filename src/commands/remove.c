@@ -57,6 +57,23 @@ int cmd_remove(int argc, char **argv) {
             name);
     }
 
+    char *shim_dir = shim_bin_dir();
+
+    /* Held from here -- before config.toml is even loaded -- through the
+     * unlink() below (released right after, on every path). Two
+     * concurrent `remove`/`add` calls could otherwise each load the same
+     * old config.toml before either saves, so whichever one saves last
+     * would silently discard whatever the other one changed (a lost
+     * update), on top of the original symlink check-then-unlink race this
+     * lock was first introduced for (see review.md). Only meaningful if
+     * shim_dir already exists; if it doesn't, there's nothing to lock,
+     * remove, or lose an update to either way. */
+    int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
+    if (shim_lock_fd < 0 && errno != ENOENT) {
+        die("remove: failed to acquire the shim directory lock on %s: %s", shim_dir,
+            strerror(errno));
+    }
+
     char *cfg_path = config_file_path();
     Config cfg;
     char errbuf[256];
@@ -114,22 +131,13 @@ int cmd_remove(int argc, char **argv) {
         free(candidates);
     }
 
-    char *shim_dir = shim_bin_dir();
+    /* Computed only now, with `name` at its final value: -y/--yes may have
+     * just reassigned it above (a typo corrected to its unique closest
+     * match) -- building this any earlier, from the original argument,
+     * would check and later unlink() the wrong symlink entirely, leaving
+     * the *real* target's symlink behind as an orphan even though its
+     * config entry was correctly removed below. */
     char *symlink_path = path_join(shim_dir, name);
-
-    /* Held from the ownership check through the unlink() below (released
-     * right after, on every path) -- serializes this whole check-then-
-     * unlink sequence against a concurrent `add`/`remove`/`doctor fix`
-     * racing the same symlink as the same user, so the unlink() below can
-     * never act on something a *different* concurrent command's check
-     * saw instead of this one's own (see review.md). Only meaningful if
-     * shim_dir already exists; if it doesn't, there's nothing to lock or
-     * remove either way. */
-    int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
-    if (shim_lock_fd < 0 && errno != ENOENT) {
-        die("remove: failed to acquire the shim directory lock on %s: %s", shim_dir,
-            strerror(errno));
-    }
 
     /* Read-only pre-flight: figure out whether there's a shimback-managed
      * symlink to remove, without touching it yet. The config is saved

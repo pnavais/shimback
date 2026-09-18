@@ -1,154 +1,124 @@
-# Outstanding issues from final verification
+# Complete verification review
 
-## Verification status
+**Round:** 2
 
-The latest remediation fixes were verified against the current source. The
-macOS Debug build succeeds with `-Wall -Wextra -Werror`, and all 12 CTest tests
-pass. The previously reported Critical issues were not reproduced; uninstall
-no longer executes candidate files, traversal through `remove` is rejected,
-invalid symlink names no longer abort cleanup, and failed split-config updates
-restore their prior contents.
+## Scope and verification
+
+Reviewed the entire current repository: all tracked C sources and headers,
+tests, CMake configuration, installer, shell integration, README/build
+documentation, and the untracked `test.txt`. The tree is a small C11/POSIX
+CLI project (18 implementation files, 12 CTest entries, and the installer).
+
+The current macOS build completed successfully and `ctest --output-on-failure`
+passed all 12/12 tests. No Critical findings were verified.
+
+## Prior assessment verification
+
+- **Strict configuration parsing: holds.** `config.c` now applies
+  `no_trailing_garbage()` to quoted and array values, uses strict bounded
+  integer parsing for `version` and timeout values, and `parse_size_bytes()`
+  rejects `ERANGE`. The relevant regression coverage is present.
+- **Shell marker matching: holds.** `shell.c` requires complete marker lines at
+  line boundaries before editing or removing a block.
+- **Ownership-policy consistency: holds.** `looks_like_shimback_binary()` is
+  shared by list/doctor/add/remove/uninstall, and the documented limitation
+  that the public marker is only a best-effort hint is reasonable for the
+  stated single-user, no-privilege-boundary threat model.
+- **`add` replacement race fix: holds for Shimback operations.** The
+  `.shimback.lock` advisory lock is acquired before the replacement path's
+  config work and released after `rename()`. The same lock is used by
+  `remove` and the relevant `doctor fix` paths. It does not protect against a
+  same-user process that deliberately ignores the lock, which is an explicit
+  and reasonable scope limitation here.
+- **Dangling-link uninstall defense: reasonable.** The repository documents
+  the shim directory as Shimback-owned, and the code explicitly treats a
+  dangling link as stale Shimback state while preserving live foreign links.
+  That is a deliberate policy choice, not an unverified ownership claim.
+- **Lock-file cleanup: holds.** `uninstall` removes `.shimback.lock` before
+  attempting `rmdir()`.
 
 ## Warning (should address)
 
-### 1. Static binary marker is forgeable
+### 1. Lock-file cleanup can race a concurrent Shimback command
 
-**Location:** `src/commands/uninstall.c:39-90`;
-`src/version.h.in:6-15`
+**Location:** `src/commands/uninstall.c:75-117`, `src/paths.c:505-543`
 
-**Problem:** Uninstall treats any executable containing the public
-`SHIMBACK_BINARY_MARKER` byte sequence as Shimback-owned.
+**Problem:** `uninstall` scans the shim directory, closes the directory, and
+  then unconditionally unlinks `.shimback.lock` without acquiring that lock.
+  A concurrent `add`, `remove`, or `doctor fix` can hold the lock while
+  uninstall deletes the lock file, after which a new command can create a new
+  lock inode and acquire it independently. The two commands are then no longer
+  serialized.
 
-**Why it matters:** A foreign executable can embed the same marker and be
-incorrectly deleted by `uninstall --prefix`, or a foreign symlink target can be
-misclassified as a Shimback shim and removed. This is no longer a code
-execution issue, but it is not strong ownership proof.
+**Why it matters:** Concurrent teardown can interleave with mutation. For
+  example, uninstall may remove a symlink based on an earlier scan while a
+  concurrent add is updating the same name, and deleting the lock inode makes
+  the intended mutual exclusion unreliable for the remainder of the race.
 
-**Fix:** Use trusted installation metadata, or record and verify a trusted
-cryptographic hash/device identity. If the marker remains intentional, document
-it as a best-effort identification hint rather than authenticated ownership.
+**Fix:** Acquire the directory lock for uninstall's complete scan/removal and
+  hold it until all symlink mutations are complete. Only unlink the lock file
+  after releasing it, and preferably only after confirming no concurrent
+  operation can recreate/use it; alternatively leave the lock file in place
+  permanently and let the directory cleanup tolerate it.
 
-### 2. Malformed scalar configuration values are accepted
+### 2. Configuration and shell-file updates are not serialized across processes
 
-**Location:** `src/config.c:418-425, 462-470, 569-581, 764-766`
+**Location:** `src/commands/add.c:295-505`, `src/commands/remove.c:60-172`,
+`src/shell.c:311-385, 713-738`
 
-**Problem:** Scalar parsers do not require the remainder of a value to contain
-only permitted whitespace after parsing. For example:
+**Problem:** The new shim-directory lock covers only replacement-path symlink
+  mutations. `add` and `remove` can concurrently load and atomically rewrite
+  `config.toml`, and shell PATH updates similarly read/merge/write startup
+  files without a lock.
 
-```toml
-fallback = "/bin/echo" garbage
-```
+**Why it matters:** Two simultaneous commands can both read the same old
+  configuration and then atomically rename their independent snapshots into
+  place, losing one command's shim or removal. Concurrent PATH updates can
+  likewise lose one directory from the merged block. Atomic rename prevents
+  partial files but does not prevent lost updates.
 
-is accepted instead of rejected.
+**Fix:** Use a lock covering each read-modify-write transaction (ideally a
+  config-directory lock for config and a per-startup-file lock for shell
+  integration), or implement conflict detection/retry before replacing the
+  file. Extend the existing operation lock only if its lifetime and location
+  are suitable for all relevant writers.
 
-**Why it matters:** Operator mistakes and malformed configuration can be
-silently accepted and later normalized when Shimback rewrites the file, hiding
-configuration corruption.
+### 3. `install` can overwrite an existing binary without ownership validation
 
-**Fix:** After parsing a quoted string or scalar, skip whitespace and require
-`*cursor == '\0'`. Parse the top-level `version` with the same strict integer
-validation used for other numeric fields.
+**Location:** `src/commands/install.c:214-226`, `src/paths.c:375-424`
 
-### 3. Existing symlink replacement remains raceable
+**Problem:** `install --prefix DIR` always atomically renames the running
+  binary over `DIR/bin/shimback`. Unlike `uninstall`, it does not verify that an
+  existing destination is a Shimback binary or ask for confirmation.
 
-**Location:** `src/commands/add.c:237-249, 411-423`
+**Why it matters:** A typo, shared prefix, or an intentionally existing
+  unrelated executable named `shimback` is silently replaced. If the prefix is
+  writable by another principal, the destination can also change between the
+  caller's path construction and rename, causing an unintended overwrite.
 
-**Problem:** `add` checks that an existing symlink is Shimback-managed, then
-later creates a replacement and calls `rename()` over the path. The directory
-entry is not held or revalidated between the ownership check and replacement.
+**Fix:** Refuse an existing destination that fails
+  `looks_like_shimback_binary()` unless an explicit replacement/upgrade option
+  is supplied, and validate the prefix ownership/permissions or use a trusted
+  installation directory. At minimum, document that `install` deliberately
+  overwrites the destination and warn before doing so.
 
-**Why it matters:** A concurrent local process that can modify the shim
-directory can replace the checked entry in between those operations. The later
-`rename()` can overwrite a different file or symlink, causing data loss.
+### 4. The untracked `test.txt` is unexplained repository content
 
-**Fix:** Enforce that the shim directory is trusted and owner-only writable,
-or use descriptor-relative filesystem operations with revalidation immediately
-before replacement. At minimum, reject or warn about insecure directory
-ownership and permissions.
+**Location:** `test.txt:1` (untracked)
+
+**Problem:** The repository contains an untracked file with the content
+  `updated_test`, outside the documented source/test layout.
+
+**Why it matters:** If accidentally included in a release or commit it adds
+  unexplained project content; if it is a test artifact, its purpose and
+  lifecycle are unclear.
+
+**Fix:** Remove it if it is a local artifact, or add it intentionally with a
+  meaningful name, tracked purpose, and corresponding test/documentation.
 
 ## Assessment
 
-No remaining Critical issue was found, and the project is substantially safer.
-The project is release-ready for the current threat model, but the three
-warnings above remain worthwhile hardening and correctness improvements.
-
-## Response
-
-Findings 2 and 3 are agreed with and fixed. Finding 1 is defended -- see
-below for the reasoning. Verified with a clean macOS Debug build
-(`-Wall -Wextra -Werror`, zero warnings) plus a genuine non-root Docker build
-on `ubuntu:24.04`, both 12/12 CTest, and reproduced each of findings 2 and 3
-before fixing them.
-
-### 1. Static binary marker is forgeable -- defended
-
-Agreed that the marker isn't cryptographic proof of ownership -- it's a
-fixed, public byte sequence readable with `strings` on any shimback binary,
-so nothing stops a different file from embedding it. Not hardening this
-further is a deliberate choice, though, not an oversight: the two ways to
-strengthen it both land on the same problem. Recording trusted installation
-metadata (a manifest, a hash) alongside the binary is exactly as forgeable
-as the marker itself, since it would live in the same directory an attacker
-would need write access to in order to plant a convincing marker forgery in
-the first place -- and someone with that write access can already delete or
-replace the target file directly, with no need to trick `uninstall` into
-doing it for them. A real cryptographic identity check would close that
-gap, but shimback is a single-user CLI tool with no privilege boundary to
-defend, so that's disproportionate to the actual risk here.
-
-Taking the fix you offered as an acceptable resolution ("document it as a
-best-effort identification hint rather than authenticated ownership"):
-expanded the comment on `looks_like_shimback_binary()` in `uninstall.c` to
-say this explicitly, including the reasoning above, and added a short note
-to the `uninstall` section of the README so it's visible without reading
-the source.
-
-### 2. Malformed scalar configuration values are accepted -- fixed
-
-Agreed, and the same gap existed across every cursor-based value in
-`parse_shim_entry_field()` -- not just the four locations cited, but also
-`source_args`, `fallback_args`, `exit_codes`, `error_patterns`,
-`route_args`, `source_route_args`, `fallback_route_args`, `rewrite_from`,
-and `rewrite_to`. Each of those calls `parse_string_array()`/
-`parse_int_array()`, which correctly stop at the closing `]` but, like the
-quoted-string fields, never checked whether anything followed it.
-
-Added a shared `no_trailing_garbage()` helper (`src/config.c`) -- skips
-whitespace and requires end-of-string, since an inline comment is already
-stripped before parsing starts -- and applied it after every cursor-based
-parse in `parse_shim_entry_field()` and both `capture_limit` call sites.
-Also replaced the top-level `version` key's unchecked `strtol()` with
-`parse_nonneg_int()`, the same strict integer parser already used for
-`capture_timeout_ms`, exactly as suggested.
-
-Reproduced with `fallback = "/usr/bin/sed" garbage`, which used to load
-successfully with " garbage" silently dropped; now rejected with `line N:
-expected a string for 'fallback'`. Also verified for a trailing-garbage
-array, `capture_limit`, and `version`, and that ordinary well-formed
-configs still parse unchanged. New regression tests in
-`tests/test_config_parser.c` covering a quoted-string field, `policy`, an
-array field, `capture_limit` (both scopes), and `version`.
-
-### 3. Existing symlink replacement remains raceable -- fixed
-
-Agreed. Two changes in `add.c`, matching the "at minimum" bar from the
-suggested fix:
-
-- Right after confirming an existing symlink is shimback-owned, refuse to
-  proceed if the shim directory is writable by anyone other than its
-  owner (`chmod go-w` fixes it). This doesn't close the window by itself,
-  but it removes the actual precondition the race needs -- another user
-  able to write into the directory at all.
-- Immediately before the final `rename()` that swaps the replacement
-  symlink into place, re-verify `symlink_path` is still a symlink still
-  resolving to the shimback binary, refusing the replacement (with
-  rollback) if it changed. This shrinks the TOCTOU window from "however
-  long the config save took" down to the handful of syscalls between the
-  recheck and `rename()` itself -- not a full descriptor-relative
-  rewrite, but as close as a plain `rename()` gets.
-
-Verified the directory-permission check: made an existing shim's directory
-group/other-writable, confirmed `add` on that shim now refuses with
-"writable by more than just its owner" instead of proceeding, and that it
-succeeds again once owner-only permissions are restored. New regression
-test in `tests/test_add_remove.sh`.
+No Critical issues were found. The previously claimed fixes and defenses hold
+as described. The remaining warnings are concurrency hardening and installer
+overwrite-policy issues rather than failures reproduced by the current test
+suite.
