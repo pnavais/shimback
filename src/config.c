@@ -753,6 +753,19 @@ ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t er
                  "shim '%s' uses policy \"route-map\" but has no routes", entry->name);
         return CONFIG_ERR_VALIDATION;
     }
+    /* parse_route_field() lets a hand-edited [[...routes]] block omit either
+     * key, so completeness has to be enforced here -- serialization,
+     * dispatch, doctor, and the duplicate check below all assume both are
+     * real, non-empty strings. */
+    for (size_t i = 0; i < entry->route_count; i++) {
+        const RouteEntry *r = &entry->routes[i];
+        if (!r->match || r->match[0] == '\0' || !r->command || r->command[0] == '\0') {
+            snprintf(errbuf, errbuf_size,
+                     "shim '%s': route %zu requires a non-empty 'match' and 'command'",
+                     entry->name, i + 1);
+            return CONFIG_ERR_VALIDATION;
+        }
+    }
     /* Two routes with the same command and the exact same fixed args would
      * be genuinely unreachable duplication: whichever comes first in the
      * file always wins, so the second could never fire under any input,

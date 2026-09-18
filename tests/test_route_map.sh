@@ -78,4 +78,41 @@ assert_not_contains "route-map duplicate routes: nothing written to config" \
 code=$?
 assert_eq "route-map without -f/--fallback: add succeeds" "0" "$code"
 
+# --- hand-edited per-route args survive a re-add (--route can't express
+# them, so re-running add would otherwise silently drop them) and still
+# take effect at dispatch ---
+"$SHIMBACK" add keepargs -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v8=$FAKE_ECHO" >/dev/null
+# The route block is the last thing written for a shim, and keepargs is the
+# most recently added shim, so appending lands the key inside its route.
+printf 'args = ["--enable-preview"]\n' >>"$(config_file)"
+KEEPARGS="$(shim_path keepargs)"
+out="$("$KEEPARGS" --v8 x)"
+assert_eq "route args (hand-edited): applied at dispatch" \
+    "ECHO_RAN:--enable-preview --v8 x" "$out"
+
+"$SHIMBACK" add keepargs -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v8=$FAKE_ECHO" --diagnostic >/dev/null
+assert_contains "route args: kept across a re-add with unchanged match/command" \
+    "$(cat "$(config_file)")" 'args = ["--enable-preview"]'
+out="$("$KEEPARGS" --v8 x)"
+assert_eq "route args: still applied at dispatch after re-add" \
+    "ECHO_RAN:--enable-preview --v8 x" "$out"
+
+# A re-add that changes the route's command is a different route: no carry-over.
+"$SHIMBACK" add keepargs -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v8=$FAKE_FALLBACK" >/dev/null
+assert_not_contains "route args: dropped when the route's command changes" \
+    "$(cat "$(config_file)")" "--enable-preview"
+
+# --- a hand-edited route missing 'match'/'command' is a controlled config
+# error, not a crash at dispatch (validated on load) ---
+printf 'version = 1\n\n[shims.badjava]\nsource = "%s"\npolicy = "route-map"\n\n[[shims.badjava.routes]]\nmatch = "--x"\n' \
+    "$FAKE_PRIMARY" >"$(config_file)"
+"$SHIMBACK" list >/dev/null 2>"$SANDBOX/err"
+code=$?
+assert_eq "route missing command: list reports a config error" "1" "$code"
+assert_contains "route missing command: error names the problem" "$(cat "$SANDBOX/err")" \
+    "requires a non-empty 'match' and 'command'"
+
 finish
