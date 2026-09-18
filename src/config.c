@@ -1485,8 +1485,10 @@ ShimSource resolve_shim_entry(Config *cfg, const char *name, ShimEntry **entry,
 char **collect_all_shim_names(const Config *cfg, size_t *out_count) {
     size_t symlink_count = 0;
     char **symlink_names = list_shim_symlink_names(&symlink_count);
+    size_t split_count = 0;
+    char **split_names = list_split_config_names(&split_count);
 
-    size_t cap = cfg->count + symlink_count;
+    size_t cap = cfg->count + symlink_count + split_count;
     char **names = cap > 0 ? xmalloc(cap * sizeof(char *)) : NULL;
     size_t count = 0;
 
@@ -1495,8 +1497,8 @@ char **collect_all_shim_names(const Config *cfg, size_t *out_count) {
     }
     for (size_t i = 0; i < symlink_count; i++) {
         bool dup = false;
-        for (size_t j = 0; j < cfg->count; j++) {
-            if (strcmp(cfg->shims[j].name, symlink_names[i]) == 0) {
+        for (size_t j = 0; j < count; j++) {
+            if (strcmp(names[j], symlink_names[i]) == 0) {
                 dup = true;
                 break;
             }
@@ -1507,6 +1509,21 @@ char **collect_all_shim_names(const Config *cfg, size_t *out_count) {
         free(symlink_names[i]);
     }
     free(symlink_names);
+
+    for (size_t i = 0; i < split_count; i++) {
+        bool dup = false;
+        for (size_t j = 0; j < count; j++) {
+            if (strcmp(names[j], split_names[i]) == 0) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) {
+            names[count++] = xstrdup(split_names[i]);
+        }
+        free(split_names[i]);
+    }
+    free(split_names);
 
     *out_count = count;
     return names;

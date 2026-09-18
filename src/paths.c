@@ -218,6 +218,78 @@ char **list_shim_symlink_names(size_t *out_count) {
     return names;
 }
 
+static void append_unique_name(char ***names, size_t *count, size_t *cap, const char *name) {
+    for (size_t i = 0; i < *count; i++) {
+        if (strcmp((*names)[i], name) == 0) {
+            return;
+        }
+    }
+    if (*count == *cap) {
+        *cap = *cap == 0 ? 8 : *cap * 2;
+        *names = xrealloc(*names, *cap * sizeof(char *));
+    }
+    (*names)[(*count)++] = xstrdup(name);
+}
+
+static void scan_split_config_dir(const char *dir, char ***names, size_t *count, size_t *cap) {
+    const char *suffix = "-config.toml";
+    const size_t suffix_len = strlen(suffix);
+    DIR *d = opendir(dir);
+    if (!d) {
+        return;
+    }
+
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        const char *filename = ent->d_name;
+        size_t filename_len = strlen(filename);
+        if (filename_len <= suffix_len ||
+            strcmp(filename + filename_len - suffix_len, suffix) != 0) {
+            continue;
+        }
+
+        size_t name_len = filename_len - suffix_len;
+        char *name = xmalloc(name_len + 1);
+        memcpy(name, filename, name_len);
+        name[name_len] = '\0';
+        if (is_valid_shim_name(name)) {
+            char *path = path_join(dir, filename);
+            struct stat st;
+            if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
+                append_unique_name(names, count, cap, name);
+            }
+            free(path);
+        }
+        free(name);
+    }
+    closedir(d);
+}
+
+char **list_split_config_names(size_t *out_count) {
+    char **names = NULL;
+    size_t count = 0;
+    size_t cap = 0;
+
+    char *shim_dir = shim_bin_dir();
+    scan_split_config_dir(shim_dir, &names, &count, &cap);
+    free(shim_dir);
+
+    char *self_exe = self_exe_path();
+    char *bin_dir = dir_of(self_exe);
+    scan_split_config_dir(bin_dir, &names, &count, &cap);
+    free(bin_dir);
+    free(self_exe);
+
+    char *cfg_path = config_file_path();
+    char *cfg_dir = dir_of(cfg_path);
+    scan_split_config_dir(cfg_dir, &names, &count, &cap);
+    free(cfg_dir);
+    free(cfg_path);
+
+    *out_count = count;
+    return names;
+}
+
 char *canonicalize(const char *path) {
     /* realpath(path, NULL) is a POSIX.1-2008 extension that mallocs the
      * result buffer itself; supported on both macOS and Linux libc. */

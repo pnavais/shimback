@@ -279,6 +279,30 @@ assert_not_contains "doctor fix: config.toml untouched by the split shim's fix" 
     "$(cat "$CFG")" "splitcyc"
 "$SHIMBACK" remove -y splitcyc >/dev/null
 
+# --- a split config on its own is discoverable, and doctor fix creates its
+# missing shim symlink instead of treating the file as invisible ---
+FILE_ONLY_SPLIT="$(dirname "$CFG")/fileonly-config.toml"
+{
+    printf 'source = "%s"\n' "$FAKE_PRIMARY"
+    printf 'fallback = "%s"\n' "$FAKE_FALLBACK"
+    printf 'policy = "exit-code"\n'
+} >"$FILE_ONLY_SPLIT"
+
+out="$("$SHIMBACK" doctor)"
+assert_contains "doctor: discovers a split config without a symlink" "$out" "fileonly"
+assert_contains "doctor: reports the standalone split config path" "$out" \
+    "config: split file at $FILE_ONLY_SPLIT"
+assert_contains "doctor: reports the standalone split config's missing symlink" "$out" \
+    "no symlink at"
+
+out2="$("$SHIMBACK" doctor fix -y)"
+assert_contains "doctor fix: creates the standalone split config's symlink" "$out2" \
+    "recreated missing symlink"
+if [ ! -L "$(shim_path fileonly)" ]; then
+    fail "doctor fix: expected fileonly's symlink to be recreated"
+fi
+"$SHIMBACK" remove -y fileonly >/dev/null
+
 # --- an orphaned shim (real symlink, no config anywhere) is reported as
 # an issue by default, not silently skipped ---
 "$SHIMBACK" add orphantool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null

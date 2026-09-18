@@ -82,6 +82,11 @@ char *resolve_split_config_path(const char *name);
  * itself doesn't exist yet). */
 char **list_shim_symlink_names(size_t *out_count);
 
+/* Lists valid shim names inferred from existing <name>-config.toml files in
+ * any of the three split-config locations. Newly allocated array of newly
+ * allocated names; *out_count receives its length. */
+char **list_split_config_names(size_t *out_count);
+
 /* realpath(3) wrapper. Returns NULL if the path doesn't exist / can't be
  * resolved (errno is left as set by realpath). */
 char *canonicalize(const char *path);
