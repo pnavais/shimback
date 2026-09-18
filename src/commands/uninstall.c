@@ -77,6 +77,22 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
     if (!d) {
         return 0;
     }
+
+    /* Brings uninstall's own symlink sweep into the same serialization as
+     * add/remove/doctor fix -- without this, uninstall could scan and
+     * remove symlinks while one of those was mid-operation, acting on
+     * state none of them individually ever saw and, worse, deleting the
+     * lock file itself (below) out from under an active holder (see
+     * review.md). Best-effort: uninstall's whole design already accepts
+     * a partial/imperfect cleanup over a hard failure, so a lock it
+     * can't acquire is a warning, not a reason to abort. */
+    int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
+    if (shim_lock_fd < 0) {
+        warn("uninstall: failed to acquire the shim directory lock on %s: %s -- proceeding "
+             "without it",
+             shim_dir, strerror(errno));
+    }
+
     int count = 0;
     struct dirent *ent;
     while ((ent = readdir(d)) != NULL) {
@@ -107,11 +123,27 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
         free(entry_path);
     }
     closedir(d);
-    /* The shim-dir lock file (see shim_dir_lock_acquire, paths.c) is a
-     * regular file, never a symlink, so nothing in the loop above ever
-     * touches it -- without removing it here first, it would be the one
-     * thing left behind keeping the directory "non-empty" and silently
-     * breaking the rmdir() below every time. */
+    shim_dir_lock_release(shim_lock_fd);
+
+    /* flock() locks the *inode*, not the path: releasing above and then
+     * unlinking the lock file here leaves an unavoidably narrow window
+     * where a fresh shim_dir_lock_acquire() elsewhere could open/lock a
+     * brand new inode at the same path before this unlink() runs,
+     * ending up with no real mutual exclusion against whatever raced in
+     * (see review.md). Making that fully airtight would mean never
+     * deleting the lock file at all, and teaching every directory-
+     * emptiness assumption elsewhere to tolerate it permanently --
+     * disproportionate for how narrow this window actually is (a
+     * handful of syscalls, on a single-user CLI tool with no adversarial
+     * concurrent user) against what it would cost everywhere else. The
+     * lock above already closes the much larger gap this was actually
+     * about: uninstall's own scan+removal, previously not serialized
+     * against a concurrent add/remove/doctor fix at all.
+     *
+     * The lock file (a regular file, never a symlink) is otherwise never
+     * touched by the sweep loop above -- without removing it here, it
+     * would be the one thing left behind keeping the directory
+     * "non-empty" and silently breaking the rmdir() below every time. */
     shim_dir_lock_file_remove(shim_dir);
     rmdir(shim_dir); /* best-effort: harmless failure if non-empty (e.g. a foreign symlink
                        * deliberately left alone above) or already gone */

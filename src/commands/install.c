@@ -219,9 +219,25 @@ int cmd_install(int argc, char **argv) {
     char *self_exe = self_exe_path();
     char *dest = path_join(bin_dir, "shimback");
 
-    /* Always overwrite: this doubles as the upgrade path (re-run install
-     * after building a newer shimback to refresh the installed copy), and a
-     * same-content copy is a harmless no-op. */
+    /* Unlike uninstall, which always verifies ownership before deleting
+     * anything, install used to overwrite whatever was already at `dest`
+     * unconditionally -- a typo'd or shared --prefix could silently
+     * replace an unrelated existing file that just happened to be named
+     * "shimback" (see review.md). Refusing here when something else is
+     * already there costs nothing for the normal cases: a brand-new
+     * install has nothing at `dest` yet, and re-running install to
+     * upgrade an existing shimback binary still passes this check, since
+     * that existing binary already embeds the marker. */
+    if (access(dest, F_OK) == 0 && !looks_like_shimback_binary(dest)) {
+        die("install: %s already exists and doesn't look like a shimback binary -- refusing to "
+            "overwrite it (remove it manually first if this --prefix is correct)",
+            dest);
+    }
+
+    /* Always overwrite once the check above has passed: this doubles as
+     * the upgrade path (re-run install after building a newer shimback to
+     * refresh the installed copy), and a same-content copy is a harmless
+     * no-op. */
     if (!copy_executable(self_exe, dest)) {
         die("install: failed to copy %s to %s: %s", self_exe, dest, strerror(errno));
     }
