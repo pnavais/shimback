@@ -248,9 +248,10 @@ ShimSource resolve_shim_entry(Config *cfg, const char *name, ShimEntry **entry,
 
 /* Builds the full set of shim names `list`/`doctor` must consider: every
  * name already in `cfg`, in its own order, followed by every
- * shimback-managed symlink name (see list_shim_symlink_names, paths.h)
- * that isn't already one of those -- a split-only shim, or an orphan (see
- * ShimSource). Newly allocated array of newly allocated strings;
+ * shimback-managed symlink name or split-config filename (see
+ * list_shim_symlink_names and list_split_config_names, paths.h) that isn't
+ * already one of those -- a split-only shim, or an orphan (see ShimSource).
+ * Newly allocated array of newly allocated strings;
  * *out_count receives its length (0/NULL if there's nothing at all). */
 char **collect_all_shim_names(const Config *cfg, size_t *out_count);
 
