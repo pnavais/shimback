@@ -28,27 +28,33 @@ use_color() {
 print_banner() {
     if use_color; then
         blue="$(printf '\033[1;34m')"
-        grey="$(printf '\033[90m')"
-        white="$(printf '\033[97m')"
+        cyan="$(printf '\033[1;36m')"
+        green="$(printf '\033[1;32m')"
+        gold="$(printf '\033[38;5;220m')"
+        white="$(printf '\033[1;97m')"
         reset="$(printf '\033[0m')"
     else
         blue=''
-        grey=''
+        cyan=''
+        green=''
+        gold=''
         white=''
         reset=''
     fi
-    printf '%s  >>%s%s%s%s%s\n' "$blue" "$grey" \
-        '   _____ __  ________  ' "$white" '_______  ___   ________ __' "$reset"
-    printf '%s  >>%s%s%s%s%s\n' "$blue" "$grey" \
-        '  / ___// / / /  _/  |/  ' "$white" '/ __ )/   | / ____/ //_/' "$reset"
-    printf '%s  >>%s%s%s%s%s\n' "$blue" "$grey" \
-        '  \__ \/ /_/ // // /|_/ / ' "$white" '/ __  / /| |/ /   / ,<' "$reset"
-    printf '%s  >>%s%s%s%s%s\n' "$blue" "$grey" \
-        ' ___/ / __  // // /  / / ' "$white" '/ /_/ / ___ / /___/ /| |' "$reset"
-    printf '%s  >>%s%s%s%s%s\n' "$blue" "$grey" \
-        '/____/_/ /_/___/_/  /_/ ' "$white" '_____/ _/  |_\____/_/ |_|' "$reset"
-    echo "  >> run a primary command, transparently fall back to another >>"
-    echo "  Copyright (c) 2026 pnavais -- MIT OR Apache-2.0"
+    printf '%s%s%s%s%s\n' "$blue" '__   __  ' "$white" \
+        '      _     _           _                _' "$reset"
+    printf '%s%s%s%s%s\n' "$blue" '\ \  \ \ ' "$white" \
+        '  ___| |__ (_)_ __ ___ | |__   __ _  ___| | __' "$reset"
+    printf '%s%s%s%s%s\n' "$blue" ' \ \  \ \' "$white" \
+        ' / __| '\''_ \| | '\''_ ` _ \| '\''_ \ / _` |/ __| |/ /' "$reset"
+    printf '%s%s%s%s%s\n' "$blue" ' / /  / /' "$white" \
+        ' \__ \ | | | | | | | | | |_) | (_| | (__|   <' "$reset"
+    printf '%s%s%s%s%s\n' "$blue" '/_/  /_/ ' "$white" \
+        ' |___/_| |_|_|_| |_| |_|_.__/ \__,_|\___|_|\_\' "$reset"
+    printf '%s  >> run a primary command, transparently fall back to another >>%s\n' \
+        "$gold" "$reset"
+    printf '%s  Copyright (c) 2026 pnavais -- MIT OR Apache-2.0%s\n' \
+        "$gold" "$reset"
     echo
 }
 
@@ -76,6 +82,12 @@ pick_checksum_cmd() {
 
 sha256_of() {
     $CHECKSUM_CMD "$1" | awk '{print $1}'
+}
+
+print_indented() {
+    while IFS= read -r line || [ -n "$line" ]; do
+        printf '  %s\n' "$line"
+    done
 }
 
 detect_os() {
@@ -117,12 +129,13 @@ main() {
     tmpdir="$(mktemp -d)"
     trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
-    echo "Downloading $asset ($version)..."
+    printf '%sDownloading%s %s (%s)...\n' "$cyan" "$reset" "$asset" "$version"
     if ! curl -fsSL "$url" -o "$tmpdir/$asset"; then
         die "failed to download $url -- check that a '$version' release exists for $os/$arch"
     fi
+    printf '  %s☑%s Download complete\n' "$green" "$reset"
 
-    echo "Verifying checksum..."
+    printf '%sVerifying checksum%s...\n' "$cyan" "$reset"
     if ! curl -fsSL "$sums_url" -o "$tmpdir/SHA256SUMS"; then
         die "failed to download $sums_url -- refusing to install an unverified binary"
     fi
@@ -132,13 +145,21 @@ main() {
     if [ "$actual" != "$expected" ]; then
         die "checksum mismatch for $asset (expected $expected, got $actual) -- refusing to install a possibly corrupted or tampered download"
     fi
+    printf '  %s☑%s Checksum verified\n' "$green" "$reset"
 
     tar -xzf "$tmpdir/$asset" -C "$tmpdir"
     bin="$tmpdir/shimback-${os}-${arch}/shimback"
     [ -x "$bin" ] || die "downloaded archive didn't contain an executable 'shimback' binary"
 
-    echo "Installing..."
-    "$bin" install "$@"
+    printf '%sInstalling%s...\n' "$cyan" "$reset"
+    install_output="$tmpdir/install-output"
+    if "$bin" install "$@" >"$install_output" 2>&1; then
+        print_indented <"$install_output"
+    else
+        print_indented <"$install_output"
+        die "bundled shimback install failed"
+    fi
+    printf '  %s☑%s Installation complete\n' "$green" "$reset"
 }
 
 main "$@"
