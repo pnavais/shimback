@@ -4,7 +4,7 @@
 # does the rest (copies itself to a stable location, sets up PATH, installs
 # the man page). Usage:
 #
-#   curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/master/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/main/install.sh | sh
 #
 # Any extra arguments are forwarded to `shimback install` as-is, e.g.:
 #

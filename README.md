@@ -28,7 +28,7 @@ pair of commands.
 ## Installation
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/main/install.sh | sh
 ```
 
 Downloads the right prebuilt binary for your machine from the
@@ -38,7 +38,7 @@ copies itself to a stable location, sets up `PATH`, and installs the man
 page. Extra arguments are forwarded as-is, e.g. to pick a prefix:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/master/install.sh | sh -s -- --prefix ~/.local
+curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/main/install.sh | sh -s -- --prefix ~/.local
 ```
 
 Or download a prebuilt binary directly from the
