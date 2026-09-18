@@ -502,6 +502,64 @@ finally:
     sb.cleanup()
 
 
+# --- 14: route-map policy -- fallback is optional (like rewrite) and gets
+# auto-skipped straight to the Routes page; each route is entered as its
+# own <match>=<command> pair, mirroring the motivating java17/8/25 example. ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"jroute" + ENTER)
+    sb.send(DOWN * 6 + ENTER)     # exit-code -> ... -> route-map (7th option)
+    sb.send(ENTER)                # source: auto
+    sb.send(ENTER)                # source args: none
+    out = sb.send(ENTER)          # fallback: blank -> should skip straight to Routes
+    assert_contains("14: skips straight to the Routes page", out, "Routes")
+    assert_not_contains("14: fallback args page never shown", out, "Fallback args")
+    sb.send(b"--v8=/bin/cat" + ENTER)   # route 1
+    sb.send(b"--v25=/bin/ls" + ENTER)   # route 2
+    sb.send(ENTER)                 # finish routes list
+    sb.send(b"y" + ENTER)          # strip-matched-args: yes
+    sb.send(ENTER, 0.5)            # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
+    code = sb.wait()
+    assert_eq("14 exit code", 0, code)
+    cfg = sb.config_text()
+    assert_contains("14: policy is route-map", cfg, 'policy = "route-map"')
+    assert_not_contains("14: no fallback key stored at all", cfg, "fallback =")
+    assert_contains("14: route 1 stored", cfg, '[[shims.jroute.routes]]')
+    assert_contains("14: route 1 match stored", cfg, 'match = "--v8"')
+    assert_contains("14: route 1 command stored", cfg, f'command = "{real("/bin/cat")}"')
+    assert_contains("14: route 2 match stored", cfg, 'match = "--v25"')
+    assert_contains("14: route 2 command stored", cfg, f'command = "{real("/bin/ls")}"')
+    assert_contains("14: strip_matched_args stored", cfg, "strip_matched_args = true")
+finally:
+    sb.cleanup()
+
+
+# --- 15: two route-map routes with an identical (match, command) pair are
+# rejected at finish time -- matches validate_shim_entry's duplicate-route
+# check -- and nothing is written to disk. ---
+sb = Sandbox(BIN)
+try:
+    sb.spawn(["add"])
+    sb.send(b"jdup" + ENTER)
+    sb.send(DOWN * 6 + ENTER)     # exit-code -> ... -> route-map
+    sb.send(ENTER)                # source: auto
+    sb.send(ENTER)                # source args: none
+    sb.send(ENTER)                # fallback: blank -> skip to Routes
+    sb.send(b"--v8=/bin/cat" + ENTER)   # route 1
+    sb.send(b"--v8=/bin/cat" + ENTER)   # route 2: identical to route 1
+    sb.send(ENTER)                 # finish routes list
+    sb.send(b"n" + ENTER)          # strip-matched-args: no
+    sb.send(ENTER, 0.5)            # diagnostic: no
+    sb.send(ENTER, 0.5)  # split config: no
+    code = sb.wait()
+    assert_eq("15 exit code (rejected duplicate routes)", 1, code)
+    assert_not_contains("15: nothing written to config", sb.config_text(), "jdup")
+finally:
+    sb.cleanup()
+
+
 if FAILURES:
     print(f"{len(FAILURES)} assertion(s) failed", file=sys.stderr)
     sys.exit(1)

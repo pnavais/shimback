@@ -302,14 +302,15 @@ static void check_symlink(int *issues, const char *shim_dir, const char *name) {
  * reports (but doesn't return NULL for) a fallback that resolves back to
  * the shimback binary itself -- a cycle -- since the resolved path is still
  * useful to the caller's source==fallback check. A NULL `fallback` (only
- * valid for POLICY_REWRITE, which never uses it) is reported as fine, not
- * checked at all, and returns NULL. When `force` is set (the shim was added
- * with `add --force`) and `fallback` still doesn't exist, that's reported as
- * fine rather than a failure -- but only while it's actually still missing;
- * once it exists, the full normal check below applies regardless of force. */
+ * valid for POLICY_REWRITE and POLICY_ROUTE_MAP, neither of which ever
+ * uses it) is reported as fine, not checked at all, and returns NULL. When
+ * `force` is set (the shim was added with `add --force`) and `fallback`
+ * still doesn't exist, that's reported as fine rather than a failure --
+ * but only while it's actually still missing; once it exists, the full
+ * normal check below applies regardless of force. */
 static char *check_fallback(int *issues, const char *fallback, const char *self_exe, bool force) {
     if (!fallback) {
-        report_ok("fallback: none (not used by policy rewrite)");
+        report_ok("fallback: none (not used by this policy)");
         return NULL;
     }
     if (!is_executable_file(fallback)) {
@@ -579,6 +580,39 @@ int cmd_doctor(int argc, char **argv) {
             report_fail(&issues,
                          "policy is rewrite but no --rewrite rule is configured -- this shim "
                          "will never rewrite anything");
+        }
+        if (e->policy == POLICY_ROUTE_MAP) {
+            if (e->route_count == 0) {
+                report_fail(&issues,
+                             "policy is route-map but no --route is configured -- this shim "
+                             "will always run its source");
+            }
+            for (size_t r = 0; r < e->route_count; r++) {
+                const RouteEntry *route = &e->routes[r];
+                if (!is_executable_file(route->command)) {
+                    if (e->force) {
+                        report_ok(
+                            "route '%s': %s (added with --force; not currently on disk, so "
+                            "not checked)",
+                            route->match, route->command);
+                    } else {
+                        report_fail(&issues, "route '%s': %s not found or not executable",
+                                    route->match, route->command);
+                    }
+                    continue;
+                }
+                char *resolved_route = canonicalize(route->command);
+                if (resolved_route && strcmp(resolved_route, self_exe) == 0) {
+                    report_fail(&issues,
+                                 "route '%s' resolves back to the shimback binary itself -- "
+                                 "would loop forever if triggered (run `shimback doctor fix` "
+                                 "to repair)",
+                                 route->match);
+                } else {
+                    report_ok("route '%s': %s", route->match, route->command);
+                }
+                free(resolved_route);
+            }
         }
 
         if (source == SHIM_SOURCE_SPLIT) {

@@ -114,6 +114,28 @@ static void test_round_trip(void) {
     cfg.shims[ls_idx].rewrite_to[1] = xstrdup("-c -z -f backup.tar.gz");
     cfg.shims[ls_idx].rewrite_to_count = 2;
 
+    size_t java_idx = config_upsert(&cfg, "java");
+    cfg.shims[java_idx].source = xstrdup("/opt/java17/bin/java");
+    cfg.shims[java_idx].policy = POLICY_ROUTE_MAP;
+    cfg.shims[java_idx].strip_matched_args = true;
+    cfg.shims[java_idx].routes = xmalloc(3 * sizeof(RouteEntry));
+    cfg.shims[java_idx].routes[0].match = xstrdup("--v8");
+    cfg.shims[java_idx].routes[0].command = xstrdup("/opt/java8/bin/java");
+    cfg.shims[java_idx].routes[0].args = NULL;
+    cfg.shims[java_idx].routes[0].arg_count = 0;
+    cfg.shims[java_idx].routes[1].match = xstrdup("--v25");
+    cfg.shims[java_idx].routes[1].command = xstrdup("/opt/java25/bin/java");
+    cfg.shims[java_idx].routes[1].args = NULL;
+    cfg.shims[java_idx].routes[1].arg_count = 0;
+    /* Same command as routes[1], but with different fixed args -- the
+     * motivating "same command twice with different arguments" case. */
+    cfg.shims[java_idx].routes[2].match = xstrdup("--preview");
+    cfg.shims[java_idx].routes[2].command = xstrdup("/opt/java25/bin/java");
+    cfg.shims[java_idx].routes[2].args = xmalloc(1 * sizeof(char *));
+    cfg.shims[java_idx].routes[2].args[0] = xstrdup("--enable-preview");
+    cfg.shims[java_idx].routes[2].arg_count = 1;
+    cfg.shims[java_idx].route_count = 3;
+
     char *path = make_temp_path("roundtrip");
     char errbuf[256];
 
@@ -128,7 +150,7 @@ static void test_round_trip(void) {
     check(reloaded.capture_timeout_ms == 5000, "round-trip: global capture_timeout_ms == 5000");
     check(reloaded.capture_limit_bytes == 16 * 1024 * 1024,
           "round-trip: global capture_limit_bytes == 16MiB");
-    check(reloaded.count == 6, "round-trip: shim count is 6");
+    check(reloaded.count == 7, "round-trip: shim count is 7");
 
     ShimEntry *sed = config_find(&reloaded, "sed");
     check(sed != NULL, "round-trip: sed entry found");
@@ -232,6 +254,33 @@ static void test_round_trip(void) {
         }
     }
 
+    ShimEntry *java = config_find(&reloaded, "java");
+    check(java != NULL, "round-trip: java entry found");
+    if (java) {
+        check_str_eq("java.source", "/opt/java17/bin/java", java->source);
+        check_str_eq("java.fallback", NULL, java->fallback);
+        check(java->policy == POLICY_ROUTE_MAP, "java.policy == route-map");
+        check(java->strip_matched_args == true, "java.strip_matched_args == true");
+        check(java->route_count == 3, "java.route_count == 3");
+        if (java->route_count == 3) {
+            check_str_eq("java.routes[0].match", "--v8", java->routes[0].match);
+            check_str_eq("java.routes[0].command", "/opt/java8/bin/java", java->routes[0].command);
+            check(java->routes[0].arg_count == 0, "java.routes[0].arg_count == 0");
+            check_str_eq("java.routes[1].match", "--v25", java->routes[1].match);
+            check_str_eq("java.routes[1].command", "/opt/java25/bin/java",
+                         java->routes[1].command);
+            check(java->routes[1].arg_count == 0, "java.routes[1].arg_count == 0");
+            check_str_eq("java.routes[2].match", "--preview", java->routes[2].match);
+            check_str_eq("java.routes[2].command", "/opt/java25/bin/java",
+                         java->routes[2].command);
+            check(java->routes[2].arg_count == 1, "java.routes[2].arg_count == 1");
+            if (java->routes[2].arg_count == 1) {
+                check_str_eq("java.routes[2].args[0]", "--enable-preview",
+                             java->routes[2].args[0]);
+            }
+        }
+    }
+
     config_free(&cfg);
     config_free(&reloaded);
     unlink(path);
@@ -289,6 +338,18 @@ static void test_validation_errors(void) {
     const char *mismatched_rewrite_arrays =
         "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"rewrite\"\n"
         "rewrite_from = [\"a\", \"b\"]\nrewrite_to = [\"x\"]\n";
+    const char *missing_routes =
+        "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"route-map\"\n";
+    const char *duplicate_routes =
+        "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"route-map\"\n"
+        "[[shims.sed.routes]]\nmatch = \"--v8\"\ncommand = \"/opt/java8/bin/java\"\n"
+        "[[shims.sed.routes]]\nmatch = \"--legacy\"\ncommand = \"/opt/java8/bin/java\"\n";
+    const char *orphaned_route_block =
+        "version = 1\n\n[[shims.sed.routes]]\nmatch = \"--v8\"\n"
+        "command = \"/opt/java8/bin/java\"\n";
+    const char *mismatched_route_section_name =
+        "version = 1\n\n[shims.sed]\nsource = \"/bin/ls\"\npolicy = \"route-map\"\n"
+        "[[shims.other.routes]]\nmatch = \"--v8\"\ncommand = \"/opt/java8/bin/java\"\n";
 
     char *path = make_temp_path("invalid");
     Config cfg;
@@ -355,6 +416,46 @@ static void test_validation_errors(void) {
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
     check(st == CONFIG_ERR_VALIDATION,
           "mismatched rewrite_from/rewrite_to array lengths are rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(missing_routes, 1, strlen(missing_routes), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_VALIDATION, "route-map without any routes is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(duplicate_routes, 1, strlen(duplicate_routes), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_VALIDATION,
+          "two route-map routes with an identical (command, args) pair are rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(orphaned_route_block, 1, strlen(orphaned_route_block), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE,
+          "a [[shims.x.routes]] block with no preceding [shims.x] section is rejected");
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    f = fopen(path, "wb");
+    fwrite(mismatched_route_section_name, 1, strlen(mismatched_route_section_name), f);
+    fclose(f);
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE,
+          "a [[shims.x.routes]] block naming a different shim than the enclosing "
+          "[shims.y] section is rejected");
     if (st == CONFIG_OK) {
         config_free(&cfg);
     }

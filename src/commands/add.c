@@ -24,15 +24,16 @@ static const char *USAGE =
     "usage: shimback add <name> [-s <source>] [--source-arg <arg>]...\n"
     "                    -f <fallback> [--fallback-arg <arg>]...\n"
     "                    [--policy exit-code|heuristic|exit-code-match|route-args|rewrite|\n"
-    "                              split-args]\n"
+    "                              split-args|route-map]\n"
     "                    [--error-pattern <p>]... [--exit-code <code>]...\n"
     "                    [--route-arg <arg>]... [--strip-matched-args]\n"
     "                    [--split-source-arg <arg>]... [--split-fallback-arg <arg>]...\n"
-    "                    [--rewrite <from>=<to>]... [--diagnostic] [--force] [-v|--verbose]\n"
+    "                    [--rewrite <from>=<to>]... [--route <match>=<command>]...\n"
+    "                    [--diagnostic] [--force] [-v|--verbose]\n"
     "                    [--capture-timeout <ms>] [--capture-limit <size>] [--split-config]\n"
-    "-f/--fallback is required, except with --policy rewrite, where it's unused.\n"
-    "--force allows source/fallback to point at a path (not a bare name) that doesn't\n"
-    "exist yet; doctor skips its existence check for whichever of them still doesn't.\n"
+    "-f/--fallback is required, except with --policy rewrite or route-map, where it's unused.\n"
+    "--force allows source/fallback/a --route command to point at a path (not a bare name)\n"
+    "that doesn't exist yet; doctor skips its existence check for whichever still doesn't.\n"
     "-v/--verbose prints the shell-startup-file PATH-update notices (silent by default,\n"
     "or per the config's own top-level `verbose` default).\n"
     "--capture-timeout/--capture-limit override, for this shim only, how long or how much\n"
@@ -43,7 +44,13 @@ static const char *USAGE =
     "config directory, instead of as a [shims.<name>] entry inside config.toml -- move that\n"
     "file to the shimback binary's own directory, or the shim symlink's own directory, to\n"
     "override it from there instead. Omitting --split-config on a shim that currently has\n"
-    "one removes it, folding the shim back into config.toml.\n";
+    "one removes it, folding the shim back into config.toml.\n"
+    "--policy route-map generalizes route-args to any number of routes: the first --route\n"
+    "whose <match> exactly equals one of the invocation's arguments runs <command> instead\n"
+    "of source (with --strip-matched-args removing that one matched argument first, same as\n"
+    "route-args). No match runs source, exactly like route-args' own source/fallback default.\n"
+    "Each route's own extra fixed arguments aren't settable from this flag -- edit the\n"
+    "resulting config.toml's `args = [...]` under that route's [[shims.<name>.routes]] block.\n";
 
 #define OPT_STRIP_MATCHED_ARGS 1000
 #define OPT_SOURCE_ARG 1001
@@ -54,6 +61,7 @@ static const char *USAGE =
 #define OPT_CAPTURE_TIMEOUT 1006
 #define OPT_CAPTURE_LIMIT 1007
 #define OPT_SPLIT_CONFIG 1008
+#define OPT_ROUTE 1009
 
 static void push_exit_code(int **arr, size_t *count, size_t *cap, int value) {
     if (*count == *cap) {
@@ -138,9 +146,9 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                        StrVec *patterns, int *exit_codes, size_t exit_code_count,
                        StrVec *route_args, bool strip_matched_args, StrVec *split_source_args,
                        StrVec *split_fallback_args, StrVec *rewrite_from, StrVec *rewrite_to,
-                       bool diagnostic, bool force, bool verbose, bool capture_timeout_set,
-                       int capture_timeout_ms, bool capture_limit_set, size_t capture_limit_bytes,
-                       bool split_config) {
+                       StrVec *route_match, StrVec *route_command, bool diagnostic, bool force,
+                       bool verbose, bool capture_timeout_set, int capture_timeout_ms,
+                       bool capture_limit_set, size_t capture_limit_bytes, bool split_config) {
     if (!is_valid_shim_name(name)) {
         die("add: invalid shim name '%s' -- names may only contain letters, digits, '.', '_', "
             "'+', and '-'",
@@ -211,6 +219,51 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         }
     } else {
         resolved_source_for_check = path_search(name, shim_dir, self_exe);
+    }
+
+    /* Each route's command gets the same resolution treatment source/
+     * fallback already get above -- it shouldn't be exempt from the
+     * existence/executable checks everything else gets just because
+     * there can be more than one of them (see review.md's own note, from
+     * the split-config work, about not letting a new kind of target skip
+     * checks an old one already has to pass). --route <match>=<command>
+     * always pushes one match and one command together (see cmd_add and
+     * the wizard's route flow), so the two lists staying the same length
+     * is a construction invariant, not something callers need to enforce
+     * -- checked here anyway as a cheap defense against that invariant
+     * ever accidentally breaking. */
+    if (route_match->count != route_command->count) {
+        die("add: internal error: %zu route match(es) but %zu route command(s)",
+            route_match->count, route_command->count);
+    }
+    size_t route_count = route_match->count;
+    RouteEntry *resolved_routes = route_count > 0 ? xmalloc(route_count * sizeof(RouteEntry)) : NULL;
+    for (size_t i = 0; i < route_count; i++) {
+        const char *route_command_arg = route_command->items[i];
+        char *resolved_route_command = resolve_binary_arg(route_command_arg);
+        if (!resolved_route_command && force) {
+            resolved_route_command = force_resolve_binary_arg(route_command_arg);
+        }
+        if (!resolved_route_command) {
+            if (force) {
+                die("add: --force still needs a path for --route's command (containing '/'), "
+                    "not a bare name -- there's nothing to resolve '%s' against if it doesn't "
+                    "exist anywhere yet",
+                    route_command_arg);
+            }
+            die("add: --route command '%s' does not exist, is not executable, or isn't on "
+                "$PATH",
+                route_command_arg);
+        }
+        if (strcmp(resolved_route_command, self_exe) == 0) {
+            die("add: --route command '%s' resolves back to the shimback binary itself -- "
+                "that would loop forever if this route were ever triggered",
+                route_command_arg);
+        }
+        resolved_routes[i].match = xstrdup(route_match->items[i]);
+        resolved_routes[i].command = resolved_route_command;
+        resolved_routes[i].args = NULL;
+        resolved_routes[i].arg_count = 0;
     }
 
     /* Same binary alone isn't a no-op if source_args/fallback_args make
@@ -380,12 +433,36 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     free(entry->rewrite_to);
     entry->rewrite_to = rewrite_to->items; /* ownership transferred */
     entry->rewrite_to_count = rewrite_to->count;
+    for (size_t i = 0; i < entry->route_count; i++) {
+        RouteEntry *old_route = &entry->routes[i];
+        free(old_route->match);
+        free(old_route->command);
+        for (size_t j = 0; j < old_route->arg_count; j++) {
+            free(old_route->args[j]);
+        }
+        free(old_route->args);
+    }
+    free(entry->routes);
+    entry->routes = resolved_routes; /* ownership transferred */
+    entry->route_count = route_count;
     entry->diagnostic = diagnostic;
     entry->force = force;
     entry->capture_timeout_set = capture_timeout_set;
     entry->capture_timeout_ms = capture_timeout_ms;
     entry->capture_limit_set = capture_limit_set;
     entry->capture_limit_bytes = capture_limit_bytes;
+
+    /* The same per-entry validation config_load/config_load_split run on
+     * every entry they parse -- checked here too, before anything below
+     * touches disk, so a mistake `add`'s own flag-specific checks above
+     * don't happen to catch (e.g. two identical --route entries) is
+     * rejected right now with a clear error, instead of being silently
+     * written to config.toml and only discovered the next time something
+     * else reloads it (see review.md-style reasoning: exactly this kind
+     * of gap is worth closing generally, not per-policy). */
+    if (validate_shim_entry(entry, errbuf, sizeof(errbuf)) != CONFIG_OK) {
+        die("add: %s", errbuf);
+    }
 
     /* --verbose only ever turns this invocation's verbosity *on*; the
      * config's own `verbose` default is what controls it when the flag
@@ -573,6 +650,10 @@ int cmd_add(int argc, char **argv) {
     strvec_init(&rewrite_from);
     StrVec rewrite_to;
     strvec_init(&rewrite_to);
+    StrVec route_match;
+    strvec_init(&route_match);
+    StrVec route_command;
+    strvec_init(&route_command);
     int *exit_codes = NULL;
     size_t exit_code_count = 0;
     size_t exit_code_cap = 0;
@@ -590,6 +671,7 @@ int cmd_add(int argc, char **argv) {
         {"split-source-arg", required_argument, 0, OPT_SPLIT_SOURCE_ARG},
         {"split-fallback-arg", required_argument, 0, OPT_SPLIT_FALLBACK_ARG},
         {"rewrite", required_argument, 0, 'w'},
+        {"route", required_argument, 0, OPT_ROUTE},
         {"diagnostic", no_argument, 0, 'd'},
         {"force", no_argument, 0, OPT_FORCE},
         {"verbose", no_argument, 0, 'v'},
@@ -631,6 +713,15 @@ int cmd_add(int argc, char **argv) {
                 }
                 strvec_push(&rewrite_from, xstrndup(optarg, (size_t)(eq - optarg)));
                 strvec_push(&rewrite_to, xstrdup(eq + 1));
+                break;
+            }
+            case OPT_ROUTE: {
+                const char *eq = strchr(optarg, '=');
+                if (!eq || eq == optarg || eq[1] == '\0') {
+                    die("add: --route must be '<match>=<command>' (got '%s')", optarg);
+                }
+                strvec_push(&route_match, xstrndup(optarg, (size_t)(eq - optarg)));
+                strvec_push(&route_command, xstrdup(eq + 1));
                 break;
             }
             case 'd': diagnostic = true; break;
@@ -683,20 +774,22 @@ int cmd_add(int argc, char **argv) {
     Policy policy;
     if (!policy_from_string(policy_arg, &policy)) {
         die("add: --policy must be \"exit-code\", \"heuristic\", \"exit-code-match\", "
-            "\"route-args\", \"rewrite\", or \"split-args\"");
+            "\"route-args\", \"rewrite\", \"split-args\", or \"route-map\"");
     }
 
     bool missing_name = (name == NULL);
-    bool missing_fallback = (!fallback_arg && policy != POLICY_REWRITE);
+    bool missing_fallback =
+        (!fallback_arg && policy != POLICY_REWRITE && policy != POLICY_ROUTE_MAP);
     bool missing_patterns = (policy == POLICY_HEURISTIC && patterns.count == 0);
     bool missing_exit_codes = (policy == POLICY_EXIT_CODE_MATCH && exit_code_count == 0);
     bool missing_route_args = (policy == POLICY_ROUTE_ARGS && route_args.count == 0);
     bool missing_split_args = (policy == POLICY_SPLIT_ARGS &&
                                 (split_source_args.count == 0 || split_fallback_args.count == 0));
     bool missing_rewrite = (policy == POLICY_REWRITE && rewrite_from.count == 0);
+    bool missing_routes = (policy == POLICY_ROUTE_MAP && route_match.count == 0);
     bool something_missing = missing_name || missing_fallback || missing_patterns ||
                               missing_exit_codes || missing_route_args || missing_split_args ||
-                              missing_rewrite;
+                              missing_rewrite || missing_routes;
 
     if (something_missing && !tui_supported()) {
         if (missing_name) {
@@ -705,7 +798,7 @@ int cmd_add(int argc, char **argv) {
         }
         if (missing_fallback) {
             fprintf(stderr, "%s", USAGE);
-            die("add: -f/--fallback is required (except with --policy rewrite)");
+            die("add: -f/--fallback is required (except with --policy rewrite or route-map)");
         }
         if (missing_patterns) {
             die("add: --policy heuristic requires at least one --error-pattern");
@@ -719,6 +812,9 @@ int cmd_add(int argc, char **argv) {
         if (missing_split_args) {
             die("add: --policy split-args requires at least one --split-source-arg and one "
                 "--split-fallback-arg");
+        }
+        if (missing_routes) {
+            die("add: --policy route-map requires at least one --route <match>=<command>");
         }
         die("add: --policy rewrite requires at least one --rewrite <from>=<to>");
     }
@@ -740,6 +836,8 @@ int cmd_add(int argc, char **argv) {
             .split_fallback_args = &split_fallback_args,
             .rewrite_from = &rewrite_from,
             .rewrite_to = &rewrite_to,
+            .route_match = &route_match,
+            .route_command = &route_command,
             .diagnostic = diagnostic,
             .split_config = split_config,
         };
@@ -753,14 +851,16 @@ int cmd_add(int argc, char **argv) {
                            &result.patterns, result.exit_codes, result.exit_code_count,
                            &result.route_args, result.strip_matched_args,
                            &result.split_source_args, &result.split_fallback_args,
-                           &result.rewrite_from, &result.rewrite_to, result.diagnostic, force,
-                           verbose, capture_timeout_set, capture_timeout_ms, capture_limit_set,
+                           &result.rewrite_from, &result.rewrite_to, &result.route_match,
+                           &result.route_command, result.diagnostic, force, verbose,
+                           capture_timeout_set, capture_timeout_ms, capture_limit_set,
                            capture_limit_bytes, result.split_config);
     }
 
     return finish_add(name, source_arg, &source_args, fallback_arg, &fallback_args, policy,
                        &patterns, exit_codes, exit_code_count, &route_args, strip_matched_args,
                        &split_source_args, &split_fallback_args, &rewrite_from, &rewrite_to,
-                       diagnostic, force, verbose, capture_timeout_set, capture_timeout_ms,
-                       capture_limit_set, capture_limit_bytes, split_config);
+                       &route_match, &route_command, diagnostic, force, verbose,
+                       capture_timeout_set, capture_timeout_ms, capture_limit_set,
+                       capture_limit_bytes, split_config);
 }

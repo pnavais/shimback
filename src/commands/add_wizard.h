@@ -27,6 +27,9 @@ typedef struct {
     StrVec *split_fallback_args;
     StrVec *rewrite_from;
     StrVec *rewrite_to;
+    StrVec *route_match;   /* parallel to route_command: route_match->items[i] is the
+                             * trigger for route_command->items[i] -- see POLICY_ROUTE_MAP */
+    StrVec *route_command;
     bool diagnostic;
     bool split_config;
 } WizardSeed;
@@ -49,6 +52,8 @@ typedef struct {
     StrVec split_fallback_args;
     StrVec rewrite_from;
     StrVec rewrite_to;
+    StrVec route_match;   /* parallel to route_command -- see WizardSeed */
+    StrVec route_command;
     bool diagnostic;
     bool split_config;
 } WizardResult;

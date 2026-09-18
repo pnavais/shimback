@@ -50,6 +50,7 @@ const char *policy_to_string(Policy p) {
         case POLICY_ROUTE_ARGS: return "route-args";
         case POLICY_REWRITE: return "rewrite";
         case POLICY_SPLIT_ARGS: return "split-args";
+        case POLICY_ROUTE_MAP: return "route-map";
         case POLICY_EXIT_CODE:
         default: return "exit-code";
     }
@@ -80,6 +81,10 @@ bool policy_from_string(const char *s, Policy *out) {
         *out = POLICY_SPLIT_ARGS;
         return true;
     }
+    if (strcmp(s, "route-map") == 0) {
+        *out = POLICY_ROUTE_MAP;
+        return true;
+    }
     return false;
 }
 
@@ -90,6 +95,7 @@ const char *policy_color(Policy p) {
         case POLICY_ROUTE_ARGS: return ANSI_CYAN;
         case POLICY_REWRITE: return ANSI_GREEN;
         case POLICY_SPLIT_ARGS: return ANSI_RED;
+        case POLICY_ROUTE_MAP: return ANSI_BLUE;
         case POLICY_EXIT_CODE:
         default: return NULL;
     }
@@ -173,6 +179,16 @@ void shim_entry_free(ShimEntry *entry) {
         free(entry->rewrite_to[i]);
     }
     free(entry->rewrite_to);
+    for (size_t i = 0; i < entry->route_count; i++) {
+        RouteEntry *route = &entry->routes[i];
+        free(route->match);
+        free(route->command);
+        for (size_t j = 0; j < route->arg_count; j++) {
+            free(route->args[j]);
+        }
+        free(route->args);
+    }
+    free(entry->routes);
     memset(entry, 0, sizeof(*entry));
 }
 
@@ -641,12 +657,59 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     return CONFIG_OK;
 }
 
+/* Parses one already-split `key`/`value_str` pair into a single route of a
+ * POLICY_ROUTE_MAP shim -- the fields a [[shims.x.routes]] (main config)
+ * or bare [[routes]] (split file) block can have. Shared shape with
+ * parse_shim_entry_field above, just for a much smaller field set. */
+static ConfigStatus parse_route_field(RouteEntry *route, const char *key, char *value_str,
+                                       int line_no, char *errbuf, size_t errbuf_size) {
+    const char *cursor = value_str;
+
+    if (strcmp(key, "match") == 0) {
+        char *v = parse_quoted_string(&cursor);
+        if (!v || !no_trailing_garbage(cursor)) {
+            free(v);
+            snprintf(errbuf, errbuf_size, "line %d: expected a string for 'match'", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        free(route->match);
+        route->match = v;
+    } else if (strcmp(key, "command") == 0) {
+        char *v = parse_quoted_string(&cursor);
+        if (!v || !no_trailing_garbage(cursor)) {
+            free(v);
+            snprintf(errbuf, errbuf_size, "line %d: expected a string for 'command'", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        free(route->command);
+        route->command = v;
+    } else if (strcmp(key, "args") == 0) {
+        StrVec vec;
+        strvec_init(&vec);
+        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
+            strvec_free(&vec);
+            snprintf(errbuf, errbuf_size, "line %d: malformed 'args' array", line_no);
+            return CONFIG_ERR_PARSE;
+        }
+        for (size_t i = 0; i < route->arg_count; i++) {
+            free(route->args[i]);
+        }
+        free(route->args);
+        route->args = vec.items;
+        route->arg_count = vec.count;
+    } else {
+        warn("config: line %d: unknown key '%s' for a route, ignoring", line_no, key);
+    }
+    return CONFIG_OK;
+}
+
 /* Per-entry validation shared by config_load (once for every shim, after
  * the whole file parses) and config_load_split (immediately, since a
- * split file only ever describes the one shim it's named after). */
-static ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf,
-                                         size_t errbuf_size) {
-    if (!entry->fallback && entry->policy != POLICY_REWRITE) {
+ * split file only ever describes the one shim it's named after). Also
+ * called directly by add.c's finish_add before writing a new/updated
+ * entry to disk -- see the declaration in config.h. */
+ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t errbuf_size) {
+    if (!entry->fallback && entry->policy != POLICY_REWRITE && entry->policy != POLICY_ROUTE_MAP) {
         snprintf(errbuf, errbuf_size, "shim '%s' is missing a required 'fallback'", entry->name);
         return CONFIG_ERR_VALIDATION;
     }
@@ -685,6 +748,39 @@ static ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf,
                  "shim '%s' uses policy \"rewrite\" but has no rewrite rules", entry->name);
         return CONFIG_ERR_VALIDATION;
     }
+    if (entry->policy == POLICY_ROUTE_MAP && entry->route_count == 0) {
+        snprintf(errbuf, errbuf_size,
+                 "shim '%s' uses policy \"route-map\" but has no routes", entry->name);
+        return CONFIG_ERR_VALIDATION;
+    }
+    /* Two routes with the same command and the exact same fixed args would
+     * be genuinely unreachable duplication: whichever comes first in the
+     * file always wins, so the second could never fire under any input,
+     * unlike two routes that merely share a command with *different* args
+     * (the whole point of this policy over route-args -- see config.h). */
+    for (size_t i = 0; i < entry->route_count; i++) {
+        for (size_t j = i + 1; j < entry->route_count; j++) {
+            const RouteEntry *a = &entry->routes[i];
+            const RouteEntry *b = &entry->routes[j];
+            if (strcmp(a->command, b->command) != 0 || a->arg_count != b->arg_count) {
+                continue;
+            }
+            bool args_equal = true;
+            for (size_t k = 0; k < a->arg_count; k++) {
+                if (strcmp(a->args[k], b->args[k]) != 0) {
+                    args_equal = false;
+                    break;
+                }
+            }
+            if (args_equal) {
+                snprintf(errbuf, errbuf_size,
+                         "shim '%s': route %zu and route %zu are identical (same command and "
+                         "args) -- the second could never fire",
+                         entry->name, i + 1, j + 1);
+                return CONFIG_ERR_VALIDATION;
+            }
+        }
+    }
     return CONFIG_OK;
 }
 
@@ -707,6 +803,7 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
     }
 
     ssize_t current_index = -1; /* -1 = top-level, no [shims.x] section yet */
+    ssize_t current_route_index = -1; /* -1 = not inside a [[shims.x.routes]] block */
     int line_no = 0;
     ConfigStatus status = CONFIG_OK;
 
@@ -723,7 +820,66 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             continue;
         }
 
+        /* [[shims.<name>.routes]] -- an array-of-tables entry, one per
+         * route of a POLICY_ROUTE_MAP shim. Checked before the plain
+         * single-bracket branch below: that branch strips only one
+         * trailing ']', which would otherwise leave this as
+         * "[shims.<name>.routes" (leading '[' still attached) and
+         * silently misfile it as an "unknown section", not fail loudly
+         * (see review.md's history of exactly this class of silent-
+         * misparse bug for other constructs). */
+        if (trimmed[0] == '[' && trimmed[1] == '[') {
+            size_t len = strlen(trimmed);
+            if (len < 4 || trimmed[len - 1] != ']' || trimmed[len - 2] != ']') {
+                snprintf(errbuf, errbuf_size, "line %d: malformed array-of-tables header",
+                         line_no);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+            trimmed[len - 2] = '\0';
+            char *inner = trimmed + 2;
+            const char *prefix = "shims.";
+            const char *suffix = ".routes";
+            size_t inner_len = strlen(inner);
+            size_t prefix_len = strlen(prefix);
+            size_t suffix_len = strlen(suffix);
+            bool valid_shape = strncmp(inner, prefix, prefix_len) == 0 &&
+                                inner_len > prefix_len + suffix_len &&
+                                strcmp(inner + inner_len - suffix_len, suffix) == 0;
+            if (!valid_shape) {
+                snprintf(errbuf, errbuf_size,
+                         "line %d: unrecognized array-of-tables [[%s]] -- expected "
+                         "[[shims.<name>.routes]]",
+                         line_no, inner);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+            size_t name_len = inner_len - prefix_len - suffix_len;
+            char *route_shim_name = xstrndup(inner + prefix_len, name_len);
+            if (current_index < 0 ||
+                strcmp(cfg->shims[current_index].name, route_shim_name) != 0) {
+                snprintf(errbuf, errbuf_size,
+                         "line %d: [[shims.%s.routes]] must come after its own [shims.%s] "
+                         "section",
+                         line_no, route_shim_name, route_shim_name);
+                free(route_shim_name);
+                status = CONFIG_ERR_PARSE;
+                break;
+            }
+            free(route_shim_name);
+
+            ShimEntry *shim = &cfg->shims[current_index];
+            shim->routes = xrealloc(shim->routes, (shim->route_count + 1) * sizeof(RouteEntry));
+            memset(&shim->routes[shim->route_count], 0, sizeof(RouteEntry));
+            current_route_index = (ssize_t)shim->route_count;
+            shim->route_count++;
+
+            line = strtok_r(NULL, "\n", &saveptr);
+            continue;
+        }
+
         if (*trimmed == '[') {
+            current_route_index = -1; /* leaving any route block */
             size_t len = strlen(trimmed);
             if (trimmed[len - 1] != ']') {
                 snprintf(errbuf, errbuf_size, "line %d: malformed section header", line_no);
@@ -775,6 +931,16 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             char *vs = value_str;
             trim(&vs, vs + strlen(vs));
             value_str = vs;
+        }
+
+        if (current_route_index >= 0) {
+            RouteEntry *route = &cfg->shims[current_index].routes[current_route_index];
+            status = parse_route_field(route, key, value_str, line_no, errbuf, errbuf_size);
+            if (status != CONFIG_OK) {
+                break;
+            }
+            line = strtok_r(NULL, "\n", &saveptr);
+            continue;
         }
 
         if (current_index < 0) {
@@ -863,6 +1029,7 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
 
     int line_no = 0;
     ConfigStatus status = CONFIG_OK;
+    ssize_t current_route_index = -1; /* -1 = not inside a [[routes]] block */
 
     char *saveptr = NULL;
     char *line = strtok_r(contents, "\n", &saveptr);
@@ -877,10 +1044,24 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
             continue;
         }
 
+        /* A split file has no [shims.<name>] section to qualify a route
+         * block with (see config_save_split), so its own routes use bare
+         * [[routes]] instead of [[shims.<name>.routes]]. */
+        if (strcmp(trimmed, "[[routes]]") == 0) {
+            entry->routes =
+                xrealloc(entry->routes, (entry->route_count + 1) * sizeof(RouteEntry));
+            memset(&entry->routes[entry->route_count], 0, sizeof(RouteEntry));
+            current_route_index = (ssize_t)entry->route_count;
+            entry->route_count++;
+            line = strtok_r(NULL, "\n", &saveptr);
+            continue;
+        }
+
         if (*trimmed == '[') {
             snprintf(errbuf, errbuf_size,
                      "line %d: split config files hold one shim's settings as bare key = value "
-                     "lines -- they can't contain a [shims.x] section header",
+                     "lines and, for policy \"route-map\", [[routes]] blocks -- they can't "
+                     "contain a [shims.x] section header or any other bracketed header",
                      line_no);
             status = CONFIG_ERR_PARSE;
             break;
@@ -900,6 +1081,16 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
             char *vs = value_str;
             trim(&vs, vs + strlen(vs));
             value_str = vs;
+        }
+
+        if (current_route_index >= 0) {
+            RouteEntry *route = &entry->routes[current_route_index];
+            status = parse_route_field(route, key, value_str, line_no, errbuf, errbuf_size);
+            if (status != CONFIG_OK) {
+                break;
+            }
+            line = strtok_r(NULL, "\n", &saveptr);
+            continue;
         }
 
         status = parse_shim_entry_field(entry, key, value_str, line_no, errbuf, errbuf_size);
@@ -937,8 +1128,18 @@ static void append_escaped_string(DynBuf *out, const char *s) {
 /* Renders every field of `entry` except its name -- no [shims.<name>]
  * header, no bare "name = ..." line either, since the name is implied by
  * context (a section header render_config writes itself, or the filename
- * for a split file -- see config_save_split). Shared by both. */
-static void render_shim_entry_body(const ShimEntry *entry, DynBuf *out) {
+ * for a split file -- see config_save_split). Shared by both.
+ *
+ * `route_header_prefix` controls how any routes (POLICY_ROUTE_MAP) are
+ * rendered: the main config file needs each route as its own
+ * `[[shims.<name>.routes]]` block (pass the shim's name here), while a
+ * split file -- which has no enclosing [shims.<name>] section at all --
+ * uses bare `[[routes]]` (pass NULL). Routes are always rendered last:
+ * once a `[[...]]` array-of-tables block is open, any subsequent bare
+ * `key = value` line belongs to *that* table, not back to the shim itself
+ * -- so nothing from this function can follow them. */
+static void render_shim_entry_body(const ShimEntry *entry, DynBuf *out,
+                                    const char *route_header_prefix) {
     char line[64];
     {
         if (entry->source) {
@@ -1074,6 +1275,37 @@ static void render_shim_entry_body(const ShimEntry *entry, DynBuf *out) {
             dynbuf_append_str(out, line);
         }
     }
+
+    for (size_t i = 0; i < entry->route_count; i++) {
+        const RouteEntry *route = &entry->routes[i];
+        dynbuf_append_char(out, '\n');
+        dynbuf_append_str(out, "[[");
+        if (route_header_prefix) {
+            dynbuf_append_str(out, "shims.");
+            dynbuf_append_str(out, route_header_prefix);
+            dynbuf_append_char(out, '.');
+        }
+        dynbuf_append_str(out, "routes]]\n");
+
+        dynbuf_append_str(out, "match = ");
+        append_escaped_string(out, route->match);
+        dynbuf_append_char(out, '\n');
+
+        dynbuf_append_str(out, "command = ");
+        append_escaped_string(out, route->command);
+        dynbuf_append_char(out, '\n');
+
+        if (route->arg_count > 0) {
+            dynbuf_append_str(out, "args = [");
+            for (size_t j = 0; j < route->arg_count; j++) {
+                if (j > 0) {
+                    dynbuf_append_str(out, ", ");
+                }
+                append_escaped_string(out, route->args[j]);
+            }
+            dynbuf_append_str(out, "]\n");
+        }
+    }
 }
 
 static void render_config(const Config *cfg, DynBuf *out) {
@@ -1098,7 +1330,7 @@ static void render_config(const Config *cfg, DynBuf *out) {
         dynbuf_append_str(out, "[shims.");
         dynbuf_append_str(out, entry->name);
         dynbuf_append_str(out, "]\n");
-        render_shim_entry_body(entry, out);
+        render_shim_entry_body(entry, out, entry->name);
     }
 }
 
@@ -1151,7 +1383,7 @@ ConfigStatus config_save_split(const ShimEntry *entry, const char *path, char *e
 
     DynBuf out;
     dynbuf_init(&out);
-    render_shim_entry_body(entry, &out);
+    render_shim_entry_body(entry, &out, NULL);
 
     /* 0600: same reasoning as config_save -- a split file is just as much
      * "which executable does this shim actually run" as an entry inside
