@@ -210,13 +210,16 @@ static const CommandHelp COMMAND_HELP[] = {
     },
     {
         "edit",
-        "  \001shimback edit\001\n",
+        "  \001shimback edit\001 [\002<name>\002]\n",
 
         "  \001edit\001      Open config.toml in \002$EDITOR\002, or, if unset, the first of \002nvim\002,\n"
         "            \002vim\002, \002vi\002, \002nano\002, \002pico\002 found on \002PATH\002 -- fails if none of\n"
-        "            those are found either. Warns (without failing) if the file no\n"
-        "            longer parses once the editor exits successfully.\n"
+        "            those are found either. With a shim \002<name>\002, opens whichever file\n"
+        "            defines that shim instead: its split config file if it has one,\n"
+        "            else config.toml. Warns (without failing) if the file no longer\n"
+        "            parses once the editor exits successfully.\n"
         "              \004e.g. shimback edit\004\n"
+        "              \004e.g. shimback edit sed\004\n"
         "\n",
     },
 };

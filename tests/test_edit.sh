@@ -103,9 +103,74 @@ assert_contains "edit: warns when the edited config no longer parses" "$(cat "$S
     "now fails to parse"
 rm -f "$CFG"
 
-# --- an unexpected extra argument is a hard error, same as other
-# no-argument commands ---
-"$SHIMBACK" edit bogus >/dev/null 2>"$SANDBOX/err"
+# --- edit <name>: opens whichever file defines that shim -- config.toml for
+# a regular shim, its own split file for a --split-config one ---
+"$SHIMBACK" add plainshim -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+"$SHIMBACK" add splitshim -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --split-config >/dev/null
+SPLIT_FILE="$(dirname "$CFG")/splitshim-config.toml"
+
+EDITOR="$FAKEBIN/myeditor" "$SHIMBACK" edit plainshim >/dev/null 2>"$SANDBOX/err"
+code=$?
+assert_eq "edit <name>: exits 0 for a config.toml shim" "0" "$code"
+assert_contains "edit <name>: a config.toml shim opens config.toml" "$(cat "$CFG")" \
+    "EDITED_BY:myeditor ARGS:$CFG"
+assert_not_contains "edit <name>: ... and leaves the split file alone" "$(cat "$SPLIT_FILE")" \
+    "EDITED_BY"
+
+EDITOR="$FAKEBIN/myeditor" "$SHIMBACK" edit splitshim >/dev/null 2>"$SANDBOX/err"
+code=$?
+assert_eq "edit <name>: exits 0 for a split-config shim" "0" "$code"
+assert_contains "edit <name>: a split-config shim opens its split file" "$(cat "$SPLIT_FILE")" \
+    "EDITED_BY:myeditor ARGS:$SPLIT_FILE"
+assert_eq "edit <name>: ... and config.toml only got the one earlier edit" "1" \
+    "$(count_occurrences "EDITED_BY" "$CFG")"
+
+# a copy moved next to the shim's own symlink wins, same as at dispatch time
+MOVED_SPLIT="$(dirname "$(shim_path splitshim)")/splitshim-config.toml"
+mv "$SPLIT_FILE" "$MOVED_SPLIT"
+EDITOR="$FAKEBIN/myeditor" "$SHIMBACK" edit splitshim >/dev/null 2>"$SANDBOX/err"
+assert_contains "edit <name>: follows a split file moved to the shim's own directory" \
+    "$(cat "$MOVED_SPLIT")" "ARGS:$MOVED_SPLIT"
+
+# --- edit <name> on an unknown shim: clear error, editor never runs ---
+BEFORE="$(cat "$CFG")"
+EDITOR="$FAKEBIN/myeditor" "$SHIMBACK" edit plainshimm >/dev/null 2>"$SANDBOX/err"
+code=$?
+assert_eq "edit <name>: an unconfigured name exits 1" "1" "$code"
+assert_contains "edit <name>: says no shim is configured" "$(cat "$SANDBOX/err")" \
+    "no shim configured for 'plainshimm'"
+assert_eq "edit <name>: an unconfigured name doesn't run the editor" "$BEFORE" "$(cat "$CFG")"
+
+# --- edit <name> rejects a name that isn't a valid shim name (no path
+# traversal into split_config_filename) ---
+EDITOR="$FAKEBIN/myeditor" "$SHIMBACK" edit ../../etc/passwd >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "edit <name>: a name with '/' should be rejected"
+fi
+assert_contains "edit <name>: explains the invalid name" "$(cat "$SANDBOX/err")" \
+    "invalid shim name"
+
+# --- edit <name> can still open a malformed split file (to fix it), and
+# validates it as a split file afterwards, not as a config.toml ---
+printf '[oops]\n' >"$MOVED_SPLIT"
+EDITOR="$FAKEBIN/myeditor" "$SHIMBACK" edit splitshim >/dev/null 2>"$SANDBOX/err"
+code=$?
+assert_eq "edit <name>: opens a malformed split file" "0" "$code"
+assert_contains "edit <name>: the malformed split file was the one opened" \
+    "$(cat "$MOVED_SPLIT")" "EDITED_BY:myeditor"
+assert_contains "edit <name>: warns the split file still doesn't parse" "$(cat "$SANDBOX/err")" \
+    "$MOVED_SPLIT now fails to parse"
+
+printf '#!/bin/sh\nprintf "fallback = \\"%s\\"\\n" "%s" > "$1"\n' "$FAKE_FALLBACK" "$FAKE_FALLBACK" \
+    >"$FAKEBIN/goodsplit"
+chmod +x "$FAKEBIN/goodsplit"
+EDITOR="$FAKEBIN/goodsplit" "$SHIMBACK" edit splitshim >/dev/null 2>"$SANDBOX/err"
+assert_not_contains "edit <name>: no warning once the split file parses again" \
+    "$(cat "$SANDBOX/err")" "now fails to parse"
+
+# --- more than one argument is a hard error ---
+"$SHIMBACK" edit plainshim extra >/dev/null 2>"$SANDBOX/err"
 code=$?
 if [ "$code" -eq 0 ]; then
     fail "edit: an unexpected extra argument should fail"
