@@ -10,7 +10,7 @@
 #include "version.h"
 
 static const char *const KNOWN_COMMANDS[] = {
-    "add", "remove", "rm", "init", "list", "ls", "doctor", "install", "uninstall", "edit",
+    "add", "remove", "rm", "init", "list", "ls", "doctor", "install", "uninstall", "edit", "info",
 };
 
 /* Renders `markup`: a span opened and closed with octal '\001' is a literal
@@ -222,6 +222,20 @@ static const CommandHelp COMMAND_HELP[] = {
         "              \004e.g. shimback edit sed\004\n"
         "\n",
     },
+    {
+        "info",
+        "  \001shimback info\001 \002<name>\002\n",
+
+        "  \001info\001      Print everything about one shim: where its symlink and config\n"
+        "            live (and whether they're healthy), its policy and what that\n"
+        "            policy means, source/fallback/route commands and their\n"
+        "            arguments, trial-run limits, whether the shim is actually the\n"
+        "            first match on \002PATH\002 -- and an ASCII diagram of exactly how an\n"
+        "            invocation flows through it. Read-only; \001doctor\001 is the one\n"
+        "            that checks the whole setup.\n"
+        "              \004e.g. shimback info sed\004\n"
+        "\n",
+    },
 };
 
 #define COMMAND_HELP_COUNT (sizeof(COMMAND_HELP) / sizeof(COMMAND_HELP[0]))
@@ -336,6 +350,9 @@ int cli_run(int argc, char **argv) {
     }
     if (strcmp(argv[1], "edit") == 0) {
         return cmd_edit(argc - 1, argv + 1);
+    }
+    if (strcmp(argv[1], "info") == 0) {
+        return cmd_info(argc - 1, argv + 1);
     }
 
     fprintf(stderr, "shimback: unknown command '%s'\n", argv[1]);

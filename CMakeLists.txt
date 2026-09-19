@@ -62,6 +62,7 @@ add_executable(shimback
   src/commands/install.c
   src/commands/uninstall.c
   src/commands/edit.c
+  src/commands/info.c
 )
 
 target_include_directories(shimback PRIVATE
@@ -119,5 +120,7 @@ add_test(NAME test_split_config
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_split_config.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_route_map
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_route_map.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_info
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_info.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_help
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_help.sh $<TARGET_FILE:shimback>)

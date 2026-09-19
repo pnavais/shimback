@@ -116,6 +116,7 @@ shimback doctor [fix [-y|--yes]]
 shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]
 shimback uninstall [--prefix <dir>] [--full]
 shimback edit [<name>]
+shimback info <name>
 shimback --help | --version
 ```
 
@@ -624,6 +625,103 @@ three locations), otherwise `config.toml`. A name that isn't configured
 anywhere fails with a "no shim configured" error (plus a typo suggestion if
 one's close), rather than opening a file that has nothing to do with it.
 A malformed split file can still be opened this way to fix it.
+
+### `info`
+
+```sh
+shimback info java
+```
+
+Prints everything shimback knows about one shim, in sections, ending with an
+ASCII diagram of how an invocation actually flows through it (colored when
+stdout is a terminal, plain ASCII otherwise -- no box-drawing characters, so
+it survives any terminal or log file):
+
+```
+shim: java (route-map)
+
+Overview
+  policy         route-map
+                 Routes to any number of commands, based on the invocation's arguments.
+  diagnostic     off
+  force          no
+
+Locations
+  symlink        /Users/you/.local/share/shimback/bin/java  [ok]
+                 -> /Users/you/.local/bin/shimback  (shimback binary)
+  on $PATH       [ok] typing 'java' runs this shim (first match on $PATH)
+  config         /Users/you/.config/shimback/config.toml
+                 the [shims.java] entry in config.toml
+
+Commands
+  source         /opt/java17/bin/java (explicit, frozen at add time) [ok]
+  source args    (none)
+  fallback       none (not used by this policy)
+
+Policy settings
+  routes         (checked in order; the first match wins)
+                 1. --v8      -> /opt/java8/bin/java [ok]
+                 2. --v25     -> /opt/java25/bin/java [ok]
+                 3. --preview -> /opt/java25/bin/java [ok]
+                                with args: --enable-preview
+  strip matched  yes
+
+Trial run
+  captured       no -- this policy runs its target directly, with live output (the limits below don't apply)
+
+Flow
+  $ java <args>
+    |
+    |  the shell finds the shim's symlink first on $PATH
+    v
+  /Users/you/.local/share/shimback/bin/java (symlink)
+    |
+    |  which is just shimback, started under the name 'java'
+    v
+  shimback  policy: route-map
+    |
+    v
+  find the first route whose match equals one of the arguments:
+    |
+    +-- --v8       --> /opt/java8/bin/java <args>
+    +-- --v25      --> /opt/java25/bin/java <args>
+    +-- --preview  --> /opt/java25/bin/java --enable-preview <args>
+    |
+    `-- (no match) --> SOURCE /opt/java17/bin/java <args>
+
+  (the chosen one runs directly: live output, no trial run, no retry)
+  (the matched argument is removed before forwarding)
+
+no problems noticed -- `shimback doctor` runs the full set of checks
+```
+
+- **Overview**: the policy and, in plain words, what it does; the
+  `diagnostic` and `force` flags.
+- **Locations**: the shim's symlink and whether it's healthy (present, not
+  dead, actually pointing at shimback); the config file that defines it --
+  `config.toml`, or its own [split file](#splitting-a-shims-config-into-its-own-file)
+  and which of the three locations that one lives in; a warning when a stale
+  `config.toml` entry is being ignored because a split file wins; and whether
+  typing the shim's name really runs the shim, or another binary earlier on
+  `$PATH` bypasses it.
+- **Commands**: the source (explicit, or `auto` and what it currently
+  resolves to) and the fallback, each with its fixed arguments and a health
+  tag (`[ok]`, `[warn]` for a `--force`d path that doesn't exist yet, `[fail]`
+  for a missing or looping one).
+- **Policy settings**: whatever drives the policy -- error patterns, exit
+  codes, route arguments, rewrite rules, or every route of a `route-map`
+  (with each route's own `args`) -- plus `strip matched`.
+- **Trial run**: the effective capture timeout and output limit, and whether
+  each comes from a per-shim override, the global config, or the default;
+  for policies that run their target directly it says so instead.
+- **Flow**: the diagram, drawn from this shim's real resolved paths,
+  arguments, routes, and thresholds.
+
+A closing line counts the `[fail]`/`[warn]` items. `info` is read-only and
+informational (its exit status is `0` for any shim it can describe); use
+[`doctor`](#doctor) for the full health check. An unknown name fails with a
+typo suggestion, and a symlink with no configuration behind it (an orphan) is
+reported as such and exits `1`.
 
 ## Fallback policies
 
