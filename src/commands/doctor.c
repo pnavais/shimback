@@ -429,12 +429,23 @@ int cmd_doctor(int argc, char **argv) {
 
     char *shim_dir = shim_bin_dir();
     printf("%sshim directory:%s %s\n", hdr, reset, shim_dir);
-    if (access(shim_dir, F_OK) != 0) {
+    bool shim_dir_missing = access(shim_dir, F_OK) != 0;
+    /* Same thing `init` does; without it every per-shim symlink repair below
+     * would fail on the shim directory lock. Only worth doing when shims are
+     * actually configured -- otherwise there's nothing to put in it. */
+    if (shim_dir_missing && cfg.count > 0 && fix_mode) {
+        if (mkdir_p(shim_dir)) {
+            report_fixed("created shim directory %s", shim_dir);
+            shim_dir_missing = false;
+        } else {
+            warn("doctor fix: failed to create shim directory %s: %s", shim_dir, strerror(errno));
+        }
+    }
+    if (shim_dir_missing) {
         if (cfg.count > 0) {
             report_fail(&issues,
-                        "directory does not exist, but %zu shim(s) are configured -- run "
-                        "`shimback init`",
-                        cfg.count);
+                        "directory does not exist, but %zu shim(s) are configured%s", cfg.count,
+                        fix_mode ? "" : " -- run `shimback doctor fix` to create it");
         } else {
             report_ok("not created yet (no shims added, and `init` hasn't been run)");
         }

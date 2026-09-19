@@ -364,4 +364,27 @@ if [ -e "$ORPHAN2_LINK" ]; then
     fail "doctor fix -y: orphan's symlink should be gone"
 fi
 
+# --- a missing shim directory (shims still configured): plain doctor points
+# at `doctor fix`; `doctor fix` creates the directory itself (what `init`
+# does) and then recreates the symlinks, instead of failing on the shim
+# directory lock for every shim ---
+"$SHIMBACK" add dirtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+SHIM_DIR_PATH="$(dirname "$(shim_path dirtool)")"
+rm -rf "$SHIM_DIR_PATH"
+out6="$("$SHIMBACK" doctor)"
+assert_contains "doctor: missing shim dir points at doctor fix" "$out6" \
+    "run \`shimback doctor fix\` to create it"
+assert_not_contains "doctor: missing shim dir no longer suggests init" "$out6" "shimback init"
+
+out7="$("$SHIMBACK" doctor fix -y 2>&1 </dev/null)"
+assert_contains "doctor fix: creates a missing shim directory" "$out7" \
+    "[fixed] created shim directory $SHIM_DIR_PATH"
+assert_not_contains "doctor fix: no shim directory lock failure" "$out7" \
+    "failed to acquire the shim directory lock"
+assert_contains "doctor fix: recreates symlinks in the fresh directory" "$out7" \
+    "[fixed] recreated missing symlink $(shim_path dirtool)"
+if [ ! -L "$(shim_path dirtool)" ]; then
+    fail "doctor fix: dirtool's symlink should exist after the directory was recreated"
+fi
+
 finish

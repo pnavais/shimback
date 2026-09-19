@@ -477,8 +477,10 @@ CI or a shell startup hook. Section headers and shim names are bold
 yellow/cyan, `[ok]`/`[fail]` are green/red, and the closing summary line
 is green or red, when stdout is a terminal.
 
-`shimback doctor fix` repairs what it safely can before reporting: any shim
-whose symlink is missing entirely, or is a *dangling* symlink (its target no
+`shimback doctor fix` repairs what it safely can before reporting: a missing
+shim directory (with shims still configured) is created first, the same
+thing `init` does, so there's no need to run `init` and then `doctor fix`;
+then any shim whose symlink is missing entirely, or is a *dangling* symlink (its target no
 longer exists — e.g. because the binary it pointed at, back when `add` ran,
 has since moved or been cleaned up), gets its symlink recreated pointing at
 the currently running `shimback` binary, the same way `add` creates it in
