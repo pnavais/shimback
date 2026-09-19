@@ -38,6 +38,10 @@ shimback \- run a primary command, transparently fall back to another
 [\fB\-\-prefix\fR \fIdir\fR] [\fB\-\-full\fR]
 .br
 .B shimback edit
+[\fIname\fR]
+.br
+.B shimback info
+.I name
 .br
 .B shimback \-\-help
 |
@@ -556,12 +560,69 @@ behind no longer parses, a warning is printed right away (without failing
 the command) rather than letting the next
 .BR add / list / doctor
 surface a confusing error far removed from the edit that caused it.
+.IP
+Given a shim's
+.IR name ,
+opens whichever file defines that shim instead: its split config file if
+it has one (wherever it currently lives among the three locations), else
+.IR config.toml .
+A name that isn't configured anywhere fails with a "no shim configured"
+error (plus a typo suggestion if one's close) rather than opening
+something unrelated. A malformed split file can still be opened this way
+to fix it.
+.RS
+.PP
+Examples:
+.RS
+.nf
+shimback edit
+shimback edit sed
+.fi
+.RE
+.RE
+.TP
+.B info
+Prints everything shimback knows about the shim
+.IR name ,
+in sections: an overview (its policy and what that policy does, the
+.B diagnostic
+and
+.B force
+flags); its locations (the shim's symlink and whether it's healthy, the
+config file that defines it \(em
+.I config.toml
+or a split file, and which of the three locations that one is in \(em a
+warning if a stale
+.I config.toml
+entry is being ignored because a split file wins, and whether typing the
+shim's name really runs the shim or another binary earlier on
+.B PATH
+bypasses it); its source (explicit, or
+.B auto
+and what that currently resolves to), fallback, and their fixed
+arguments, each with a health tag; whatever drives its policy (error
+patterns, exit codes, route arguments, rewrite rules, or every route of a
+.BR route\-map ,
+with each route's own arguments); the effective trial\-run timeout and
+output limit and whether each comes from a per\-shim override, the global
+config, or the default; and finally an ASCII diagram of how an invocation
+flows through the shim, drawn from its real resolved paths, arguments,
+routes, and thresholds. Colored when stdout is a terminal (and
+.B NO_COLOR
+isn't set); plain ASCII otherwise.
+.IP
+Read\-only and informational: the exit status is 0 for any shim it can
+describe, however many problems it points out
+.RB ( doctor
+is the full health check). An unknown name fails with a typo suggestion,
+and a symlink with no configuration behind it (an orphan) is reported as
+such and exits 1.
 .RS
 .PP
 Example:
 .RS
 .nf
-shimback edit
+shimback info java
 .fi
 .RE
 .RE
