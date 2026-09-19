@@ -261,13 +261,17 @@ static bool dir_on_path(const char *dir) {
 }
 
 /* Checks that <shim_dir>/<name> exists, is a symlink, and isn't dead (its
- * target still exists and is executable). */
-static void check_symlink(int *issues, const char *shim_dir, const char *name) {
+ * target still exists and is executable). Missing/dead symlinks are what
+ * `doctor fix` repairs, so the hint pointing at it is left out in fix mode,
+ * where a failure surviving the repair attempt means the repair itself
+ * failed (already warned about separately). */
+static void check_symlink(int *issues, const char *shim_dir, const char *name, bool fix_mode) {
     char *link_path = path_join(shim_dir, name);
+    const char *fix_hint = fix_mode ? "" : " -- run `shimback doctor fix` to recreate it";
 
     struct stat lst;
     if (lstat(link_path, &lst) != 0) {
-        report_fail(issues, "no symlink at %s -- re-run `shimback add %s ...`", link_path, name);
+        report_fail(issues, "no symlink at %s%s", link_path, fix_hint);
         free(link_path);
         return;
     }
@@ -280,7 +284,7 @@ static void check_symlink(int *issues, const char *shim_dir, const char *name) {
     struct stat st;
     if (stat(link_path, &st) != 0) {
         char *raw_target = canonicalize(link_path);
-        report_fail(issues, "symlink %s is dead (target does not exist)", link_path);
+        report_fail(issues, "symlink %s is dead (target does not exist)%s", link_path, fix_hint);
         free(raw_target);
         free(link_path);
         return;
@@ -549,7 +553,7 @@ int cmd_doctor(int argc, char **argv) {
                 }
             }
         }
-        check_symlink(&issues, shim_dir, name);
+        check_symlink(&issues, shim_dir, name, fix_mode);
         char *resolved_fallback = check_fallback(&issues, e->fallback, self_exe, e->force);
         check_source(&issues, e, name, shim_dir, self_exe, resolved_fallback, e->force);
         free(resolved_fallback);
