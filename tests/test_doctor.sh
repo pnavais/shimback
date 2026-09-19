@@ -29,6 +29,9 @@ if [ "$code" -eq 0 ]; then
     fail "doctor: should fail when a shim's symlink is missing"
 fi
 assert_contains "doctor: reports missing symlink" "$out" "no symlink at"
+assert_contains "doctor: missing symlink points at doctor fix, not add" "$out" \
+    "run \`shimback doctor fix\` to recreate it"
+assert_not_contains "doctor: missing symlink no longer suggests re-running add" "$out" "re-run"
 
 # recreate the symlink for the next checks
 "$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
