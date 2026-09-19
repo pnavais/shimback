@@ -13,6 +13,7 @@
 
 #include "../config.h"
 #include "../paths.h"
+#include "../suggest.h"
 #include "../util.h"
 
 /* Tried in order when $EDITOR is unset or empty. */
@@ -28,17 +29,73 @@ static int decode_exit_code(int status) {
     return 1;
 }
 
-int cmd_edit(int argc, char **argv) {
-    if (argc > 1) {
-        die("edit: unexpected argument '%s'", argv[1]);
+/* The file that currently defines shim `name`: its split config file if it
+ * has one (which always wins over config.toml -- see resolve_shim_entry),
+ * else config.toml if it has an entry there. Deliberately doesn't go through
+ * resolve_shim_entry, which dies on a malformed split file -- that's exactly
+ * the file someone would want to open to fix it. Exits 1 if `name` isn't
+ * configured anywhere. */
+static char *locate_shim_config(const char *name, const char *cfg_path, bool *is_split) {
+    if (!is_valid_shim_name(name)) {
+        die("edit: invalid shim name '%s' -- names may only contain letters, digits, '.', '_', "
+            "'+', and '-'",
+            name);
     }
 
-    char *cfg_path = config_file_path();
-    char *cfg_dir = dir_of(cfg_path);
-    if (!mkdir_p(cfg_dir)) {
-        die("edit: failed to create config directory %s", cfg_dir);
+    char *split_path = resolve_split_config_path(name);
+    if (split_path) {
+        *is_split = true;
+        return split_path;
     }
-    free(cfg_dir);
+
+    Config cfg;
+    char errbuf[256];
+    ConfigStatus cst = config_load(cfg_path, &cfg, errbuf, sizeof(errbuf));
+    if (cst != CONFIG_OK) {
+        die("edit: %s (run `shimback edit` with no arguments to fix it)", errbuf);
+    }
+    if (config_find(&cfg, name)) {
+        config_free(&cfg);
+        *is_split = false;
+        return xstrdup(cfg_path);
+    }
+
+    fprintf(stderr, "shimback: edit: no shim configured for '%s'\n", name);
+    if (cfg.count > 0) {
+        const char **candidates = xmalloc(cfg.count * sizeof(char *));
+        for (size_t i = 0; i < cfg.count; i++) {
+            candidates[i] = cfg.shims[i].name;
+        }
+        char *hint = fuzzy_suggest(name, candidates, cfg.count);
+        if (hint) {
+            print_suggestion_hint(hint);
+            free(hint);
+        }
+        free(candidates);
+    }
+    config_free(&cfg);
+    exit(1);
+}
+
+int cmd_edit(int argc, char **argv) {
+    if (argc > 2) {
+        die("edit: unexpected argument '%s'", argv[2]);
+    }
+    const char *shim_name = argc == 2 ? argv[1] : NULL;
+
+    char *cfg_path = config_file_path();
+    bool target_is_split = false;
+    char *target_path;
+    if (shim_name) {
+        target_path = locate_shim_config(shim_name, cfg_path, &target_is_split);
+    } else {
+        char *cfg_dir = dir_of(cfg_path);
+        if (!mkdir_p(cfg_dir)) {
+            die("edit: failed to create config directory %s", cfg_dir);
+        }
+        free(cfg_dir);
+        target_path = cfg_path;
+    }
 
     const char *editor_env = getenv("EDITOR");
 
@@ -76,7 +133,7 @@ int cmd_edit(int argc, char **argv) {
             for (size_t i = 0; i < editor_argc; i++) {
                 editor_argv[i] = we.we_wordv[i];
             }
-            editor_argv[editor_argc] = cfg_path;
+            editor_argv[editor_argc] = target_path;
             editor_argv[editor_argc + 1] = NULL;
             execvp(editor_argv[0], editor_argv);
             fprintf(stderr, "shimback: failed to run $EDITOR ('%s'): %s\n", editor_env,
@@ -85,7 +142,7 @@ int cmd_edit(int argc, char **argv) {
         }
 
         for (size_t i = 0; i < sizeof(FALLBACK_EDITORS) / sizeof(FALLBACK_EDITORS[0]); i++) {
-            execlp(FALLBACK_EDITORS[i], FALLBACK_EDITORS[i], cfg_path, (char *)NULL);
+            execlp(FALLBACK_EDITORS[i], FALLBACK_EDITORS[i], target_path, (char *)NULL);
             /* exec only returns on failure (not installed, or something
              * else wrong with it) -- try the next candidate either way. */
         }
@@ -102,17 +159,30 @@ int cmd_edit(int argc, char **argv) {
     int code = decode_exit_code(status);
 
     /* A quick sanity check, not a hard requirement: if the editor exited
-     * cleanly but left the config unparseable, say so right away rather
+     * cleanly but left the file unparseable, say so right away rather
      * than letting the next add/list/doctor run surface a confusing error
-     * far removed from the edit that caused it. */
+     * far removed from the edit that caused it. A split file is checked
+     * the way it's actually loaded (bare key = value lines, no sections),
+     * not as a config.toml. */
     if (code == 0) {
-        Config cfg;
         char errbuf[256];
-        ConfigStatus cst = config_load(cfg_path, &cfg, errbuf, sizeof(errbuf));
-        if (cst == CONFIG_OK) {
-            config_free(&cfg);
+        ConfigStatus cst;
+        if (target_is_split) {
+            ShimEntry entry;
+            memset(&entry, 0, sizeof(entry));
+            entry.name = xstrdup(shim_name);
+            entry.policy = POLICY_EXIT_CODE;
+            cst = config_load_split(target_path, &entry, errbuf, sizeof(errbuf));
+            shim_entry_free(&entry);
         } else {
-            warn("edit: %s now fails to parse: %s", cfg_path, errbuf);
+            Config cfg;
+            cst = config_load(target_path, &cfg, errbuf, sizeof(errbuf));
+            if (cst == CONFIG_OK) {
+                config_free(&cfg);
+            }
+        }
+        if (cst != CONFIG_OK) {
+            warn("edit: %s now fails to parse: %s", target_path, errbuf);
         }
     }
 

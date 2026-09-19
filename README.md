@@ -115,7 +115,7 @@ shimback list [--full]
 shimback doctor [fix [-y|--yes]]
 shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]
 shimback uninstall [--prefix <dir>] [--full]
-shimback edit
+shimback edit [<name>]
 shimback --help | --version
 ```
 
@@ -601,6 +601,7 @@ It never executes a candidate file to ask what it is.
 
 ```sh
 shimback edit
+shimback edit sed
 ```
 
 Opens `config.toml` in `$EDITOR`, or, if that's unset (or empty), the first
@@ -614,6 +615,15 @@ first `add`. Once the editor exits, if it exited successfully but the file
 it left behind no longer parses, shimback warns about that right away
 (without failing the command) rather than letting the next `add`/`list`/
 `doctor` surface a confusing error far removed from the edit that caused it.
+
+Given a shim's name (`shimback edit sed`), it opens whichever file actually
+defines that shim instead: its
+[split config file](#splitting-a-shims-config-into-its-own-file) if it has
+one (the same one dispatch would use, wherever it currently lives among the
+three locations), otherwise `config.toml`. A name that isn't configured
+anywhere fails with a "no shim configured" error (plus a typo suggestion if
+one's close), rather than opening a file that has nothing to do with it.
+A malformed split file can still be opened this way to fix it.
 
 ## Fallback policies
 
