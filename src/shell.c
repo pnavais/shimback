@@ -162,8 +162,9 @@ static bool find_block(const char *content, const char *tag, const char *rc_path
  * reopen quote). Inside single quotes nothing else is special to sh/bash/zsh
  * -- not $, backticks, backslashes, or double quotes -- so this is what
  * actually neutralizes a directory path containing shell metacharacters
- * before it's written into someone's startup file (see build_export_body,
- * which previously interpolated the raw path inside a double-quoted string, letting a path like `.../data"; rm -rf ~; #` inject
+ * before it's written into someone's startup file (see build_zsh_body /
+ * build_bash_body, which previously interpolated the raw path inside a
+ * double-quoted string, letting a path like `.../data"; rm -rf ~; #` inject
  * arbitrary commands that ran on the next shell startup). */
 static void append_sh_squoted(DynBuf *body, const char *s) {
     dynbuf_append_char(body, '\'');
@@ -204,7 +205,7 @@ static char *read_sh_squoted(const char **p) {
 }
 
 /* Extracts the directory list from a block body shaped like
- * build_export_body's output (an `export PATH=` assignment
+ * build_zsh_body's/build_bash_body's output (an `export PATH=` assignment
  * of colon-separated, individually single-quoted directories ahead of a
  * literal trailing "$PATH"), appending each into `out`. Best-effort: a body
  * with no such line just yields no directories, so callers can safely union
@@ -214,10 +215,22 @@ static void parse_existing_dirs(const char *body, size_t body_len, StrVec *out) 
     memcpy(copy, body, body_len);
     copy[body_len] = '\0';
 
+    /* A zsh block carries the same directories twice -- once in the
+     * zsh-defer branch (whose format has changed over time) and once as a
+     * plain `export PATH=` in its else branch, whose format never has. Read
+     * that one; a bash body has just the single plain assignment. */
     const char *marker = "export PATH=";
-    const char *p = strstr(copy, marker);
+    const char *else_marker = "else\n    export PATH=";
+    const char *p = strstr(copy, else_marker);
     if (p) {
-        p += strlen(marker);
+        p += strlen(else_marker);
+    } else {
+        p = strstr(copy, marker);
+        if (p) {
+            p += strlen(marker);
+        }
+    }
+    if (p) {
         while (*p == '\'') {
             strvec_push(out, read_sh_squoted(&p));
             if (*p == ':') {
@@ -230,7 +243,63 @@ static void parse_existing_dirs(const char *body, size_t body_len, StrVec *out) 
     free(copy);
 }
 
-static void build_export_body(DynBuf *body, const StrVec *dirs) {
+/* Appends `s` escaped for use inside a double-quoted string: the four
+ * characters that stay special there (\, ", $, `) get a backslash. */
+static void append_dq_escaped(DynBuf *out, const char *s) {
+    for (const char *p = s; *p; p++) {
+        if (*p == '\\' || *p == '"' || *p == '$' || *p == '`') {
+            dynbuf_append_char(out, '\\');
+        }
+        dynbuf_append_char(out, *p);
+    }
+}
+
+/* zsh-defer (https://github.com/romkatv/zsh-defer) lets plugin managers and
+ * tools like mise queue their PATH-mutating activation to run asynchronously
+ * after the whole rc file has sourced, which would otherwise let them clobber
+ * our position on PATH regardless of where our block sits in the file. When
+ * zsh-defer is available, queue our export through it too: since our block
+ * runs later in a normally-ordered rc file than most such tools' own
+ * activation lines, our deferred call is enqueued after theirs and so runs
+ * after them, putting our directories back in front once the queue drains.
+ *
+ * The export goes in as `zsh-defer -c '<command>'`, NOT `zsh-defer export
+ * PATH=...:"$PATH"`: in the latter, "$PATH" is expanded when the call is
+ * *queued*, so the deferred export would later overwrite PATH with that
+ * stale snapshot and silently discard whatever the earlier deferred entries
+ * (e.g. mise's) had added in between. Inside the single-quoted -c string
+ * "$PATH" is only expanded when the deferred command actually runs.
+ *
+ * That string is eval'd, so each directory is escaped for double quotes
+ * (append_dq_escaped) and the whole command is then single-quoted, keeping
+ * a path with shell metacharacters inert at both levels. */
+static void build_zsh_body(DynBuf *body, const StrVec *dirs) {
+    DynBuf inner;
+    dynbuf_init(&inner);
+    dynbuf_append_str(&inner, "export PATH=\"");
+    for (size_t i = 0; i < dirs->count; i++) {
+        append_dq_escaped(&inner, dirs->items[i]);
+        dynbuf_append_char(&inner, ':');
+    }
+    dynbuf_append_str(&inner, "$PATH\"");
+
+    dynbuf_append_str(body, "if command -v zsh-defer >/dev/null 2>&1; then\n");
+    dynbuf_append_str(body, "    zsh-defer -c ");
+    append_sh_squoted(body, dynbuf_cstr(&inner));
+    dynbuf_append_char(body, '\n');
+    dynbuf_free(&inner);
+
+    dynbuf_append_str(body, "else\n");
+    dynbuf_append_str(body, "    export PATH=");
+    for (size_t i = 0; i < dirs->count; i++) {
+        append_sh_squoted(body, dirs->items[i]);
+        dynbuf_append_char(body, ':');
+    }
+    dynbuf_append_str(body, "\"$PATH\"\n");
+    dynbuf_append_str(body, "fi\n");
+}
+
+static void build_bash_body(DynBuf *body, const StrVec *dirs) {
     dynbuf_append_str(body, "export PATH=");
     for (size_t i = 0; i < dirs->count; i++) {
         append_sh_squoted(body, dirs->items[i]);
@@ -279,8 +348,10 @@ static void merge_dir_into(StrVec *dirs, const char *dir) {
  * in `rc_path` -- unioning it with whatever directories are already there
  * (from an earlier add/init/install) rather than overwriting them, so those
  * commands can run in any order, each contributing its own directory,
- * without any of them clobbering what another already wrote. */
-static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char *dir) {
+ * without any of them clobbering what another already wrote. `zsh_style`
+ * picks the zsh-defer-aware body vs. the plain bash one. */
+static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char *dir,
+                                 bool zsh_style) {
     char *content = read_file_or_empty(rc_path);
 
     const char *block_start = NULL;
@@ -300,7 +371,11 @@ static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char
 
     DynBuf new_body;
     dynbuf_init(&new_body);
-    build_export_body(&new_body, &dirs);
+    if (zsh_style) {
+        build_zsh_body(&new_body, &dirs);
+    } else {
+        build_bash_body(&new_body, &dirs);
+    }
     strvec_free(&dirs);
 
     char mark_start[128];
@@ -437,7 +512,7 @@ bool shell_zsh_migrate_block_to_local(const char *tag) {
 
     bool ok = true;
     for (size_t i = 0; i < dirs.count && ok; i++) {
-        ok = ensure_dir_in_block(local, tag, dirs.items[i]);
+        ok = ensure_dir_in_block(local, tag, dirs.items[i], true);
     }
     strvec_free(&dirs);
 
@@ -618,7 +693,7 @@ static bool remove_fish(const char *tag) {
 static bool ensure_zsh(const char *dir, const char *tag, bool verbose) {
     char *home = home_dir();
     char *rc = zsh_rc_path(home);
-    bool ok = ensure_dir_in_block(rc, tag, dir);
+    bool ok = ensure_dir_in_block(rc, tag, dir, true);
     if (ok) {
         if (verbose) {
             printf("zsh: PATH updated in %s\n", rc);
@@ -641,7 +716,7 @@ static bool ensure_bash(const char *dir, const char *tag, bool verbose) {
         char *path = path_join(home, candidates[i]);
         if (access(path, F_OK) == 0) {
             any_exists = true;
-            bool ok = ensure_dir_in_block(path, tag, dir);
+            bool ok = ensure_dir_in_block(path, tag, dir, false);
             if (ok) {
                 if (verbose) {
                     printf("bash: PATH updated in %s\n", path);
@@ -656,7 +731,7 @@ static bool ensure_bash(const char *dir, const char *tag, bool verbose) {
 
     if (!any_exists) {
         char *path = path_join(home, ".bashrc");
-        bool ok = ensure_dir_in_block(path, tag, dir);
+        bool ok = ensure_dir_in_block(path, tag, dir, false);
         if (ok) {
             if (verbose) {
                 printf("bash: created %s with PATH update\n", path);
