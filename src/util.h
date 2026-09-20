@@ -35,6 +35,11 @@ void die(const char *fmt, ...);
 /* Prints "shimback: <msg>" to stderr. Does not exit. */
 void warn(const char *fmt, ...);
 
+/* Like warn(), but the message is wrapped in `color` (an ANSI_* string)
+ * when stderr is a color terminal -- for the few user-facing conditions
+ * (e.g. "already installed") worth standing out from ordinary warnings. */
+void warn_colored(const char *color, const char *fmt, ...);
+
 /* Allocation wrappers that die() on OOM, so call sites never need to check. */
 void *xmalloc(size_t size);
 void *xrealloc(void *ptr, size_t size);

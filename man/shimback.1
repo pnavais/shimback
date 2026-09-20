@@ -31,8 +31,11 @@ shimback \- run a primary command, transparently fall back to another
 [\fBfix\fR]
 .br
 .B shimback install
-[\fB\-\-prefix\fR \fIdir\fR]
+[\fB\-\-prefix\fR \fIdir\fR] [\fB\-\-force\fR]
 [\fB\-\-shell\fR \fIshell\fR[,\fIshell\fR]\|.\|.\|. | \fB\-\-all\fR]
+.br
+.B shimback update
+[\fB\-\-check\fR]
 .br
 .B shimback uninstall
 [\fB\-\-prefix\fR \fIdir\fR] [\fB\-\-full\fR]
@@ -404,7 +407,15 @@ whether its policy has everything it needs to ever trigger. A shim added
 with
 .B \-\-force
 whose source/fallback is still missing is reported as fine rather than
-broken, for that check only, until it actually exists. Exits
+broken, for that check only, until it actually exists. It also reports the
+installation recorded in the
+.B PATH
+block (which binary it's installed at, or that shimback isn't installed),
+with a warning \(em which does not affect the exit status \(em for more than
+one recorded installation (possible only from a version that predates
+.BR install 's
+single\-installation rule) or for a recorded directory that no longer holds a
+shimback binary. Exits
 .B 0
 if everything checks out,
 .B 1
@@ -460,7 +471,7 @@ shimback doctor fix
 .RE
 .RE
 .TP
-.BI "install [\-\-prefix " dir "] [\-\-shell " shell "[," shell "]\|.\|.\|. | \-\-all]"
+.BI "install [\-\-prefix " dir "] [\-\-force] [\-\-shell " shell "[," shell "]\|.\|.\|. | \-\-all]"
 Copy the running
 .B shimback
 binary to
@@ -480,8 +491,31 @@ preferring a copy bundled next to the running binary and falling back to
 downloading it from the shimback GitHub release matching the running
 version if no local copy is found (requires
 .BR curl ;
-skipped with a warning, non\-fatally, if unavailable). Safe to re\-run after
-building a newer version to refresh the installed copy.
+skipped with a warning, non\-fatally, if unavailable).
+.IP
+Only one installation is allowed. If shimback is already installed at this
+same prefix,
+.B install
+prints a warning and does nothing (use
+.B update
+to upgrade it from a release);
+.B \-\-force
+overwrites that installation with the running binary instead, e.g. after a
+local rebuild (and is how to add
+.B PATH
+setup for another shell after the first install). If it's installed at a
+.I different
+prefix,
+.B install
+refuses, even with
+.BR \-\-force :
+run
+.B uninstall
+first. An installation is a directory recorded in the
+.B PATH
+block that really contains a shimback binary; a stale entry doesn't count.
+.B install
+never checks for newer releases.
 .IP
 By default only the
 .B current
@@ -506,21 +540,66 @@ shimback install \-\-prefix ~/.local \-\-shell zsh,bash
 .RE
 .RE
 .TP
+.BI "update [\-\-check]"
+Replace the installed
+.B shimback
+with the latest GitHub release. The installation is found from the
+.B PATH
+block, so a prior
+.B install
+is required. Downloads this platform's release archive and its
+.IR SHA256SUMS ,
+verifies the archive's SHA\-256 (computed natively), and refuses anything
+unverifiable or mismatched without touching the installed binary; otherwise
+swaps in the new binary atomically at the same path, so every shim symlink
+keeps working, and refreshes the man page. Compares the downloaded binary's
+contents with the installed one rather than version numbers, so a re\-tagged
+release is picked up and an identical one reports "already up to date".
+.B \-\-check
+only reports whether an update is available. Requires
+.B curl
+and
+.BR tar .
+The environment variable
+.B SHIMBACK_RELEASE_URL
+overrides the release location (default: the GitHub
+.I latest/download
+URL).
+.RS
+.PP
+Examples:
+.RS
+.nf
+shimback update
+shimback update \-\-check
+.fi
+.RE
+.RE
+.TP
 .BI "uninstall [\-\-prefix " dir "] [\-\-full]"
 Remove every symlink
 .B shimback
-created in the shim directory, the
-.IR dir /bin/shimback
-binary installed by
-.BR install ,
-and the man page installed alongside it. With
-.BR \-\-full ,
-also delete the config file and undo the
+created in the shim directory, the installed
+.B shimback
+binary and its man page, and the
 .B PATH
 setup in shell startup files (the zsh/bash marker block, and the fish
-conf.d snippet); without it, the config and
+conf.d snippet). The installation is found from that
 .B PATH
-setup are left alone.
+block, so a custom
+.B \-\-prefix
+given to
+.B install
+doesn't need repeating; pass
+.B \-\-prefix
+only to override the lookup (default when none is found:
+.IR \(ti/.local ).
+The config file is left alone (it's the user's data); with
+.BR \-\-full ,
+also delete it and every shim's split config file. The
+.B PATH
+block is kept only if another installation, possible only from an older
+version, is still recorded in it.
 .RS
 .PP
 Example:

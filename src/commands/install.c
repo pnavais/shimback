@@ -12,6 +12,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "../installation.h"
 #include "../paths.h"
 #include "../shell.h"
 #include "../util.h"
@@ -20,7 +21,7 @@
 #define MAN_PAGE_NAME "shimback.1"
 
 static const char *USAGE =
-    "usage: shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]\n";
+    "usage: shimback install [--prefix <dir>] [--force] [--shell <shell>[,<shell>]... | --all]\n";
 
 /* Downloads `url` to `dest` via `curl` (its resolved absolute path), atomically
  * via a temp-file-plus-rename in `dest`'s own directory. Returns false on any
@@ -151,20 +152,23 @@ int cmd_install(int argc, char **argv) {
     const char *prefix_arg = NULL;
     const char *shell_arg = NULL;
     bool all_shells = false;
+    bool force = false;
 
     static struct option long_opts[] = {
         {"prefix", required_argument, 0, 'p'},
         {"shell", required_argument, 0, 's'},
         {"all", no_argument, 0, 'a'},
+        {"force", no_argument, 0, 'f'},
         {0, 0, 0, 0},
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "p:s:a", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:s:af", long_opts, NULL)) != -1) {
         switch (opt) {
             case 'p': prefix_arg = optarg; break;
             case 's': shell_arg = optarg; break;
             case 'a': all_shells = true; break;
+            case 'f': force = true; break;
             default:
                 fprintf(stderr, "%s", USAGE);
                 return 1;
@@ -212,6 +216,48 @@ int cmd_install(int argc, char **argv) {
     }
 
     char *bin_dir = path_join(prefix, "bin");
+
+    /* Only one installation at a time, decided before anything is written:
+     * a second binary on another prefix would leave two copies and two
+     * `bin` entries in the PATH block, with `uninstall`/`update` unable to
+     * tell which is "the" one. An installation at this same prefix is fine
+     * to *overwrite* -- but only on request (--force), since upgrading from
+     * a release is `update`'s job and a plain re-run is almost always a
+     * mistake. */
+    Installation *found = NULL;
+    size_t found_count = find_installations(&found);
+    bool same_prefix_installed = false;
+    size_t other_count = 0;
+    for (size_t i = 0; i < found_count; i++) {
+        if (same_dir_path(found[i].bin_dir, bin_dir)) {
+            same_prefix_installed = true;
+        } else {
+            other_count++;
+        }
+    }
+    if (other_count > 0) {
+        for (size_t i = 0; i < found_count; i++) {
+            if (!same_dir_path(found[i].bin_dir, bin_dir)) {
+                warn_colored(ANSI_RED,
+                             "shimback is already installed at %s -- only one installation is "
+                             "allowed. Run `shimback uninstall` first to move it (--force only "
+                             "overwrites an installation at the same --prefix).",
+                             found[i].binary);
+            }
+        }
+        return 1;
+    }
+    if (same_prefix_installed && !force) {
+        warn_colored(ANSI_YELLOW,
+                     "shimback is already installed at %s/shimback -- nothing to do. "
+                     "`shimback update` upgrades it to the latest release; `shimback install "
+                     "--force` overwrites it with this binary.",
+                     bin_dir);
+        free_installations(found, found_count);
+        return 0;
+    }
+    free_installations(found, found_count);
+
     if (!mkdir_p(bin_dir)) {
         die("install: failed to create %s", bin_dir);
     }
@@ -225,23 +271,30 @@ int cmd_install(int argc, char **argv) {
      * replace an unrelated existing file that just happened to be named
      * "shimback" (see review.md). Refusing here when something else is
      * already there costs nothing for the normal cases: a brand-new
-     * install has nothing at `dest` yet, and re-running install to
-     * upgrade an existing shimback binary still passes this check, since
-     * that existing binary already embeds the marker. */
+     * install has nothing at `dest` yet, and overwriting an existing
+     * shimback binary (--force) still passes this check, since that
+     * existing binary already embeds the marker. */
     if (access(dest, F_OK) == 0 && !looks_like_shimback_binary(dest)) {
         die("install: %s already exists and doesn't look like a shimback binary -- refusing to "
             "overwrite it (remove it manually first if this --prefix is correct)",
             dest);
     }
 
-    /* Always overwrite once the check above has passed: this doubles as
-     * the upgrade path (re-run install after building a newer shimback to
-     * refresh the installed copy), and a same-content copy is a harmless
-     * no-op. */
-    if (!copy_executable(self_exe, dest)) {
-        die("install: failed to copy %s to %s: %s", self_exe, dest, strerror(errno));
+    /* By now this is either a fresh install or an explicit --force
+     * overwrite of the installation at this very prefix (the developer's
+     * "I just rebuilt it" path). Copying a binary over itself is pointless,
+     * so when this *is* the installed copy there's nothing to place. */
+    char *dest_canon = canonicalize(dest);
+    bool running_installed_copy = dest_canon && strcmp(dest_canon, self_exe) == 0;
+    free(dest_canon);
+    if (running_installed_copy) {
+        printf("shimback: %s is already the running copy -- leaving it in place\n", dest);
+    } else {
+        if (!copy_executable(self_exe, dest)) {
+            die("install: failed to copy %s to %s: %s", self_exe, dest, strerror(errno));
+        }
+        printf("shimback: installed to %s\n", dest);
     }
-    printf("shimback: installed to %s\n", dest);
 
     install_man_page(prefix, self_exe);
 

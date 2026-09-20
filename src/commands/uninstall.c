@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "../config.h"
+#include "../installation.h"
 #include "../paths.h"
 #include "../shell.h"
 #include "../util.h"
@@ -186,6 +187,21 @@ static void remove_config(void) {
     free(cfg_path);
 }
 
+/* Whether any shell has a shimback PATH block right now (current or legacy
+ * tag) -- so uninstall only reports removing one when there was one. */
+static bool path_block_present(void) {
+    ShellKind kinds[] = {SHELL_ZSH, SHELL_BASH, SHELL_FISH};
+    StrVec dirs;
+    strvec_init(&dirs);
+    for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+        shell_read_block_dirs(kinds[i], SHIM_DIR_TAG, &dirs);
+        shell_read_block_dirs(kinds[i], LEGACY_INSTALL_TAG, &dirs);
+    }
+    bool present = dirs.count > 0;
+    strvec_free(&dirs);
+    return present;
+}
+
 static void remove_path_blocks(void) {
     /* Deliberately unconditional -- NOT gated on shell_is_installed(). A
      * shell's rc file can have a stale shimback block in it regardless of
@@ -225,14 +241,28 @@ int cmd_uninstall(int argc, char **argv) {
         die("uninstall: unexpected extra argument '%s'", argv[optind]);
     }
 
-    char *prefix;
+    /* Which installation(s) to remove: an explicit --prefix always wins;
+     * otherwise whatever `install` recorded in the shell startup files'
+     * PATH blocks (so a custom --prefix used at install time doesn't have
+     * to be repeated here); otherwise the default prefix, as before.
+     * Looked up now, before anything is removed, since the lookup itself
+     * relies on the binary still being there. */
+    Installation *found = NULL;
+    size_t found_count = find_installations(&found);
+    StrVec prefixes;
+    strvec_init(&prefixes);
     if (prefix_arg) {
-        prefix = xstrdup(prefix_arg);
+        strvec_push(&prefixes, xstrdup(prefix_arg));
+    } else if (found_count > 0) {
+        for (size_t i = 0; i < found_count; i++) {
+            strvec_push(&prefixes, xstrdup(found[i].prefix));
+        }
     } else {
         char *home = home_dir();
-        prefix = path_join(home, ".local");
+        strvec_push(&prefixes, path_join(home, ".local"));
         free(home);
     }
+    bool had_path_block = path_block_present();
 
     char *shim_dir = shim_bin_dir();
     StrVec removed_shim_names;
@@ -286,14 +316,37 @@ int cmd_uninstall(int argc, char **argv) {
                "files, and PATH blocks in shell startup files\n");
     }
 
-    char *bin_dest = path_join(path_join(prefix, "bin"), "shimback");
-    remove_file_if_present(bin_dest, "installed binary", looks_like_shimback_binary);
-    free(bin_dest);
+    for (size_t i = 0; i < prefixes.count; i++) {
+        char *bin_dest = path_join(path_join(prefixes.items[i], "bin"), "shimback");
+        remove_file_if_present(bin_dest, "installed binary", looks_like_shimback_binary);
+        free(bin_dest);
 
-    char *man_dest = path_join(path_join(prefix, "share/man/man1"), "shimback.1");
-    remove_file_if_present(man_dest, "man page", looks_like_shimback_man_page);
-    free(man_dest);
+        char *man_dest = path_join(path_join(prefixes.items[i], "share/man/man1"), "shimback.1");
+        remove_file_if_present(man_dest, "man page", looks_like_shimback_man_page);
+        free(man_dest);
+    }
 
-    free(prefix);
+    /* The PATH block is install/init/add's plumbing, not the user's data
+     * (that's the config, which stays unless --full), and nothing it points
+     * at is left: so it goes too -- unless some *other* installation is
+     * still recorded in it (only possible for one made by an older version,
+     * before install enforced a single installation), in which case that
+     * one still needs it. --full already cleared it above. */
+    if (!full && had_path_block) {
+        Installation *remaining = NULL;
+        size_t remaining_count = find_installations(&remaining);
+        if (remaining_count == 0) {
+            remove_path_blocks();
+            printf("shimback: removed the PATH block from shell startup files\n");
+        } else {
+            warn("uninstall: left the PATH block in place -- another installation at %s still "
+                 "uses it",
+                 remaining[0].binary);
+        }
+        free_installations(remaining, remaining_count);
+    }
+
+    free_installations(found, found_count);
+    strvec_free(&prefixes);
     return 0;
 }

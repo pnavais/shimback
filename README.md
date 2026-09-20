@@ -41,6 +41,9 @@ page. Extra arguments are forwarded as-is, e.g. to pick a prefix:
 curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/main/install.sh | sh -s -- --prefix ~/.local
 ```
 
+If shimback is already installed, that command changes nothing (`install`
+allows a single installation) — upgrade with [`shimback update`](#update).
+
 Or download a prebuilt binary directly from the
 [latest release](https://github.com/pnavais/shimback/releases/latest):
 
@@ -113,7 +116,8 @@ shimback remove [-y] <name>
 shimback init
 shimback list [--full]
 shimback doctor [fix [-y|--yes]]
-shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]
+shimback install [--prefix <dir>] [--force] [--shell <shell>[,<shell>]... | --all]
+shimback update [--check]
 shimback uninstall [--prefix <dir>] [--full]
 shimback edit [<name>]
 shimback info <name>
@@ -213,7 +217,7 @@ shimback add sed -f /usr/bin/sed
   On zsh, if `~/.zshrc.local` exists, the block goes there instead of
   `~/.zshrc` — most zsh setups source it for machine-local overrides kept
   out of a dotfiles repo, so that's the more appropriate place for it; a
-  later `uninstall --full` checks both files, regardless of which one
+  later `uninstall` checks both files, regardless of which one
   currently exists. If [`zsh-defer`](https://github.com/romkatv/zsh-defer)
   is available, the injected block routes its `export PATH=` through it
   too — otherwise tools like `mise` or `direnv` that defer their own
@@ -532,6 +536,14 @@ without asking — useful for a script or CI job where nothing can answer an
 interactive prompt. It only affects orphan removal; a cycle still always
 prompts (or gives up on EOF, as above) regardless of `-y`.
 
+`doctor` also reports on the [installation](#install) recorded in the `PATH`
+block: which binary it's installed at, or that shimback isn't installed. Two
+things get a `[warn]` (which, like the stray-block warning below, doesn't
+change `doctor`'s exit code): more than one installation recorded (only
+possible from a version that predates `install`'s single-installation rule),
+and a recorded directory with no shimback binary in it any more (a stale
+entry, harmless). Both come with what to do about them.
+
 `doctor` also checks for a stray PATH block: if `~/.zshrc.local` exists but
 the shimback block is still sitting in `~/.zshrc` (written by an `add`/
 `init`/`install` that ran before `~/.zshrc.local` existed, or before
@@ -542,7 +554,7 @@ fine either way. `doctor fix` acts on it by moving the block over.
 ### `install`
 
 ```sh
-shimback install [--prefix <dir>] [--shell <shell>[,<shell>]... | --all]
+shimback install [--prefix <dir>] [--force] [--shell <shell>[,<shell>]... | --all]
 ```
 
 Copies the running `shimback` binary to `<prefix>/bin/shimback` (default
@@ -558,9 +570,26 @@ fresh `install`, before ever running `add`, still leaves you with a working
 location: `add` freezes the path of whatever binary is currently running
 into each shim's symlink (see below), so running it straight out of a build
 directory means every shim breaks the next time that directory is cleaned
-or rebuilt. Re-running `install` (e.g. after building a newer version)
-simply refreshes the installed copy, and migrates away an old separate
-`shimback-bin` block if v0.1.0 ever left you with one.
+or rebuilt. It also migrates away an old separate `shimback-bin` block if
+v0.1.0 ever left you with one.
+
+**Only one installation is allowed.** `install` looks for an existing one
+(a directory recorded in the `PATH` block that really holds a shimback
+binary — a stale entry whose binary was deleted doesn't count) before
+writing anything:
+
+- Already installed at this same prefix: it prints a yellow warning and does
+  nothing (exit `0`). To *upgrade* from a release, use
+  [`update`](#update); to overwrite the installed copy with the binary you're
+  running — e.g. after a local rebuild — pass `--force`.
+- Already installed at a *different* prefix: it refuses (exit `1`), naming
+  the existing one; run `shimback uninstall` first to move it. `--force`
+  never creates a second installation: it only overwrites the one at the same
+  `--prefix`.
+
+Since `--force` is also how you re-run `install` for the same prefix, it's
+how you add `PATH` setup for another shell after the first install (e.g.
+`shimback install --force --shell bash`).
 
 By default, `install` only sets up `PATH` for your **current** shell (like
 `add` does), not every shell you have. Pass `--shell` with a comma-separated
@@ -573,11 +602,36 @@ each [release](https://github.com/pnavais/shimback/releases) tarball ships
 it, so the common "download a release, run install" path never touches the
 network for this. If it can't find one there (e.g. built from source
 directly), it falls back to downloading it from the GitHub release matching
-the running version, via `curl` — the one place shimback shells out to
-something it didn't build, and the reason it isn't unconditionally
-"dependency-free": if `curl` isn't on `PATH`, or the download fails, this
-step is skipped with a warning and `install` still succeeds at its main
-job of getting the binary in place.
+the running version, via `curl` — one of only two places shimback shells out
+to something it didn't build (the other is [`update`](#update)), and the
+reason it isn't unconditionally "dependency-free": if `curl` isn't on `PATH`,
+or the download fails, this step is skipped with a warning and `install`
+still succeeds at its main job of getting the binary in place. `install`
+never checks GitHub for a newer release — that's `update`.
+
+### `update`
+
+```sh
+shimback update
+shimback update --check
+```
+
+Replaces the installed `shimback` with the latest GitHub release. It finds
+the installation from the `PATH` block (so it needs a prior `install`),
+downloads this platform's release archive and its `SHA256SUMS`, verifies the
+archive's SHA-256 against it (refusing anything unverifiable or mismatched,
+and never touching the installed binary in that case), then swaps in the new
+binary — atomically, at the same path, so every shim symlink keeps working —
+and refreshes the man page alongside it. It compares the *contents* of the
+downloaded binary with the installed one rather than version numbers, so a
+re-tagged release is picked up too, and an identical one reports "already up
+to date". `--check` only reports whether an update is available.
+
+Like `install`'s man page fallback, this shells out to `curl` (and `tar`) —
+a dependency-free C binary can't do HTTPS itself. The checksum is computed
+natively, so `shasum`/`sha256sum` aren't needed. Set `SHIMBACK_RELEASE_URL`
+to fetch from somewhere other than the GitHub `latest/download` URL (a mirror,
+or a `file://` directory of release assets).
 
 ### `uninstall`
 
@@ -586,16 +640,20 @@ shimback uninstall [--prefix <dir>] [--full]
 ```
 
 Removes every symlink `shimback` created in the shim directory (dangling or
-not — nothing else should ever live there), the `<prefix>/bin/shimback`
-binary `install` placed (default prefix: `~/.local`, matching `install`),
-and the man page installed alongside it. By default the config file and the
-`PATH` marker blocks in shell startup files are left alone, so a future
-`add`/`init` just picks up where things left off; pass `--full` to also
-delete the config file, remove those `PATH` blocks, and sweep every shim's
+not — nothing else should ever live there), the installed `shimback` binary
+and its man page, and the `PATH` marker block in shell startup files. The
+installation is found from that block, so a custom `--prefix` used at
+`install` time doesn't need repeating; pass `--prefix` only to override the
+lookup (with none found and none given, it falls back to the default,
+`~/.local`). The config file is left alone by default — that's your data,
+and a future `add`/`init`/`install` just picks up where things left off; pass
+`--full` to also delete it and sweep every shim's
 [split `<name>-config.toml` file](#splitting-a-shims-config-into-its-own-file)
 (including one that only ever existed that way, with no `config.toml`
-entry at all) — a complete teardown. Safe to re-run: nothing left to
-remove is just reported as already gone.
+entry at all) — a complete teardown. The one time the `PATH` block is kept:
+if another installation (only possible from a version that predates the
+single-installation rule) is still recorded in it. Safe to re-run: nothing
+left to remove is just reported as already gone.
 
 `uninstall` identifies its own binary and shim symlink targets by
 statically checking for a marker embedded in every shimback build — a
@@ -994,9 +1052,9 @@ fires.
 ## Building
 
 Requires a C11 compiler and CMake ≥ 3.16. No external dependencies to build
-or run shims (`curl` is only ever shelled out to by `install`, and only as a
+or run shims (`curl`/`tar` are only ever shelled out to by `update`, and by `install` as a
 fallback when it can't find a man page bundled next to itself — see
-`install` above).
+`install` and `update` above).
 
 With [`just`](https://github.com/casey/just) installed, `just build`
 autodetects your OS/arch and builds into `build-<os>-<arch>/`:
@@ -1019,7 +1077,8 @@ The resulting `shimback` binary is self-contained, but **place it somewhere
 permanent before running `add`**: each shim's symlink is frozen to point at
 wherever the binary was running from at `add` time, so a binary left in a
 build directory will strand every shim once that directory is removed or
-rebuilt. `shimback install` (see above) handles this for you, or install it
+rebuilt. `shimback install` (see above) handles this for you (after a local
+rebuild, `shimback install --force` refreshes the installed copy), or install it
 anywhere else on `PATH` yourself (e.g. via `cmake --install build`, which
 also installs [`man/shimback.1`](man/shimback.1) to `<prefix>/share/man/man1`).
 

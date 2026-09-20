@@ -49,6 +49,8 @@ add_executable(shimback
   src/config.c
   src/dispatch.c
   src/shell.c
+  src/installation.c
+  src/sha256.c
   src/paths.c
   src/suggest.c
   src/tui.c
@@ -63,6 +65,7 @@ add_executable(shimback
   src/commands/uninstall.c
   src/commands/edit.c
   src/commands/info.c
+  src/commands/update.c
 )
 
 target_include_directories(shimback PRIVATE
@@ -122,5 +125,9 @@ add_test(NAME test_route_map
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_route_map.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_info
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_info.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_update
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_update.sh $<TARGET_FILE:shimback>)
+# Exits 77 (skipped, not failed) where curl/tar/a checksum tool are missing.
+set_tests_properties(test_update PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME test_help
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_help.sh $<TARGET_FILE:shimback>)

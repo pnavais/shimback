@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "../config.h"
+#include "../installation.h"
 #include "../paths.h"
 #include "../shell.h"
 #include "../util.h"
@@ -455,6 +456,45 @@ int cmd_doctor(int argc, char **argv) {
         report_fail(&issues,
                      "not on $PATH in this shell -- restart your shell (or re-source its "
                      "startup file)");
+    }
+    printf("\n");
+
+    /* Only one installation is allowed (see `install`); the PATH block is
+     * where one is recorded. More than one can only come from a version that
+     * predates that rule, and a recorded directory with no binary in it is
+     * a leftover. Both are worth surfacing but neither breaks anything, so
+     * they're warnings -- they don't change doctor's exit code. */
+    printf("%sinstallation:%s\n", hdr, reset);
+    {
+        Installation *installs = NULL;
+        size_t install_count = find_installations(&installs);
+        StrVec stale;
+        strvec_init(&stale);
+        find_stale_block_dirs(&stale);
+
+        if (install_count == 1) {
+            report_ok("installed at %s", installs[0].binary);
+        } else if (install_count == 0 && stale.count == 0) {
+            report_ok("not installed (no `shimback install` recorded in the PATH block)");
+        }
+        if (install_count > 1) {
+            report_warn("%zu installations are recorded in the PATH block, but only one is "
+                        "supported -- run `shimback uninstall --prefix <dir>` for each one you "
+                        "don't want (or `shimback uninstall` for all of them), then "
+                        "`shimback install` once:",
+                        install_count);
+            for (size_t i = 0; i < install_count; i++) {
+                printf("           - %s\n", installs[i].binary);
+            }
+        }
+        for (size_t i = 0; i < stale.count; i++) {
+            report_warn("stale PATH entry %s -- no shimback binary there any more (harmless; "
+                        "delete it from the `# >>> shimback >>>` block in your shell startup "
+                        "file, or `shimback uninstall` then `shimback install` to rewrite it)",
+                        stale.items[i]);
+        }
+        strvec_free(&stale);
+        free_installations(installs, install_count);
     }
     printf("\n");
 

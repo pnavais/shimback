@@ -10,7 +10,7 @@
 #include "version.h"
 
 static const char *const KNOWN_COMMANDS[] = {
-    "add", "remove", "rm", "init", "list", "ls", "doctor", "install", "uninstall", "edit", "info",
+    "add", "remove", "rm", "init", "list", "ls", "doctor", "install", "uninstall", "edit", "info", "update",
 };
 
 /* Renders `markup`: a span opened and closed with octal '\001' is a literal
@@ -182,7 +182,7 @@ static const CommandHelp COMMAND_HELP[] = {
     },
     {
         "install",
-        "  \001shimback install\001 [\001--prefix\001 \002<dir>\002] "
+        "  \001shimback install\001 [\001--prefix\001 \002<dir>\002] [\001--force\001] "
         "[\001--shell\001 \002<shell>\002[,\002<shell>\002]... | \001--all\001]\n",
 
         "  \001install\001   Copy the running shimback binary to a stable, PATH-ed location\n"
@@ -191,11 +191,18 @@ static const CommandHelp COMMAND_HELP[] = {
         "            puts the shim directory on PATH (usually add/init's job) and\n"
         "            installs this man page (bundled, or downloaded if missing).\n"
         "\n"
+        "              Only one installation is allowed: if shimback is already\n"
+        "              installed, this warns and does nothing (use \001update\001 to upgrade it\n"
+        "              from a release). \001--force\001 overwrites the installation at the\n"
+        "              same \001--prefix\001 with this binary -- e.g. after a local rebuild --\n"
+        "              but never creates a second one at a different prefix.\n"
+        "\n"
         "              By default only sets up PATH for the current shell; \001--shell\001\n"
         "              takes a comma-separated list and \001--all\001 means every installed\n"
         "              shell.\n"
         "\n"
         "              \004e.g. shimback install --prefix ~/.local --shell zsh,bash\004\n"
+        "              \004e.g. shimback install --force\004\n"
         "\n",
     },
     {
@@ -203,9 +210,26 @@ static const CommandHelp COMMAND_HELP[] = {
         "  \001shimback uninstall\001 [\001--prefix\001 \002<dir>\002] [\001--full\001]\n",
 
         "  \001uninstall\001 Remove every shim symlink shimback created, the installed binary,\n"
-        "            and the man page. \001--full\001 also clears the config file and the\n"
-        "            PATH blocks in shell startup files (left alone by default).\n"
+        "            the man page, and the PATH block in shell startup files. The\n"
+        "            installation is found from that block, so \001--prefix\001 is only needed\n"
+        "            to override it. \001--full\001 also clears the config file and any split\n"
+        "            config files (kept by default).\n"
         "              \004e.g. shimback uninstall --full\004\n"
+        "\n",
+    },
+    {
+        "update",
+        "  \001shimback update\001 [\001--check\001]\n",
+
+        "  \001update\001    Replace the installed shimback with the latest GitHub release:\n"
+        "            downloads this platform's archive, verifies its SHA-256 against the\n"
+        "            release's SHA256SUMS, then swaps the installed binary and man page\n"
+        "            in place (shim symlinks keep working). Compares contents, not\n"
+        "            version numbers, so a re-tagged release is picked up too. Needs\n"
+        "            \002curl\002 and \002tar\002 on PATH, and an existing \001install\001. \001--check\001 only\n"
+        "            reports whether an update is available.\n"
+        "              \004e.g. shimback update\004\n"
+        "              \004e.g. shimback update --check\004\n"
         "\n",
     },
     {
@@ -353,6 +377,9 @@ int cli_run(int argc, char **argv) {
     }
     if (strcmp(argv[1], "info") == 0) {
         return cmd_info(argc - 1, argv + 1);
+    }
+    if (strcmp(argv[1], "update") == 0) {
+        return cmd_update(argc - 1, argv + 1);
     }
 
     fprintf(stderr, "shimback: unknown command '%s'\n", argv[1]);
