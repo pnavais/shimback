@@ -629,9 +629,17 @@ to date". `--check` only reports whether an update is available.
 
 Like `install`'s man page fallback, this shells out to `curl` (and `tar`) —
 a dependency-free C binary can't do HTTPS itself. The checksum is computed
-natively, so `shasum`/`sha256sum` aren't needed. Set `SHIMBACK_RELEASE_URL`
-to fetch from somewhere other than the GitHub `latest/download` URL (a mirror,
-or a `file://` directory of release assets).
+natively, so `shasum`/`sha256sum` aren't needed.
+
+**Trust model.** The default location is GitHub's `latest/download` URL,
+fetched with `curl` restricted to HTTPS (including through redirects), so the
+trust anchor is HTTPS to `github.com` — the same one `install.sh` relies on.
+The `SHA256SUMS` comes from the same place as the archive, so the checksum
+catches corruption, truncation, and a mismatched archive/checksum pair; it
+does **not** authenticate the location itself (releases aren't signed). Set
+`SHIMBACK_RELEASE_URL` to fetch from somewhere else (a mirror, or a
+`file://` directory of release assets); that's an explicit decision to trust
+that location, and `update` says so with a warning each time it's used.
 
 ### `uninstall`
 

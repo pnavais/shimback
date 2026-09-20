@@ -42,6 +42,30 @@ static int run_child(char *const argv[]) {
     return WEXITSTATUS(status);
 }
 
+/* Fetches `url` to `dest` with curl. For the default GitHub location
+ * (`https_only`), curl is restricted to HTTPS for both the request and any
+ * redirect it's sent through, so nothing along the way can downgrade the
+ * download to plain HTTP or another protocol. A caller-supplied
+ * SHIMBACK_RELEASE_URL is left unrestricted (file://, http:// mirrors are the
+ * point of it). Returns curl's exit status, or -1 if it couldn't be run. */
+static int download(char *curl, const char *url, const char *dest, bool https_only) {
+    char *argv[12];
+    size_t n = 0;
+    argv[n++] = curl;
+    argv[n++] = "-fsSL";
+    if (https_only) {
+        argv[n++] = "--proto";
+        argv[n++] = "=https";
+        argv[n++] = "--proto-redir";
+        argv[n++] = "=https";
+    }
+    argv[n++] = (char *)url;
+    argv[n++] = "-o";
+    argv[n++] = (char *)dest;
+    argv[n] = NULL;
+    return run_child(argv);
+}
+
 /* `<binary> --version`'s output, minus the "shimback " prefix and trailing
  * newline (e.g. "0.1.0"); NULL if it couldn't be read. Only ever run on a
  * binary that's already passed its checksum, or on the installed one. */
@@ -224,8 +248,21 @@ int cmd_update(int argc, char **argv) {
     }
 
     const char *base_url = getenv("SHIMBACK_RELEASE_URL");
-    if (!base_url || base_url[0] == '\0') {
+    bool custom_release_url = base_url && base_url[0] != '\0';
+    if (!custom_release_url) {
         base_url = DEFAULT_RELEASE_URL;
+    } else {
+        /* The archive's SHA256SUMS is fetched from this same place, so it can
+         * only catch corruption or a mismatched pair -- it can't vouch for
+         * the location itself (there's no release signature). The default
+         * GitHub URL rests on HTTPS to github.com, exactly as install.sh's
+         * does; an override is the caller's explicit choice to trust
+         * somewhere else, and worth saying out loud. */
+        warn_colored(ANSI_YELLOW,
+                     "using SHIMBACK_RELEASE_URL=%s -- its checksums come from the same place "
+                     "as the download, so they only guard against corruption, not a malicious "
+                     "mirror; only use a location you trust",
+                     base_url);
     }
     size_t base_len = strlen(base_url);
     while (base_len > 0 && base_url[base_len - 1] == '/') {
@@ -254,13 +291,11 @@ int cmd_update(int argc, char **argv) {
     int rc = 1;
 
     printf("Downloading %s ...\n", asset);
-    char *dl_asset[] = {curl, "-fsSL", asset_url, "-o", asset_path, NULL};
-    if (run_child(dl_asset) != 0) {
+    if (download(curl, asset_url, asset_path, !custom_release_url) != 0) {
         warn("update: failed to download %s", asset_url);
         goto done;
     }
-    char *dl_sums[] = {curl, "-fsSL", sums_url, "-o", sums_path, NULL};
-    if (run_child(dl_sums) != 0) {
+    if (download(curl, sums_url, sums_path, !custom_release_url) != 0) {
         warn("update: failed to download %s -- refusing to update from an unverified "
              "download",
              sums_url);

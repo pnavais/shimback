@@ -560,11 +560,22 @@ only reports whether an update is available. Requires
 .B curl
 and
 .BR tar .
-The environment variable
-.B SHIMBACK_RELEASE_URL
-overrides the release location (default: the GitHub
+By default the release is fetched from the GitHub
 .I latest/download
-URL).
+URL with
+.B curl
+restricted to HTTPS, including through redirects, so the trust anchor is
+HTTPS to github.com, as for
+.IR install.sh .
+The checksums come from the same place as the archive: they catch corruption
+or a mismatched pair, but do not authenticate the location itself (releases
+are not signed). The environment variable
+.B SHIMBACK_RELEASE_URL
+overrides the release location (a mirror, or a
+.I file://
+directory); that is an explicit decision to trust it, and
+.B update
+warns each time it is used.
 .RS
 .PP
 Examples:

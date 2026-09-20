@@ -91,6 +91,10 @@ fi
 out="$("$SHIMBACK" update 2>&1)"
 code=$?
 assert_eq "update: an identical release exits 0" "0" "$code"
+assert_contains "update: warns when SHIMBACK_RELEASE_URL overrides the release location" "$out" \
+    "using SHIMBACK_RELEASE_URL=file://$RELEASE"
+assert_contains "update: the warning says checksums don't prove the mirror is trustworthy" "$out" \
+    "only guard against corruption"
 assert_contains "update: reports already up to date" "$out" "already up to date"
 assert_contains "update: names the installed binary" "$out" "$DEST"
 if ! cmp -s "$DEST" "$BUNDLE_DIR/shimback"; then
@@ -169,6 +173,31 @@ make_release "$NEW2_BIN" "$NEW_MAN"
 if ! cmp -s "$DEST" "$NEW2_BIN"; then
     fail "update: a later valid release should replace the installed binary again"
 fi
+
+# --- transport hardening: with the default GitHub location, curl is limited to
+# HTTPS (including through redirects) and no override warning is shown; with
+# SHIMBACK_RELEASE_URL set it's left unrestricted. A fake curl records its
+# arguments and fails, so nothing touches the network. ---
+FAKE_CURL_DIR="$SANDBOX/fakecurl"
+mkdir -p "$FAKE_CURL_DIR"
+printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done >"%s/curl_args"\nexit 1\n' "$SANDBOX" \
+    >"$FAKE_CURL_DIR/curl"
+chmod +x "$FAKE_CURL_DIR/curl"
+
+out="$(PATH="$FAKE_CURL_DIR:$PATH" SHIMBACK_RELEASE_URL= "$SHIMBACK" update 2>&1)"
+code=$?
+assert_eq "update (default URL): a failed download fails" "1" "$code"
+default_args="$(cat "$SANDBOX/curl_args")"
+assert_contains "update (default URL): curl is limited to https" "$default_args" "--proto"
+assert_contains "update (default URL): ...for the request" "$default_args" "=https"
+assert_contains "update (default URL): ...and for redirects" "$default_args" "--proto-redir"
+assert_contains "update (default URL): uses the GitHub latest-release location" "$default_args" \
+    "https://github.com/pnavais/shimback/releases/latest/download/$PLATFORM.tar.gz"
+assert_not_contains "update (default URL): no override warning" "$out" "SHIMBACK_RELEASE_URL"
+
+out="$(PATH="$FAKE_CURL_DIR:$PATH" "$SHIMBACK" update 2>&1)"
+assert_not_contains "update (override): curl isn't restricted to https" \
+    "$(cat "$SANDBOX/curl_args")" "--proto"
 
 # --- bad arguments ---
 "$SHIMBACK" update bogus >/dev/null 2>"$SANDBOX/err"
