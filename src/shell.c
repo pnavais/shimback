@@ -780,6 +780,54 @@ static bool remove_bash(const char *tag) {
     return all_ok;
 }
 
+/* Reads the directories out of `rc_path`'s zsh/bash-style marker block. */
+static void read_block_dirs_from_rc(const char *rc_path, const char *tag, StrVec *out) {
+    char *content = read_file_or_empty(rc_path);
+    const char *block_start = NULL;
+    const char *block_end = NULL;
+    const char *body_start = NULL;
+    const char *body_end = NULL;
+    if (find_block(content, tag, rc_path, &block_start, &block_end, &body_start, &body_end)) {
+        parse_existing_dirs(body_start, (size_t)(body_end - body_start), out);
+    }
+    free(content);
+}
+
+void shell_read_block_dirs(ShellKind kind, const char *tag, StrVec *out) {
+    char *home = home_dir();
+    switch (kind) {
+        case SHELL_ZSH: {
+            static const char *candidates[] = {".zshrc.local", ".zshrc"};
+            for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+                char *path = path_join(home, candidates[i]);
+                read_block_dirs_from_rc(path, tag, out);
+                free(path);
+            }
+            break;
+        }
+        case SHELL_BASH: {
+            static const char *candidates[] = {".bashrc", ".bash_profile", ".profile"};
+            for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+                char *path = path_join(home, candidates[i]);
+                read_block_dirs_from_rc(path, tag, out);
+                free(path);
+            }
+            break;
+        }
+        case SHELL_FISH: {
+            char *path = fish_snippet_path(tag);
+            char *content = read_file_or_empty(path);
+            parse_existing_fish_dirs(content, out);
+            free(content);
+            free(path);
+            break;
+        }
+        case SHELL_UNKNOWN:
+        default: break;
+    }
+    free(home);
+}
+
 bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, bool verbose) {
     switch (kind) {
         case SHELL_ZSH:

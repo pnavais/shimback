@@ -159,7 +159,14 @@ main() {
         print_indented <"$install_output"
         die "bundled shimback install failed"
     fi
-    printf '  %s☑%s Installation complete\n' "$green" "$reset"
+    # `shimback install` refuses to install over an existing installation and
+    # says so ("already installed ..."), exiting 0 -- don't announce a
+    # completed installation when nothing was changed.
+    if grep -q "already installed" "$install_output"; then
+        printf '  %s!%s Nothing changed -- to upgrade, run: shimback update\n' "$gold" "$reset"
+    else
+        printf '  %s☑%s Installation complete\n' "$green" "$reset"
+    fi
 }
 
 main "$@"

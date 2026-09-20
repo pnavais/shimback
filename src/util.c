@@ -28,6 +28,16 @@ void die(const char *fmt, ...) {
     exit(1);
 }
 
+void warn_colored(const char *color, const char *fmt, ...) {
+    bool colorize = stderr_is_color();
+    va_list ap;
+    fprintf(stderr, "shimback: %s", colorize ? color : "");
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "%s\n", colorize ? ANSI_RESET : "");
+}
+
 void warn(const char *fmt, ...) {
     va_list ap;
     fprintf(stderr, "shimback: ");

@@ -2,6 +2,11 @@
 set -u
 . "$(cd "$(dirname "$0")" && pwd)/test_common.sh" "$1"
 
+# Several `doctor fix` runs below can prompt; anything that means to answer
+# one pipes its own input. Everything else must see EOF, not whatever stdin
+# the caller happened to have (a tty stalls a background job here).
+exec </dev/null
+
 # Simulate a shell that actually sourced the injected PATH block -- the
 # sandbox's own .zshrc is written but never sourced by this test script.
 export PATH="$XDG_DATA_HOME/shimback/bin:$PATH"
@@ -386,5 +391,64 @@ assert_contains "doctor fix: recreates symlinks in the fresh directory" "$out7" 
 if [ ! -L "$(shim_path dirtool)" ]; then
     fail "doctor fix: dirtool's symlink should exist after the directory was recreated"
 fi
+
+# --- installation section: reports what `install` recorded in the PATH block.
+# More than one installation, or a recorded dir with no binary in it, are
+# warnings only -- neither changes doctor's issue count/exit status. ---
+DOCTOR_SHIM_DIR="$XDG_DATA_HOME/shimback/bin"
+DOCTOR_BUNDLE="$SANDBOX/doctor_bundle"
+mkdir -p "$DOCTOR_BUNDLE"
+cp "$SHIMBACK" "$DOCTOR_BUNDLE/shimback"
+chmod +x "$DOCTOR_BUNDLE/shimback"
+cp "$TEST_DIR/../man/shimback.1" "$DOCTOR_BUNDLE/shimback.1"
+INST_PREFIX="$SANDBOX/doctor_inst"
+ZSHRC_LOCAL="$HOME/.zshrc.local"
+
+# write_block <dir>...: replaces the (already-migrated) zsh block with one
+# listing exactly these directories.
+write_block() {
+    dirs=""
+    for d in "$@"; do
+        dirs="$dirs'$d':"
+    done
+    printf '# >>> shimback >>>\nexport PATH=%s"$PATH"\n# <<< shimback <<<\n' "$dirs" >"$ZSHRC_LOCAL"
+}
+issue_count() {
+    printf '%s' "$1" | grep -o '[0-9]* issue(s) found'
+}
+
+write_block "$DOCTOR_SHIM_DIR"
+out_none="$("$SHIMBACK" doctor)"
+baseline="$(issue_count "$out_none")"
+assert_contains "doctor: has an installation section" "$out_none" "installation:"
+assert_contains "doctor: reports when shimback isn't installed" "$out_none" "not installed"
+
+"$DOCTOR_BUNDLE/shimback" install --prefix "$INST_PREFIX" >/dev/null 2>&1
+out_one="$("$SHIMBACK" doctor)"
+assert_contains "doctor: reports the installed binary" "$out_one" \
+    "installed at $INST_PREFIX/bin/shimback"
+assert_eq "doctor: an installation doesn't change the issue count" "$baseline" \
+    "$(issue_count "$out_one")"
+
+write_block "$DOCTOR_SHIM_DIR" "$INST_PREFIX/bin" "/nonexistent/stale/bin"
+out_stale="$("$SHIMBACK" doctor)"
+assert_contains "doctor: warns about a stale PATH entry" "$out_stale" \
+    "[warn] stale PATH entry /nonexistent/stale/bin"
+assert_contains "doctor: still reports the real installation next to a stale entry" "$out_stale" \
+    "installed at $INST_PREFIX/bin/shimback"
+assert_eq "doctor: a stale entry is a warning, not an issue" "$baseline" \
+    "$(issue_count "$out_stale")"
+
+SECOND_PREFIX="$SANDBOX/doctor_inst2"
+mkdir -p "$SECOND_PREFIX/bin"
+cp "$DOCTOR_BUNDLE/shimback" "$SECOND_PREFIX/bin/shimback"
+write_block "$DOCTOR_SHIM_DIR" "$INST_PREFIX/bin" "$SECOND_PREFIX/bin"
+out_multi="$("$SHIMBACK" doctor)"
+assert_contains "doctor: warns about more than one installation" "$out_multi" \
+    "[warn] 2 installations are recorded in the PATH block"
+assert_contains "doctor: lists the first installation" "$out_multi" "$INST_PREFIX/bin/shimback"
+assert_contains "doctor: lists the second installation" "$out_multi" "$SECOND_PREFIX/bin/shimback"
+assert_eq "doctor: multiple installations are a warning, not an issue" "$baseline" \
+    "$(issue_count "$out_multi")"
 
 finish

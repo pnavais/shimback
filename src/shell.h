@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 
+#include "util.h"
+
 typedef enum {
     SHELL_ZSH,
     SHELL_BASH,
@@ -57,6 +59,14 @@ bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, 
  * for SHELL_UNKNOWN, since shimback never writes anything for it. Returns
  * false only on an actual I/O failure while writing. */
 bool shell_remove_path_tagged(ShellKind kind, const char *tag);
+
+/* Appends to `out` every directory recorded in `kind`'s PATH block tagged
+ * `tag`, across every file where that shell's block may live (zsh: both
+ * ~/.zshrc.local and ~/.zshrc; bash: .bashrc/.bash_profile/.profile; fish:
+ * its conf.d snippet). Read-only, and best-effort: a shell with no such
+ * block, or an unparseable one, just contributes nothing. Entries may repeat
+ * across files; callers dedupe. */
+void shell_read_block_dirs(ShellKind kind, const char *tag, StrVec *out);
 
 /* True if ~/.zshrc.local exists but has no `tag`-marked block while
  * ~/.zshrc does -- i.e. a block written back when ~/.zshrc.local either

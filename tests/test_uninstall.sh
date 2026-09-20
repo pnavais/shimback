@@ -51,12 +51,15 @@ if [ -e "$MAN_DEST" ]; then
 fi
 assert_contains "uninstall: reports removed symlink(s)" "$out" "removed 1 shim symlink"
 
-# --- default uninstall leaves config and PATH blocks alone ---
+# --- default uninstall removes the PATH block (it's install plumbing) but
+# leaves the config alone (that's the user's data; --full clears it) ---
 if [ ! -f "$CFG" ]; then
     fail "uninstall (default): config file should NOT be removed"
 fi
-assert_contains "uninstall (default): PATH block left alone" "$(cat "$ZSHRC")" \
+assert_not_contains "uninstall (default): PATH block removed" "$(cat "$ZSHRC")" \
     "# >>> shimback >>>"
+assert_contains "uninstall (default): reports removing the PATH block" "$out" \
+    "removed the PATH block"
 
 # --- --full also clears config and PATH blocks ---
 "$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
@@ -76,6 +79,52 @@ assert_not_contains "uninstall --full: PATH block removed" "$(cat "$ZSHRC")" \
 "$SHIMBACK" uninstall --prefix "$PREFIX" --full >/dev/null
 code3=$?
 assert_eq "uninstall: idempotent re-run exits 0" "0" "$code3"
+
+# --- no --prefix needed: the installation is found from the PATH block, so a
+# custom --prefix used at install time doesn't have to be repeated ---
+"$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+"$BUNDLED_SHIMBACK" install --prefix "$PREFIX" >/dev/null
+out4="$("$SHIMBACK" uninstall)"
+code4=$?
+assert_eq "uninstall (no --prefix): exits 0" "0" "$code4"
+if [ -e "$DEST" ]; then
+    fail "uninstall (no --prefix): the installed binary at the custom prefix should be gone"
+fi
+if [ -e "$MAN_DEST" ]; then
+    fail "uninstall (no --prefix): the installed man page at the custom prefix should be gone"
+fi
+assert_not_contains "uninstall (no --prefix): PATH block removed" "$(cat "$ZSHRC")" \
+    "# >>> shimback >>>"
+assert_contains "uninstall (no --prefix): reports the removed binary" "$out4" \
+    "removed $DEST"
+
+# --- a leftover second installation (only possible from an older version,
+# before install enforced a single one) keeps the PATH block alive when the
+# *other* one is uninstalled by --prefix; auto-detection then finds it ---
+LEGACY_A="$SANDBOX/legacyA"
+LEGACY_B="$SANDBOX/legacyB"
+mkdir -p "$LEGACY_A/bin" "$LEGACY_B/bin"
+cp "$BUNDLED_SHIMBACK" "$LEGACY_A/bin/shimback"
+cp "$BUNDLED_SHIMBACK" "$LEGACY_B/bin/shimback"
+printf '# >>> shimback >>>\nexport PATH=%s:%s:"$PATH"\n# <<< shimback <<<\n' \
+    "'$LEGACY_A/bin'" "'$LEGACY_B/bin'" >"$ZSHRC"
+out5="$("$SHIMBACK" uninstall --prefix "$LEGACY_A" 2>&1)"
+if [ -e "$LEGACY_A/bin/shimback" ]; then
+    fail "uninstall --prefix: the named installation should be gone"
+fi
+if [ ! -e "$LEGACY_B/bin/shimback" ]; then
+    fail "uninstall --prefix: the other installation must be left alone"
+fi
+assert_contains "uninstall --prefix: the PATH block stays for the remaining installation" \
+    "$(cat "$ZSHRC")" "# >>> shimback >>>"
+assert_contains "uninstall --prefix: explains why the block was kept" "$out5" \
+    "left the PATH block in place"
+"$SHIMBACK" uninstall >/dev/null 2>&1
+if [ -e "$LEGACY_B/bin/shimback" ]; then
+    fail "uninstall (auto): the remaining installation should be found and removed"
+fi
+assert_not_contains "uninstall (auto): PATH block removed with the last installation" \
+    "$(cat "$ZSHRC")" "# >>> shimback >>>"
 
 # --- --full also removes a fish conf.d snippet (faking fish onto $PATH so
 # shell_is_installed detects it regardless of the test machine's setup) ---
