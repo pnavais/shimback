@@ -45,6 +45,23 @@ assert_contains "add: global verbose=true persists across saves" "$(cat "$CFG")"
 marker_count="$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
 assert_eq "add: still exactly one marker block after re-add" "1" "$marker_count"
 
+# --- the injected block is a plain export, with no zsh-defer indirection ---
+assert_not_contains "add: PATH block doesn't use zsh-defer" "$(cat "$ZSHRC")" "zsh-defer"
+assert_contains "add: PATH block is a plain export" "$(cat "$ZSHRC")" "export PATH="
+
+# --- a block written by an older shimback (routed through zsh-defer) is
+# rewritten as a plain export the next time add/init/install touches it ---
+OLD_BLOCK_DIR="'$XDG_DATA_HOME/shimback/bin'"
+printf '# >>> shimback >>>\nif command -v zsh-defer >/dev/null 2>&1; then\n    zsh-defer export PATH=%s:"$PATH"\nelse\n    export PATH=%s:"$PATH"\nfi\n# <<< shimback <<<\n' \
+    "$OLD_BLOCK_DIR" "$OLD_BLOCK_DIR" >"$ZSHRC"
+"$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+assert_not_contains "add: an old zsh-defer block is migrated to a plain export" \
+    "$(cat "$ZSHRC")" "zsh-defer"
+assert_eq "add: the migrated block is still singular" "1" \
+    "$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
+assert_contains "add: the migrated block keeps the shim dir" "$(cat "$ZSHRC")" \
+    "$XDG_DATA_HOME/shimback/bin"
+
 # --- changing the shim dir updates the block in place, still singular ---
 OLD_DATA_HOME="$XDG_DATA_HOME"
 export XDG_DATA_HOME="$SANDBOX/home/.local/share-alt"
