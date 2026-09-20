@@ -45,22 +45,31 @@ assert_contains "add: global verbose=true persists across saves" "$(cat "$CFG")"
 marker_count="$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
 assert_eq "add: still exactly one marker block after re-add" "1" "$marker_count"
 
-# --- the injected block is a plain export, with no zsh-defer indirection ---
-assert_not_contains "add: PATH block doesn't use zsh-defer" "$(cat "$ZSHRC")" "zsh-defer"
-assert_contains "add: PATH block is a plain export" "$(cat "$ZSHRC")" "export PATH="
+# --- the zsh block defers via `zsh-defer -c '...'` (so "$PATH" is expanded
+# when the deferred command runs, not when it's queued) and otherwise falls
+# back to a plain export ---
+SHIM_BIN_DIR="$XDG_DATA_HOME/shimback/bin"
+assert_contains "add: zsh block checks for zsh-defer" "$(cat "$ZSHRC")" \
+    "if command -v zsh-defer >/dev/null 2>&1; then"
+assert_contains "add: zsh block defers through zsh-defer -c" "$(cat "$ZSHRC")" \
+    "zsh-defer -c 'export PATH=\"$SHIM_BIN_DIR:\$PATH\"'"
+assert_contains "add: zsh block falls back to a plain export" "$(cat "$ZSHRC")" \
+    "export PATH='$SHIM_BIN_DIR':\"\$PATH\""
+assert_not_contains "add: no queue-time expansion form (zsh-defer export PATH=)" \
+    "$(cat "$ZSHRC")" "zsh-defer export PATH="
 
-# --- a block written by an older shimback (routed through zsh-defer) is
-# rewritten as a plain export the next time add/init/install touches it ---
-OLD_BLOCK_DIR="'$XDG_DATA_HOME/shimback/bin'"
-printf '# >>> shimback >>>\nif command -v zsh-defer >/dev/null 2>&1; then\n    zsh-defer export PATH=%s:"$PATH"\nelse\n    export PATH=%s:"$PATH"\nfi\n# <<< shimback <<<\n' \
-    "$OLD_BLOCK_DIR" "$OLD_BLOCK_DIR" >"$ZSHRC"
+# --- a block written by an older shimback (which expanded "$PATH" when
+# queueing) is rewritten to the -c form the next time add touches it, and
+# keeps every directory it already had ---
+printf '# >>> shimback >>>\nif command -v zsh-defer >/dev/null 2>&1; then\n    zsh-defer export PATH=%s:%s:"$PATH"\nelse\n    export PATH=%s:%s:"$PATH"\nfi\n# <<< shimback <<<\n' \
+    "'/opt/keep-a/bin'" "'/opt/keep-b/bin'" "'/opt/keep-a/bin'" "'/opt/keep-b/bin'" >"$ZSHRC"
 "$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
-assert_not_contains "add: an old zsh-defer block is migrated to a plain export" \
-    "$(cat "$ZSHRC")" "zsh-defer"
+assert_not_contains "add: an old block loses the queue-time expansion form" "$(cat "$ZSHRC")" \
+    "zsh-defer export PATH="
+assert_contains "add: an old block is rewritten to the -c form, keeping its dirs" "$(cat "$ZSHRC")" \
+    "zsh-defer -c 'export PATH=\"/opt/keep-a/bin:/opt/keep-b/bin:$SHIM_BIN_DIR:\$PATH\"'"
 assert_eq "add: the migrated block is still singular" "1" \
     "$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
-assert_contains "add: the migrated block keeps the shim dir" "$(cat "$ZSHRC")" \
-    "$XDG_DATA_HOME/shimback/bin"
 
 # --- changing the shim dir updates the block in place, still singular ---
 OLD_DATA_HOME="$XDG_DATA_HOME"
