@@ -162,9 +162,8 @@ static bool find_block(const char *content, const char *tag, const char *rc_path
  * reopen quote). Inside single quotes nothing else is special to sh/bash/zsh
  * -- not $, backticks, backslashes, or double quotes -- so this is what
  * actually neutralizes a directory path containing shell metacharacters
- * before it's written into someone's startup file (see build_zsh_body /
- * build_bash_body, which previously interpolated the raw path inside a
- * double-quoted string, letting a path like `.../data"; rm -rf ~; #` inject
+ * before it's written into someone's startup file (see build_export_body,
+ * which previously interpolated the raw path inside a double-quoted string, letting a path like `.../data"; rm -rf ~; #` inject
  * arbitrary commands that ran on the next shell startup). */
 static void append_sh_squoted(DynBuf *body, const char *s) {
     dynbuf_append_char(body, '\'');
@@ -205,7 +204,7 @@ static char *read_sh_squoted(const char **p) {
 }
 
 /* Extracts the directory list from a block body shaped like
- * build_zsh_body's/build_bash_body's output (an `export PATH=` assignment
+ * build_export_body's output (an `export PATH=` assignment
  * of colon-separated, individually single-quoted directories ahead of a
  * literal trailing "$PATH"), appending each into `out`. Best-effort: a body
  * with no such line just yields no directories, so callers can safely union
@@ -231,33 +230,7 @@ static void parse_existing_dirs(const char *body, size_t body_len, StrVec *out) 
     free(copy);
 }
 
-/* zsh-defer (https://github.com/romkatv/zsh-defer) lets plugin managers and
- * tools like mise queue their PATH-mutating activation to run asynchronously
- * after the whole rc file has sourced, which would otherwise let them clobber
- * our position on PATH regardless of where our block sits in the file. When
- * zsh-defer is available, queue our export through it too: since our block
- * runs later in a normally-ordered rc file than most such tools' own
- * activation lines, our deferred call is enqueued after theirs and so runs
- * after them, putting our directories back in front once the queue drains. */
-static void build_zsh_body(DynBuf *body, const StrVec *dirs) {
-    dynbuf_append_str(body, "if command -v zsh-defer >/dev/null 2>&1; then\n");
-    dynbuf_append_str(body, "    zsh-defer export PATH=");
-    for (size_t i = 0; i < dirs->count; i++) {
-        append_sh_squoted(body, dirs->items[i]);
-        dynbuf_append_char(body, ':');
-    }
-    dynbuf_append_str(body, "\"$PATH\"\n");
-    dynbuf_append_str(body, "else\n");
-    dynbuf_append_str(body, "    export PATH=");
-    for (size_t i = 0; i < dirs->count; i++) {
-        append_sh_squoted(body, dirs->items[i]);
-        dynbuf_append_char(body, ':');
-    }
-    dynbuf_append_str(body, "\"$PATH\"\n");
-    dynbuf_append_str(body, "fi\n");
-}
-
-static void build_bash_body(DynBuf *body, const StrVec *dirs) {
+static void build_export_body(DynBuf *body, const StrVec *dirs) {
     dynbuf_append_str(body, "export PATH=");
     for (size_t i = 0; i < dirs->count; i++) {
         append_sh_squoted(body, dirs->items[i]);
@@ -306,10 +279,8 @@ static void merge_dir_into(StrVec *dirs, const char *dir) {
  * in `rc_path` -- unioning it with whatever directories are already there
  * (from an earlier add/init/install) rather than overwriting them, so those
  * commands can run in any order, each contributing its own directory,
- * without any of them clobbering what another already wrote. `zsh_style`
- * picks the zsh-defer-aware body vs. the plain bash one. */
-static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char *dir,
-                                 bool zsh_style) {
+ * without any of them clobbering what another already wrote. */
+static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char *dir) {
     char *content = read_file_or_empty(rc_path);
 
     const char *block_start = NULL;
@@ -329,11 +300,7 @@ static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char
 
     DynBuf new_body;
     dynbuf_init(&new_body);
-    if (zsh_style) {
-        build_zsh_body(&new_body, &dirs);
-    } else {
-        build_bash_body(&new_body, &dirs);
-    }
+    build_export_body(&new_body, &dirs);
     strvec_free(&dirs);
 
     char mark_start[128];
@@ -470,7 +437,7 @@ bool shell_zsh_migrate_block_to_local(const char *tag) {
 
     bool ok = true;
     for (size_t i = 0; i < dirs.count && ok; i++) {
-        ok = ensure_dir_in_block(local, tag, dirs.items[i], true);
+        ok = ensure_dir_in_block(local, tag, dirs.items[i]);
     }
     strvec_free(&dirs);
 
@@ -651,7 +618,7 @@ static bool remove_fish(const char *tag) {
 static bool ensure_zsh(const char *dir, const char *tag, bool verbose) {
     char *home = home_dir();
     char *rc = zsh_rc_path(home);
-    bool ok = ensure_dir_in_block(rc, tag, dir, true);
+    bool ok = ensure_dir_in_block(rc, tag, dir);
     if (ok) {
         if (verbose) {
             printf("zsh: PATH updated in %s\n", rc);
@@ -674,7 +641,7 @@ static bool ensure_bash(const char *dir, const char *tag, bool verbose) {
         char *path = path_join(home, candidates[i]);
         if (access(path, F_OK) == 0) {
             any_exists = true;
-            bool ok = ensure_dir_in_block(path, tag, dir, false);
+            bool ok = ensure_dir_in_block(path, tag, dir);
             if (ok) {
                 if (verbose) {
                     printf("bash: PATH updated in %s\n", path);
@@ -689,7 +656,7 @@ static bool ensure_bash(const char *dir, const char *tag, bool verbose) {
 
     if (!any_exists) {
         char *path = path_join(home, ".bashrc");
-        bool ok = ensure_dir_in_block(path, tag, dir, false);
+        bool ok = ensure_dir_in_block(path, tag, dir);
         if (ok) {
             if (verbose) {
                 printf("bash: created %s with PATH update\n", path);

@@ -214,12 +214,7 @@ shimback add sed -f /usr/bin/sed
   `~/.zshrc` — most zsh setups source it for machine-local overrides kept
   out of a dotfiles repo, so that's the more appropriate place for it; a
   later `uninstall --full` checks both files, regardless of which one
-  currently exists. If [`zsh-defer`](https://github.com/romkatv/zsh-defer)
-  is available, the injected block routes its `export PATH=` through it
-  too — otherwise tools like `mise` or `direnv` that defer their own
-  PATH-mutating activation (for faster prompt startup) would clobber the
-  shim dir's position on `PATH` after the rc file finishes sourcing,
-  regardless of where the shimback block sits in the file.
+  currently exists.
 - The confirmation line printed on success (`shimback: 'name' -> path
   (fallback: ..., policy: ...)`) is colored when stdout is a terminal and
   `NO_COLOR` isn't set, matching `list`'s conventions. The shell-startup-file
