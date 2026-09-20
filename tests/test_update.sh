@@ -174,6 +174,31 @@ if ! cmp -s "$DEST" "$NEW2_BIN"; then
     fail "update: a later valid release should replace the installed binary again"
 fi
 
+# --- the man page is best-effort: if it can't be refreshed, the binary is
+# still updated (exit 0), but the final line says so instead of claiming a
+# clean update. (Skipped as root, which ignores directory permissions.) ---
+if [ "$(id -u)" -ne 0 ]; then
+    MAN_DIR="$(dirname "$MAN_DEST")"
+    make_release "$NEW1_BIN" "$NEW_MAN"
+    chmod 0500 "$MAN_DIR"
+    out="$("$SHIMBACK" update 2>&1)"
+    code=$?
+    chmod 0700 "$MAN_DIR"
+    assert_eq "update: a failed man page refresh doesn't fail the update" "0" "$code"
+    assert_contains "update: warns about the failed man page refresh" "$out" \
+        "failed to refresh the man page"
+    assert_contains "update: the final line doesn't claim a clean update" "$out" \
+        "but the man page could not be refreshed"
+    if ! cmp -s "$DEST" "$NEW1_BIN"; then
+        fail "update: the binary should still be updated when only the man page failed"
+    fi
+    make_release "$NEW2_BIN" "$NEW_MAN"
+    "$SHIMBACK" update >/dev/null 2>&1
+    if ! cmp -s "$DEST" "$NEW2_BIN"; then
+        fail "update: a later update should work again once the man dir is writable"
+    fi
+fi
+
 # --- transport hardening: with the default GitHub location, curl is limited to
 # HTTPS (including through redirects) and no override warning is shown; with
 # SHIMBACK_RELEASE_URL set it's left unrestricted. A fake curl records its
