@@ -354,6 +354,10 @@ int cmd_update(int argc, char **argv) {
         goto done;
     }
 
+    /* The man page is best-effort, as in `install`: the binary is what was
+     * asked for and it's already in place, so a failed refresh doesn't fail
+     * the update -- but the final line must not claim more than happened. */
+    bool man_failed = false;
     char *man_src = path_join(pkg_dir, "shimback.1");
     struct stat man_st;
     if (stat(man_src, &man_st) == 0 && S_ISREG(man_st.st_mode)) {
@@ -363,6 +367,7 @@ int cmd_update(int argc, char **argv) {
             printf("shimback: man page refreshed at %s\n", man_dest);
         } else {
             warn("update: failed to refresh the man page at %s", man_dest);
+            man_failed = true;
         }
     }
 
@@ -377,7 +382,14 @@ int cmd_update(int argc, char **argv) {
                  installed_version ? installed_version : "unknown",
                  new_version ? new_version : "unknown");
     }
-    print_status(ANSI_GREEN, summary);
+    if (man_failed) {
+        size_t len = strlen(summary);
+        snprintf(summary + len, sizeof(summary) - len,
+                 " -- but the man page could not be refreshed");
+        print_status(ANSI_YELLOW, summary);
+    } else {
+        print_status(ANSI_GREEN, summary);
+    }
     rc = 0;
 
 done:
