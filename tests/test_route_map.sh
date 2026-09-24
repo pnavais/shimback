@@ -50,6 +50,20 @@ assert_contains "route-map: jtool's two routes are both stored" "$cfg" '[[shims.
 assert_contains "route-map: jtool route match --v8 stored" "$cfg" 'match = "--v8"'
 assert_contains "route-map: jtool route match --v25 stored" "$cfg" 'match = "--v25"'
 
+# --- list --full: shows every route's own resolved command, not just the
+# top-level source/fallback -- each route can point at a genuinely
+# different binary (jtool's --v8 and --v25 do), which is the whole point
+# of route-map over route-args ---
+jfull="$("$SHIMBACK" list --full)"
+assert_contains "list --full: route-map shows the --v8 route's command" "$jfull" \
+    "route '--v8': $FAKE_FALLBACK"
+assert_contains "list --full: route-map shows the --v25 route's command" "$jfull" \
+    "route '--v25': $FAKE_ECHO"
+assert_contains "list --full: jtool has strip matched args off" "$jfull" \
+    "strip matched args: false"
+assert_contains "list --full: jstrip has strip matched args on" "$jfull" \
+    "strip matched args: true"
+
 # --- route-map without --route is rejected at add time ---
 "$SHIMBACK" add badroute -s "$FAKE_PRIMARY" --policy route-map >/dev/null 2>"$SANDBOX/err"
 code=$?
@@ -90,6 +104,8 @@ KEEPARGS="$(shim_path keepargs)"
 out="$("$KEEPARGS" --v8 x)"
 assert_eq "route args (hand-edited): applied at dispatch" \
     "ECHO_RAN:--enable-preview --v8 x" "$out"
+assert_contains "list --full: a route's own baked-in args are shown alongside its command" \
+    "$("$SHIMBACK" list --full)" "route '--v8': $FAKE_ECHO --enable-preview"
 
 "$SHIMBACK" add keepargs -s "$FAKE_PRIMARY" --policy route-map \
     --route "--v8=$FAKE_ECHO" --diagnostic >/dev/null

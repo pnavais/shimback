@@ -14,6 +14,14 @@ static const char *USAGE = "usage: shimback list [--full]\n";
 /* Prints `text`, optionally wrapped in `color`, then pads with spaces up to
  * `width` -- padding is based on the plain text length, since padding to
  * the length of a color-escaped string would misalign columns. */
+/* Just the filename portion of a frozen fallback path -- the compact table
+ * shows this instead of the full path (see fallback_display below); --full
+ * prints the full path back out in its own detail line. */
+static const char *basename_of(const char *path) {
+    const char *slash = strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
 static void print_cell(const char *text, size_t width, const char *color, bool colorize) {
     if (colorize && color) {
         printf("%s%s%s", color, text, ANSI_RESET);
@@ -100,6 +108,32 @@ static void print_full_details(const ShimEntry *e, bool colorize) {
         print_detail_line(colorize, "rewrite rules", dynbuf_cstr(&buf));
         dynbuf_free(&buf);
     }
+
+    if (e->policy == POLICY_ROUTE_MAP) {
+        for (size_t i = 0; i < e->route_count; i++) {
+            const RouteEntry *r = &e->routes[i];
+            DynBuf label;
+            dynbuf_init(&label);
+            dynbuf_append_str(&label, "route '");
+            dynbuf_append_str(&label, r->match);
+            dynbuf_append_str(&label, "'");
+
+            DynBuf value;
+            dynbuf_init(&value);
+            dynbuf_append_str(&value, r->command);
+            for (size_t j = 0; j < r->arg_count; j++) {
+                dynbuf_append_char(&value, ' ');
+                dynbuf_append_str(&value, r->args[j]);
+            }
+
+            print_detail_line(colorize, dynbuf_cstr(&label), dynbuf_cstr(&value));
+            dynbuf_free(&label);
+            dynbuf_free(&value);
+        }
+        if (e->route_count > 0) {
+            print_detail_line(colorize, "strip matched args", e->strip_matched_args ? "true" : "false");
+        }
+    }
 }
 
 /* strlen(ORPHAN_LABEL) has to fit inside source_w + 2 + fallback_w + 2 +
@@ -155,6 +189,7 @@ int cmd_list(int argc, char **argv) {
     }
 
     char *shim_dir = shim_bin_dir();
+    char *self_exe = self_exe_path();
 
     /* Resolved once up front (not per pass) since a split entry is a
      * freshly heap-loaded ShimEntry -- loading it twice (once to measure
@@ -181,7 +216,7 @@ int cmd_list(int argc, char **argv) {
         }
         ShimEntry *e = entries[i];
         const char *source_display = e->source ? e->source : "auto";
-        const char *fallback_display = e->fallback ? e->fallback : "none";
+        const char *fallback_display = e->fallback ? basename_of(e->fallback) : "none";
         size_t sl = strlen(source_display);
         size_t fl = strlen(fallback_display);
         size_t pl = strlen(policy_to_string(e->policy));
@@ -215,7 +250,7 @@ int cmd_list(int argc, char **argv) {
         }
         ShimEntry *e = entries[i];
         const char *source_display = e->source ? e->source : "auto";
-        const char *fallback_display = e->fallback ? e->fallback : "none";
+        const char *fallback_display = e->fallback ? basename_of(e->fallback) : "none";
         const char *policy_str = policy_to_string(e->policy);
 
         print_cell(names[i], name_w, ANSI_BOLD ANSI_CYAN, colorize);
@@ -235,12 +270,23 @@ int cmd_list(int argc, char **argv) {
             if (sources[i] == SHIM_SOURCE_SPLIT) {
                 print_detail_line(colorize, "config", split_paths[i]);
             }
+            if (!e->source) {
+                char *auto_resolved = path_search(names[i], shim_dir, self_exe);
+                print_detail_line(colorize, "source resolves to",
+                                   auto_resolved ? auto_resolved
+                                                 : "not found on $PATH");
+                free(auto_resolved);
+            }
+            if (e->fallback) {
+                print_detail_line(colorize, "fallback", e->fallback);
+            }
             print_full_details(e, colorize);
         }
         free(symlink_path);
     }
 
     free(shim_dir);
+    free(self_exe);
     for (size_t i = 0; i < name_count; i++) {
         if (sources[i] == SHIM_SOURCE_SPLIT) {
             shim_entry_free(entries[i]);
