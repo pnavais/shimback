@@ -12,6 +12,14 @@ out="$("$SHIMBACK" list)"
 assert_contains "list: shows the compact table" "$out" "NAME"
 assert_not_contains "list: no detail lines without --full" "$out" "error patterns:"
 
+# --- compact table: fallback shows just the binary name, not its full
+# frozen path (source, by contrast, still shows the full path -- only
+# fallback gets shortened here) ---
+assert_contains "list: fallback shown as just the binary name" "$out" \
+    "$(basename "$FAKE_FALLBACK")"
+assert_not_contains "list: fallback's full path not shown in compact mode" "$out" \
+    "$FAKE_FALLBACK"
+
 # --- list --full: shows policy-specific details, one per configured policy ---
 "$SHIMBACK" add xtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
     --policy exit-code-match --exit-code 2 --exit-code 3 >/dev/null
@@ -42,14 +50,20 @@ assert_contains "list --full: fallback_args shown for a plain exit-code shim" "$
 # --- list --full: every shim always contributes its own "symlink:" line
 # (6 shims: sed, htool, xtool, rtool, rwtool, atool = 6), plus whatever
 # policy-specific detail it has beyond that -- htool (1), xtool (1),
-# rtool (2), rwtool (1), and atool (2) = 7 -- for 13 total. sed itself
-# has nothing configured beyond the basics, so it contributes only its
-# one "symlink:" line and nothing else. ---
+# rtool (2), rwtool (1), and atool (2) = 7 -- for 13 total. On top of
+# that: sed's own "source resolves to:" line (its source is left auto,
+# the only one here) for 14, plus a "fallback:" line for every shim with
+# an explicit fallback -- sed, htool, xtool, rtool, atool (rwtool has
+# none; --policy rewrite never uses -f/--fallback) -- 5 more, for 19. ---
 detail_line_count="$(printf '%s\n' "$full" | grep -c '^        ')"
 assert_eq "list --full: symlink line for every shim, plus policy-specific extras" \
-    "13" "$detail_line_count"
+    "19" "$detail_line_count"
 assert_contains "list --full: sed shows its own symlink line" "$full" \
     "symlink: $(shim_path sed)"
+assert_contains "list --full: sed's auto source shows what it resolves to" "$full" \
+    "source resolves to:"
+assert_contains "list --full: shows the fallback's full frozen path" "$full" \
+    "fallback: $FAKE_FALLBACK"
 
 # --- ls --full is the same alias as list --full ---
 assert_eq "ls --full is an alias for list --full" "$full" "$("$SHIMBACK" ls --full)"

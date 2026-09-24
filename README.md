@@ -407,7 +407,10 @@ shimback list
 ```
 
 Prints every shim's name, source (or `auto`), fallback, policy, and
-diagnostic flag as a column-aligned table. This includes a
+diagnostic flag as a column-aligned table. The fallback column shows just
+its binary name, not the full path -- `--full` (below) prints the full
+path back out, alongside everything else the compact columns leave out.
+This includes a
 [split-config](#splitting-a-shims-config-into-its-own-file) shim exactly
 like a config.toml one (its own file's path shown as a `config:` line
 under `--full`, so you always know exactly where it currently lives),
@@ -417,14 +420,14 @@ usual columns instead of being silently left out (see `doctor`, below,
 for removing one):
 
 ```
-NAME  SOURCE                   FALLBACK      POLICY     DIAGNOSTIC
-sed   auto                     /usr/bin/sed  exit-code  false
-awk   /opt/homebrew/bin/gawk   /usr/bin/awk  heuristic  true
+NAME  SOURCE                   FALLBACK  POLICY     DIAGNOSTIC
+sed   auto                     sed       exit-code  false
+awk   /opt/homebrew/bin/gawk   awk       heuristic  true
 ```
 
 When stdout is a terminal (and [`NO_COLOR`](https://no-color.org/) isn't
 set): shim names are bold cyan; an explicit source is green and `auto` is
-dimmed; the fallback path is blue; the policy column is colored by kind
+dimmed; the fallback name is blue; the policy column is colored by kind
 (`heuristic` yellow, `exit-code-match` magenta, `route-args` cyan,
 `rewrite` green, `split-args` red, `route-map` blue, `exit-code` uncolored
 as the baseline); `false`
@@ -437,29 +440,43 @@ table's columns leave out, as extra indented lines right under a shim's
 row: the shim symlink's own path (always shown, for every shim -- an
 orphan's row gets this too, even though it has no other detail to show),
 its [split config file](#splitting-a-shims-config-into-its-own-file)'s
-path if it has one, `source_args`/`fallback_args` (see `add`, above —
-independent of policy, so these can show up for any shim), then
+path if it has one, what an `auto` source currently resolves to on
+`$PATH` (or that nothing does), the fallback's own full path (when one is
+configured -- unused-by-policy shims like `rewrite`/`route-map` without
+`-f` show none of this), `source_args`/`fallback_args` (see `add`, above
+— independent of policy, so these can show up for any shim), then
 whatever's policy-specific — `error_patterns` for `heuristic`, the
 configured codes for `exit-code-match`, `route_args` and
 `strip_matched_args` for `route-args`,
 `source_route_args`/`fallback_route_args`/`strip_matched_args` for
-`split-args`, each `<from> -> <to>` pair for `rewrite`, and each
-`<match> -> <command>` route (plus its own `args`, if any) for
-`route-map`. A shim with
+`split-args`, each `<from> -> <to>` pair for `rewrite`, and, for
+`route-map`, every route's own resolved command (plus its baked-in
+`args`, if any -- each route can point at a genuinely different binary,
+which `--full` shows in full, not just its `<match>` token). A shim with
 none of the policy-specific extras configured still gets its symlink
 line, just nothing more:
 
 ```
-NAME   SOURCE     FALLBACK      POLICY           DIAGNOSTIC
-sed    auto       /usr/bin/sed  exit-code        false
+NAME   SOURCE     FALLBACK  POLICY           DIAGNOSTIC
+sed    auto       sed       exit-code        false
         symlink: /Users/you/.local/share/shimback/bin/sed
-awk    /opt/.../gawk   /usr/bin/awk  heuristic   true
+        source resolves to: /usr/bin/sed
+        fallback: /usr/bin/sed
+awk    /opt/.../gawk   awk  heuristic        true
         symlink: /Users/you/.local/share/shimback/bin/awk
+        fallback: /usr/bin/awk
         error patterns: invalid option, illegal option
-ll     /bin/ls    /usr/local/bin/eza  exit-code  false
+ll     /bin/ls    eza       exit-code        false
         symlink: /Users/you/.local/share/shimback/bin/ll
+        fallback: /usr/local/bin/eza
         source args: -l, -t, -r, -a, -h
         fallback args: -la
+java   /opt/java17/bin/java  none  route-map  false
+        symlink: /Users/you/.local/share/shimback/bin/java
+        route '--v8': /opt/java8/bin/java
+        route '--v25': /opt/java25/bin/java
+        route '--preview': /opt/java25/bin/java --enable-preview
+        strip matched args: false
 ```
 
 ### `doctor`
