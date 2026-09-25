@@ -132,9 +132,8 @@ jobs:
       - name: Debug sysroot layout
         shell: pwsh
         run: |
-          Get-ChildItem D:\msvc-sysroot | Format-Table Name
-          Get-ChildItem "D:\msvc-sysroot\VC\Tools\MSVC" -ErrorAction SilentlyContinue | Format-Table Name
-          Get-ChildItem "D:\msvc-sysroot\Windows Kits\10\Include" -ErrorAction SilentlyContinue | Format-Table Name
+          xwin --version
+          Get-ChildItem D:\msvc-sysroot -Recurse -Depth 3 -Directory | ForEach-Object { $_.FullName }
 
       # clang-cl/lld-link ship as part of the LLVM install already present
       # on GitHub's windows-2025 runner image, at this same path used for
