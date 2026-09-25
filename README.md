@@ -1,6 +1,6 @@
 # shimback
 
-[![Build](https://github.com/pnavais/shimback/actions/workflows/release.yml/badge.svg)](https://github.com/pnavais/shimback/actions/workflows/release.yml) [![Version](https://img.shields.io/github/v/tag/pnavais/shimback?label=version)](https://github.com/pnavais/shimback/tags)
+[![Build](https://github.com/pnavais/shimback/actions/workflows/release.yml/badge.svg)](https://github.com/pnavais/shimback/actions/workflows/release.yml) [![Version](https://img.shields.io/github/v/release/pnavais/shimback?label=version)](https://github.com/pnavais/shimback/releases/latest)
 
 ![shimback banner](assets/banner.png)
 
