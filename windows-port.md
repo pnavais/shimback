@@ -11,8 +11,17 @@
 | 4 | `paths.c` (home/config/data, scanning) | ✅ done — defaults to `.config`/`.local/share` under `%USERPROFILE%` (same as macOS/Linux), falling back to `%APPDATA%`/`%LOCALAPPDATA%` only when that's the only one that already exists (migration); cosmetic path-separator cleanup still outstanding (low priority) |
 | 5 | Shell/PATH integration | ✅ done — PowerShell profile injection + cmd.exe AutoRun + `HKCU\Environment\Path` fallback, all verified end-to-end for real (including registry state, not just files) |
 | 6 | TUI raw mode | ✅ done — live keystroke navigation manually verified by the user in a real terminal (raw mode, arrow keys, typed input all worked); that same test caught a real bug, an unclear `EXDEV` error message, since fixed and then upgraded further: `add`/`doctor fix` now transparently fall back to copying shimback's binary instead of dying when a hard link can't cross drives (see Phase 6's two addenda) |
-| 7 | Packaging (`install.ps1`, CI, release artifact) | 🟨 code-complete, one gap — `update`/`install.ps1` both verified end-to-end against a real local fake release; README/CI workflow written. **Not verified**: the `build-windows` CI job itself has never actually run on GitHub's infrastructure (no push/tag made this session) — the exact runner label and LLVM path are the most likely things to need a small fix on the first real run |
+| 7 | Packaging (`install.ps1`, CI, release artifact) | ✅ done — `build-windows` is green on a real GitHub Actions run (`workflow_dispatch`, not a tag, so the actual `v0.1.0` release was untouched), producing a genuine, independently-built, working `shimback.exe`. Took 5 CI iterations to get there; see Phase 7's CI addendum for every real bug that surfaced only by actually running it |
 | 8 | Pester test suite | ⬜ not started as a formal suite (this session's verification was manual) |
+
+**Outstanding action item (not a phase)**: re-cut `v0.1.0` itself with
+Windows support included, per the user's explicit decision -- delete the
+existing `v0.1.0` release + tag (nobody has downloaded it; the repo isn't
+published/promoted yet, so this was judged safe), then push a fresh
+`v0.1.0` tag at the current `main` to trigger the real release. A
+`0.1.0-unix` tag already marks the last pre-Windows commit for the
+record. Low-risk now that `build-windows` is proven green via
+`workflow_dispatch` runs against this exact code.
 
 Build command and everything learned getting Phase 1 working: see Phase 1
 below. Phase 2's design decisions (Windows' fork/exec-failure collapsing,
@@ -62,13 +71,20 @@ copy-fallback warning (the user caught that `doctor fix`/`update` didn't
 have one, unlike `add`); `install.ps1` written and verified the same way
 `update` was (a real local fake release, this time served over an actual
 local HTTP server since `Invoke-WebRequest` doesn't support `file://`);
-the `.github/workflows/release.yml` `build-windows` job written (valid
-YAML/PowerShell, but **never actually run on GitHub's infrastructure** --
-see Phase 7's own note); and the README updated throughout. Next
-session: **Phase 7's one remaining gap** is triggering a real CI run to
-confirm `build-windows` actually works end-to-end (push a commit or tag,
-watch it, fix whatever the runner label/LLVM path guesses got wrong) --
-after that, Phase 7 is done and only Phase 8 (the Pester suite) is left.
+the `.github/workflows/release.yml` `build-windows` job written and then
+**actually proven green on real GitHub Actions runs** (5 iterations, 3
+real bugs found only by running it for real -- xwin's own cross-drive
+move, the same pwsh-argument-mangling bug local setup hit earlier, and
+xwin's splat layout having changed versions -- see Phase 7's CI
+addendum); and the README updated throughout. Also, per the user's
+explicit call: the whole port was committed and pushed to `main`, with a
+`0.1.0-unix` tag marking the last pre-Windows commit, since the plan is
+to re-cut `v0.1.0` itself (not ship Windows support as a point release)
+once everything's confirmed -- the old `v0.1.0` release/tag deletion and
+the real tag-triggered re-release are the one step still not done. Next
+session: **Phase 8** (the Pester suite) is the only phase left
+unstarted; the re-release itself is a quick, now low-risk finish-up
+whenever wanted.
 
 ---
 
@@ -1204,15 +1220,54 @@ against a real, locally-hosted fake release (not mocked).**
   (`tests/*.sh`) is POSIX-shell/symlink-based and would fail on
   assumptions this port doesn't share, not on anything actually broken --
   a Windows-native Pester suite is Phase 8, still not written, so the
-  smoke test is this job's real correctness gate for now. **Not
-  verified against a real GitHub Actions run** -- everything above was
-  checked as far as it's possible to from here (valid YAML, PowerShell
-  syntax parses clean, every tool/path referenced matches this session's
-  own confirmed-working local setup), but a workflow file can only be
-  fully validated by actually running it on GitHub's infrastructure,
-  which needs a real push/tag this session hasn't made. Treat the exact
-  runner label (`windows-2025`) and the assumed LLVM path as the two
-  most likely things to need a small adjustment on the first real run.
+  smoke test is this job's real correctness gate for now.
+
+  **Now verified against real GitHub Actions runs -- green, after 5
+  iterations, each one a real bug caught only by actually running it,**
+  triggered via `workflow_dispatch` each time (never a tag push, so the
+  real `v0.1.0` release stayed untouched throughout):
+  1. `xwin`'s own splat step failed with "The system cannot move the file
+     to a different disk drive" -- it moves files from its download cache
+     into the splat output as a fast path, and the checkout/work
+     directory on GitHub's windows runners lives on `D:\`, not `C:\` --
+     the exact `EXDEV`-class problem this whole port spent so much time
+     on elsewhere, this time hitting `xwin` itself. Fixed by splatting to
+     `D:\msvc-sysroot` instead of `C:\`.
+  2. Configure failed with "Could not find toolchain file:
+     cmake/windows-clang-cl" (the trailing `.cmake` silently gone) -- the
+     exact same pwsh command-line-argument-mangling bug hit during local
+     toolchain setup earlier this session (see the very top of this
+     document), now confirmed on the runner too, since `run:` steps there
+     default to `pwsh`. Fixed by quoting
+     `"-DCMAKE_TOOLCHAIN_FILE=cmake/windows-clang-cl.cmake"`.
+  3. Configure then failed the toolchain file's own "expected exactly one
+     MSVC version / one Windows Kit version" check, with 0 and 0 found. A
+     temporary debug step (listing the actual splatted directory tree)
+     showed why: the CI runner's `xwin` (installed fresh via
+     `cargo install xwin --locked`, so whatever's currently published) is
+     version 0.10.0, and its default splat layout has changed to a flat
+     `<root>/crt/{include,lib/<arch>}` +
+     `<root>/sdk/{include,lib}/{ucrt,um,shared}[/<arch>]` structure with
+     no version directory at all -- not the
+     `VC/Tools/MSVC/<ver>`/`Windows Kits/10/<ver>` layout this toolchain
+     file was written and tested against (and this project's own local
+     dev sysroot still uses). Fixed properly, not by picking one:
+     `cmake/windows-clang-cl.cmake` now detects which layout is actually
+     present (`if(EXISTS .../crt/include)`) and builds the right
+     include/lib dir list either way -- confirmed this doesn't regress
+     the local build with a full local reconfigure + rebuild + smoke test
+     against the existing (old-layout) local sysroot before pushing.
+  4. Green: `build-windows` passed every step (checkout through artifact
+     upload) end to end.
+  5. Downloaded the actual artifact `build-windows` produced on GitHub's
+     own infrastructure (not built locally at all), extracted it, and ran
+     it -- a genuine, independently-produced `shimback.exe` reporting
+     `shimback 0.1.0` correctly.
+
+  The runner label (`windows-2025`) and the LLVM path
+  (`C:\Program Files\LLVM\bin`) both turned out to be correct as guessed
+  -- worth noting since they were flagged as the most likely things to
+  need adjusting, and in the end neither did.
 - **README**: install one-liners (both forms), the Windows download row,
   a rewritten Platform support section (hard links vs. symlinks, the
   copy fallback, PowerShell/cmd.exe PATH integration, no man page, ARM64
