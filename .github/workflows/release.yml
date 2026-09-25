@@ -123,18 +123,6 @@ jobs:
       - name: Splat MSVC/Windows SDK sysroot
         run: xwin --accept-license splat --output D:\msvc-sysroot
 
-      # Temporary: the toolchain file expects exactly one version directory
-      # under VC\Tools\MSVC and one under 'Windows Kits\10\Include' (see
-      # cmake/windows-clang-cl.cmake), matching xwin's splat layout as
-      # tested locally -- but the Configure step below is failing that
-      # exact check on this runner, so print what xwin actually produced
-      # here before guessing why.
-      - name: Debug sysroot layout
-        shell: pwsh
-        run: |
-          xwin --version
-          Get-ChildItem D:\msvc-sysroot -Recurse -Depth 3 -Directory | ForEach-Object { $_.FullName }
-
       # clang-cl/lld-link ship as part of the LLVM install already present
       # on GitHub's windows-2025 runner image, at this same path used for
       # local development (see windows-port.md Phase 1) -- not installed
