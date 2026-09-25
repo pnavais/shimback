@@ -27,12 +27,13 @@ pair of commands.
 
 ## Installation
 
+**Linux / macOS / WSL:**
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/main/install.sh | sh
 ```
 
-On native Windows (PowerShell; Git-Bash/WSL users can use the line above
-instead):
+**PowerShell (Windows):**
 
 ```powershell
 irm https://raw.githubusercontent.com/pnavais/shimback/main/install.ps1 | iex
