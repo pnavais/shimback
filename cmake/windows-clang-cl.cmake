@@ -76,35 +76,60 @@ if(NOT DEFINED SHIMBACK_MSVC_SYSROOT)
   endif()
 endif()
 
-# Sysroot layout, one splat per architecture (see windows-port.md Phase 1):
-#   <sysroot>/VC/Tools/MSVC/<ver>/{include,lib/<arch>}
-#   <sysroot>/Windows Kits/10/{Include,Lib}/<winkit-ver>/{ucrt,um,shared}[/<arch>]
-file(GLOB SHIMBACK_MSVC_VER_DIRS LIST_DIRECTORIES true "${SHIMBACK_MSVC_SYSROOT}/VC/Tools/MSVC/*")
-file(GLOB SHIMBACK_WINKIT_VER_DIRS LIST_DIRECTORIES true "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Include/*")
-list(LENGTH SHIMBACK_MSVC_VER_DIRS SHIMBACK_MSVC_VER_COUNT)
-list(LENGTH SHIMBACK_WINKIT_VER_DIRS SHIMBACK_WINKIT_VER_COUNT)
-if(NOT SHIMBACK_MSVC_VER_COUNT EQUAL 1 OR NOT SHIMBACK_WINKIT_VER_COUNT EQUAL 1)
-  message(FATAL_ERROR
-    "Expected exactly one MSVC version under '${SHIMBACK_MSVC_SYSROOT}/VC/Tools/MSVC' and "
-    "one Windows Kit version under '${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Include' -- "
-    "found ${SHIMBACK_MSVC_VER_COUNT} and ${SHIMBACK_WINKIT_VER_COUNT}. Re-splat the sysroot "
-    "with xwin if it has stale/multiple versions mixed in.")
-endif()
-list(GET SHIMBACK_MSVC_VER_DIRS 0 SHIMBACK_MSVC_VER_DIR)
-list(GET SHIMBACK_WINKIT_VER_DIRS 0 SHIMBACK_WINKIT_VER_DIR)
-get_filename_component(SHIMBACK_WINKIT_VER "${SHIMBACK_WINKIT_VER_DIR}" NAME)
+# Sysroot layout, one splat per architecture (see windows-port.md Phase 1)
+# -- xwin's own splat layout has changed across versions, confirmed by
+# hitting both in practice, so both are supported here:
+#   New (xwin >= 0.10, confirmed via a real GitHub Actions windows-2025
+#   run -- see windows-port.md Phase 7's CI addendum): flat, no version
+#   directory at all:
+#     <sysroot>/crt/{include,lib/<arch>}
+#     <sysroot>/sdk/{include,lib}/{ucrt,um,shared}[/<arch>]
+#   Old (whatever xwin version produced this project's original local dev
+#   sysroot, mimicking the official installer's own layout with a version
+#   directory):
+#     <sysroot>/VC/Tools/MSVC/<ver>/{include,lib/<arch>}
+#     <sysroot>/Windows Kits/10/{Include,Lib}/<winkit-ver>/{ucrt,um,shared}[/<arch>]
+if(EXISTS "${SHIMBACK_MSVC_SYSROOT}/crt/include")
+  set(SHIMBACK_WIN_INCLUDE_DIRS
+    "${SHIMBACK_MSVC_SYSROOT}/crt/include"
+    "${SHIMBACK_MSVC_SYSROOT}/sdk/include/ucrt"
+    "${SHIMBACK_MSVC_SYSROOT}/sdk/include/um"
+    "${SHIMBACK_MSVC_SYSROOT}/sdk/include/shared"
+    CACHE INTERNAL "")
+  set(SHIMBACK_WIN_LIB_DIRS
+    "${SHIMBACK_MSVC_SYSROOT}/crt/lib/${SHIMBACK_WIN_ARCH}"
+    "${SHIMBACK_MSVC_SYSROOT}/sdk/lib/ucrt/${SHIMBACK_WIN_ARCH}"
+    "${SHIMBACK_MSVC_SYSROOT}/sdk/lib/um/${SHIMBACK_WIN_ARCH}"
+    CACHE INTERNAL "")
+else()
+  file(GLOB SHIMBACK_MSVC_VER_DIRS LIST_DIRECTORIES true "${SHIMBACK_MSVC_SYSROOT}/VC/Tools/MSVC/*")
+  file(GLOB SHIMBACK_WINKIT_VER_DIRS LIST_DIRECTORIES true "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Include/*")
+  list(LENGTH SHIMBACK_MSVC_VER_DIRS SHIMBACK_MSVC_VER_COUNT)
+  list(LENGTH SHIMBACK_WINKIT_VER_DIRS SHIMBACK_WINKIT_VER_COUNT)
+  if(NOT SHIMBACK_MSVC_VER_COUNT EQUAL 1 OR NOT SHIMBACK_WINKIT_VER_COUNT EQUAL 1)
+    message(FATAL_ERROR
+      "Expected either the new xwin layout ('${SHIMBACK_MSVC_SYSROOT}/crt/include') or "
+      "exactly one MSVC version under '${SHIMBACK_MSVC_SYSROOT}/VC/Tools/MSVC' and one "
+      "Windows Kit version under '${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Include' -- "
+      "found neither the former nor (${SHIMBACK_MSVC_VER_COUNT}, ${SHIMBACK_WINKIT_VER_COUNT}) "
+      "of the latter. Re-splat the sysroot with xwin if it has stale/multiple versions mixed in.")
+  endif()
+  list(GET SHIMBACK_MSVC_VER_DIRS 0 SHIMBACK_MSVC_VER_DIR)
+  list(GET SHIMBACK_WINKIT_VER_DIRS 0 SHIMBACK_WINKIT_VER_DIR)
+  get_filename_component(SHIMBACK_WINKIT_VER "${SHIMBACK_WINKIT_VER_DIR}" NAME)
 
-set(SHIMBACK_WIN_INCLUDE_DIRS
-  "${SHIMBACK_MSVC_VER_DIR}/include"
-  "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Include/${SHIMBACK_WINKIT_VER}/ucrt"
-  "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Include/${SHIMBACK_WINKIT_VER}/um"
-  "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Include/${SHIMBACK_WINKIT_VER}/shared"
-  CACHE INTERNAL "")
-set(SHIMBACK_WIN_LIB_DIRS
-  "${SHIMBACK_MSVC_VER_DIR}/lib/${SHIMBACK_WIN_ARCH}"
-  "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Lib/${SHIMBACK_WINKIT_VER}/ucrt/${SHIMBACK_WIN_ARCH}"
-  "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Lib/${SHIMBACK_WINKIT_VER}/um/${SHIMBACK_WIN_ARCH}"
-  CACHE INTERNAL "")
+  set(SHIMBACK_WIN_INCLUDE_DIRS
+    "${SHIMBACK_MSVC_VER_DIR}/include"
+    "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Include/${SHIMBACK_WINKIT_VER}/ucrt"
+    "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Include/${SHIMBACK_WINKIT_VER}/um"
+    "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Include/${SHIMBACK_WINKIT_VER}/shared"
+    CACHE INTERNAL "")
+  set(SHIMBACK_WIN_LIB_DIRS
+    "${SHIMBACK_MSVC_VER_DIR}/lib/${SHIMBACK_WIN_ARCH}"
+    "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Lib/${SHIMBACK_WINKIT_VER}/ucrt/${SHIMBACK_WIN_ARCH}"
+    "${SHIMBACK_MSVC_SYSROOT}/Windows Kits/10/Lib/${SHIMBACK_WINKIT_VER}/um/${SHIMBACK_WIN_ARCH}"
+    CACHE INTERNAL "")
+endif()
 
 # -imsvc, not /I: marks these as *system* headers, which makes clang
 # exempt them from diagnostics entirely (unlike /I, which puts them on
