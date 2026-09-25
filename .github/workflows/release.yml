@@ -126,9 +126,14 @@ jobs:
       # clang-cl/lld-link ship as part of the LLVM install already present
       # on GitHub's windows-2025 runner image, at this same path used for
       # local development (see windows-port.md Phase 1) -- not installed
-      # separately here.
+      # separately here. CMAKE_TOOLCHAIN_FILE is quoted -- confirmed the
+      # hard way, both here and earlier during local setup, that pwsh (the
+      # default shell for `run:` steps on this runner) mangles an unquoted
+      # `cmake/windows-clang-cl.cmake` value, which CMake then reports as
+      # "Could not find toolchain file: cmake/windows-clang-cl" (the
+      # trailing ".cmake" silently dropped).
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/windows-clang-cl.cmake -DSHIMBACK_LLVM_BIN="C:\Program Files\LLVM\bin" -DSHIMBACK_MSVC_SYSROOT="D:\msvc-sysroot"
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_TOOLCHAIN_FILE=cmake/windows-clang-cl.cmake" -DSHIMBACK_LLVM_BIN="C:\Program Files\LLVM\bin" -DSHIMBACK_MSVC_SYSROOT="D:\msvc-sysroot"
 
       - name: Build
         run: cmake --build build --config Release
