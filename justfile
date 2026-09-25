@@ -1,3 +1,5 @@
+set windows-shell := ["cmd.exe", "/c"]
+
 arch := arch()
 os := os()
 build_dir := "build-" + os + "-" + arch
@@ -23,7 +25,7 @@ install prefix="/usr/local": build
 
 # Remove build output for the current OS/arch
 clean:
-    rm -rf {{build_dir}}
+    cmake -E rm -rf {{build_dir}}
 
 # Remove build output for every OS/arch
 clean-all:

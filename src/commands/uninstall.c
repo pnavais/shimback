@@ -3,7 +3,6 @@
  * this is a standard, deliberate simplification for one-shot CLI tools. */
 #include "commands.h"
 
-#include <dirent.h>
 #include <errno.h>
 #include <getopt.h>
 #include <stdio.h>
@@ -15,6 +14,7 @@
 #include "../config.h"
 #include "../installation.h"
 #include "../paths.h"
+#include "../platform/platform.h"
 #include "../shell.h"
 #include "../util.h"
 
@@ -74,8 +74,8 @@ static bool looks_like_shimback_man_page(const char *path) {
  * including ones that only ever existed via a split file with no
  * config.toml entry at all. */
 static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
-    DIR *d = opendir(shim_dir);
-    if (!d) {
+    char **entries = plat_list_dir(shim_dir);
+    if (!entries) {
         return 0;
     }
 
@@ -95,14 +95,33 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
     }
 
     int count = 0;
-    struct dirent *ent;
-    while ((ent = readdir(d)) != NULL) {
-        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
-            continue;
+    for (char **e = entries; *e; e++) {
+        char *entry_path = path_join(shim_dir, *e);
+#ifdef _WIN32
+        /* No "dangling" concept for a hard link (see windows-port.md
+         * Phase 3 -- as long as this entry's own link exists, its file
+         * data is alive regardless of self_exe's own path) -- an entry is
+         * either recognizably ours or it isn't, nothing in between. Not
+         * warning about a non-matching entry here (unlike the POSIX
+         * branch below) is deliberate, not an oversight: every entry in
+         * this directory gets marker-scanned to find out, including
+         * incidental ones like the lock file, and warning about each
+         * would be noise, not signal -- a foreign *symlink* placed here
+         * is a meaningful, rare thing worth flagging on POSIX; a plain
+         * file that simply isn't shimback's is unremarkable on Windows,
+         * since that's what everything non-shim here always looks like. */
+        if (looks_like_shimback_binary(entry_path)) {
+            if (unlink(entry_path) == 0) {
+                count++;
+                if (removed_names) {
+                    strvec_push(removed_names, xstrdup(*e));
+                }
+            } else {
+                warn("uninstall: failed to remove %s: %s", entry_path, strerror(errno));
+            }
         }
-        char *entry_path = path_join(shim_dir, ent->d_name);
-        struct stat lst;
-        if (lstat(entry_path, &lst) == 0 && S_ISLNK(lst.st_mode)) {
+#else
+        if (plat_path_is_symlink(entry_path)) {
             char *resolved = canonicalize(entry_path);
             bool dangling = resolved == NULL;
             bool ours = resolved && looks_like_shimback_binary(resolved);
@@ -111,7 +130,7 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
                 if (unlink(entry_path) == 0) {
                     count++;
                     if (removed_names) {
-                        strvec_push(removed_names, xstrdup(ent->d_name));
+                        strvec_push(removed_names, xstrdup(*e));
                     }
                 } else {
                     warn("uninstall: failed to remove %s: %s", entry_path, strerror(errno));
@@ -121,9 +140,10 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
                      entry_path);
             }
         }
+#endif
         free(entry_path);
     }
-    closedir(d);
+    plat_free_dir_entries(entries);
     shim_dir_lock_release(shim_lock_fd);
 
     /* flock() locks the *inode*, not the path: releasing above and then
@@ -190,10 +210,11 @@ static void remove_config(void) {
 /* Whether any shell has a shimback PATH block right now (current or legacy
  * tag) -- so uninstall only reports removing one when there was one. */
 static bool path_block_present(void) {
-    ShellKind kinds[] = {SHELL_ZSH, SHELL_BASH, SHELL_FISH};
+    ShellKind kinds[3];
+    size_t kind_count = shell_all_kinds(kinds);
     StrVec dirs;
     strvec_init(&dirs);
-    for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+    for (size_t i = 0; i < kind_count; i++) {
         shell_read_block_dirs(kinds[i], SHIM_DIR_TAG, &dirs);
         shell_read_block_dirs(kinds[i], LEGACY_INSTALL_TAG, &dirs);
     }
@@ -210,8 +231,9 @@ static void remove_path_blocks(void) {
      * PATH), and shell_remove_path_tagged already treats "no such block"
      * as a harmless no-op -- so skipping a kind here only risks leaving a
      * real block behind, never saves useful work. */
-    ShellKind kinds[] = {SHELL_ZSH, SHELL_BASH, SHELL_FISH};
-    for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+    ShellKind kinds[3];
+    size_t kind_count = shell_all_kinds(kinds);
+    for (size_t i = 0; i < kind_count; i++) {
         shell_remove_path_tagged(kinds[i], SHIM_DIR_TAG);
         shell_remove_path_tagged(kinds[i], LEGACY_INSTALL_TAG);
     }
@@ -317,7 +339,9 @@ int cmd_uninstall(int argc, char **argv) {
     }
 
     for (size_t i = 0; i < prefixes.count; i++) {
-        char *bin_dest = path_join(path_join(prefixes.items[i], "bin"), "shimback");
+        char *dest_filename = shimback_exe_name();
+        char *bin_dest = path_join(path_join(prefixes.items[i], "bin"), dest_filename);
+        free(dest_filename);
         remove_file_if_present(bin_dest, "installed binary", looks_like_shimback_binary);
         free(bin_dest);
 

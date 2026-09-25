@@ -17,9 +17,10 @@ int cmd_init(int argc, char **argv) {
         die("init: failed to create shim directory %s", shim_dir);
     }
 
-    ShellKind kinds[] = {SHELL_ZSH, SHELL_BASH, SHELL_FISH};
+    ShellKind kinds[3];
+    size_t kind_count = shell_all_kinds(kinds);
     bool any_installed = false;
-    for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+    for (size_t i = 0; i < kind_count; i++) {
         if (shell_is_installed(kinds[i])) {
             any_installed = true;
             printf("Detected %s\n", shell_kind_name(kinds[i]));

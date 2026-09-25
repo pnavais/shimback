@@ -86,8 +86,95 @@ jobs:
           name: shimback-${{ matrix.os_name }}-${{ matrix.arch }}
           path: shimback-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz
 
+  # Windows x86_64 (ARM64 deferred -- see windows-port.md's "Resolved
+  # decisions"). A separate job rather than another matrix leg on `build`
+  # above: every step here needs its own PowerShell/toolchain/packaging
+  # logic, not just a different shell for the same commands, so folding it
+  # into the shared macOS/Linux step list via `if: runner.os == 'Windows'`
+  # on each one would be messier than just keeping it apart.
+  build-windows:
+    runs-on: windows-2025
+    name: build (windows-x86_64)
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Ninja
+        run: choco install ninja --no-progress -y
+
+      # xwin (https://github.com/Jake-Shadle/xwin) splats an MSVC/Windows
+      # SDK sysroot without a full Visual Studio install -- see
+      # windows-port.md's Phase 1 for why this project builds with
+      # clang-cl/lld-link against a splatted sysroot rather than MSVC's
+      # own cl.exe/link.exe directly. `cargo install` rather than pinning
+      # a prebuilt-binary download URL: Rust/cargo already ships on
+      # GitHub's windows runners, and this avoids a release-asset URL
+      # that could silently break if xwin's own artifact naming changes.
+      - name: Install xwin
+        run: cargo install xwin --locked
+
+      - name: Splat MSVC/Windows SDK sysroot
+        run: xwin --accept-license splat --output C:\msvc-sysroot
+
+      # clang-cl/lld-link ship as part of the LLVM install already present
+      # on GitHub's windows-2025 runner image, at this same path used for
+      # local development (see windows-port.md Phase 1) -- not installed
+      # separately here.
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/windows-clang-cl.cmake -DSHIMBACK_LLVM_BIN="C:\Program Files\LLVM\bin" -DSHIMBACK_MSVC_SYSROOT="C:\msvc-sysroot"
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      # No `ctest` step here: the existing test suite (tests/*.sh) is
+      # entirely POSIX-shell/symlink-based, predating this port, and a
+      # Windows-native equivalent (Pester, per windows-port.md Phase 8) is
+      # still owed, not yet written -- running the POSIX suite as-is here
+      # would fail on assumptions (symlinks, `.exe`-less names) this port
+      # deliberately doesn't share, not on anything actually broken. The
+      # smoke test below is this job's real correctness gate for now.
+      - name: Package
+        shell: pwsh
+        run: |
+          $pkgDir = "shimback-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
+          Copy-Item build\shimback.exe $pkgDir\
+          Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE $pkgDir\
+          Compress-Archive -Path $pkgDir -DestinationPath "$pkgDir.zip" -Force
+
+      # Mirrors the macOS/Linux smoke test above (re-derive everything
+      # from the packaged archive itself, on the same runner, rather than
+      # trusting the in-tree build dir): no man page (Windows builds don't
+      # ship one, see windows-port.md Phase 7), `.exe`-suffixed binary,
+      # and install.ps1's own expected archive layout
+      # (shimback-windows-x86_64\shimback.exe) checked directly.
+      - name: Smoke-test the packaged archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pkgDir = "shimback-windows-x86_64"
+          $smokeDir = Join-Path $env:TEMP ("shimback-smoke." + [System.IO.Path]::GetRandomFileName())
+          Expand-Archive -LiteralPath "$pkgDir.zip" -DestinationPath $smokeDir
+          $extracted = Join-Path $smokeDir $pkgDir
+
+          if (-not (Test-Path "$extracted\shimback.exe")) { Write-Error "missing shimback.exe in the packaged archive"; exit 1 }
+          if (-not (Test-Path "$extracted\README.md")) { Write-Error "missing README.md in the packaged archive"; exit 1 }
+
+          $versionOut = & "$extracted\shimback.exe" --version
+          if ($versionOut -notmatch "^shimback ") { Write-Error "packaged binary's --version output looks wrong: $versionOut"; exit 1 }
+          Write-Host "packaged binary reports: $versionOut"
+
+          $installPrefix = Join-Path $env:TEMP ("shimback-install-smoke." + [System.IO.Path]::GetRandomFileName())
+          & "$extracted\shimback.exe" install --prefix $installPrefix
+          if (-not (Test-Path "$installPrefix\bin\shimback.exe")) { Write-Error "install did not place a binary at <prefix>\bin\shimback.exe"; exit 1 }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shimback-windows-x86_64
+          path: shimback-windows-x86_64.zip
+
   release:
-    needs: build
+    needs: [build, build-windows]
     runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -100,12 +187,12 @@ jobs:
 
       - name: Generate checksums
         working-directory: artifacts
-        run: shasum -a 256 *.tar.gz > SHA256SUMS
+        run: shasum -a 256 *.tar.gz *.zip > SHA256SUMS
 
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            artifacts/*.tar.gz artifacts/SHA256SUMS man/shimback.1 \
+            artifacts/*.tar.gz artifacts/*.zip artifacts/SHA256SUMS man/shimback.1 \
             --generate-notes

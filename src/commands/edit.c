@@ -16,6 +16,12 @@
 #include "../suggest.h"
 #include "../util.h"
 
+/* Declared in platform/platform_posix.c, not util.h -- see that
+ * declaration's own comment for why. This whole file is POSIX-only for now
+ * (wordexp() has no Windows equivalent -- see windows-port.md), so a POSIX-
+ * only symbol here is consistent, not a workaround. */
+pid_t xwaitpid(pid_t pid, int *status);
+
 /* Tried in order when $EDITOR is unset or empty. */
 static const char *const FALLBACK_EDITORS[] = {"nvim", "vim", "vi", "nano", "pico"};
 

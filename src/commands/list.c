@@ -238,7 +238,9 @@ int cmd_list(int argc, char **argv) {
     printf("\n");
 
     for (size_t i = 0; i < name_count; i++) {
-        char *symlink_path = path_join(shim_dir, names[i]);
+        char *shim_file = shim_file_name(names[i]);
+        char *symlink_path = path_join(shim_dir, shim_file);
+        free(shim_file);
 
         if (sources[i] == SHIM_SOURCE_ORPHAN) {
             print_orphan_row(names[i], name_w, colorize);

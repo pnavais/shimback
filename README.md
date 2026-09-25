@@ -31,15 +31,30 @@ pair of commands.
 curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/main/install.sh | sh
 ```
 
+On native Windows (PowerShell; Git-Bash/WSL users can use the line above
+instead):
+
+```powershell
+irm https://raw.githubusercontent.com/pnavais/shimback/main/install.ps1 | iex
+```
+
 Downloads the right prebuilt binary for your machine from the
 [latest release](https://github.com/pnavais/shimback/releases/latest) and
 hands it to `shimback install` (see [`install`](#install), below), which
 copies itself to a stable location, sets up `PATH`, and installs the man
-page. Extra arguments are forwarded as-is, e.g. to pick a prefix:
+page (Windows: no man page, see [Platform support](#platform-support)).
+Extra arguments are forwarded as-is, e.g. to pick a prefix:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/main/install.sh | sh -s -- --prefix ~/.local
 ```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/pnavais/shimback/main/install.ps1))) --prefix C:\tools
+```
+
+(PowerShell's `iex` alone can't forward arguments to a piped script the
+way `sh -s --` can — the `scriptblock`/`&` form above is the equivalent.)
 
 If shimback is already installed, that command changes nothing (`install`
 allows a single installation) — upgrade with [`shimback update`](#update).
@@ -53,11 +68,14 @@ Or download a prebuilt binary directly from the
 | macOS (Intel) | [shimback-macos-x86_64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-macos-x86_64.tar.gz) |
 | Linux (x86_64) | [shimback-linux-x86_64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-linux-x86_64.tar.gz) |
 | Linux (arm64) | [shimback-linux-arm64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-linux-arm64.tar.gz) |
+| Windows (x86_64) | [shimback-windows-x86_64.zip](https://github.com/pnavais/shimback/releases/latest/download/shimback-windows-x86_64.zip) |
 
-Each archive contains the `shimback` binary, the man page, the license
-files, and this README. Extract it and either run `./shimback install`
-(same as the curl one-liner above) or place the binary wherever you like on
-`PATH` yourself — see [Building](#building) for the caveat on doing that
+Each archive contains the `shimback` binary, the license files, and this
+README (macOS/Linux also get the man page; Windows doesn't ship one, see
+[Platform support](#platform-support)). Extract it and either run
+`./shimback install` (`.\shimback.exe install` on Windows — same as the
+one-liners above) or place the binary wherever you like on `PATH`
+yourself — see [Building](#building) for the caveat on doing that
 manually. Building from source works the same way on any other platform;
 see [Building](#building) below.
 
@@ -631,6 +649,7 @@ never checks GitHub for a newer release — that's `update`.
 ```sh
 shimback update
 shimback update --check
+shimback update -y   # or --yes: don't prompt (see below)
 ```
 
 Replaces the installed `shimback` with the latest GitHub release. It finds
@@ -638,15 +657,27 @@ the installation from the `PATH` block (so it needs a prior `install`),
 downloads this platform's release archive and its `SHA256SUMS`, verifies the
 archive's SHA-256 against it (refusing anything unverifiable or mismatched,
 and never touching the installed binary in that case), then swaps in the new
-binary — atomically, at the same path, so every shim symlink keeps working —
-and refreshes the man page alongside it. It compares the *contents* of the
-downloaded binary with the installed one rather than version numbers, so a
-re-tagged release is picked up too, and an identical one reports "already up
-to date". `--check` only reports whether an update is available.
+binary — atomically, at the same path — and refreshes the man page alongside
+it (Windows: no man page, see [Platform support](#platform-support)). It
+compares the *contents* of the downloaded binary with the installed one
+rather than version numbers, so a re-tagged release is picked up too, and an
+identical one reports "already up to date". `--check` only reports whether
+an update is available.
 
-Like `install`'s man page fallback, this shells out to `curl` (and `tar`) —
-a dependency-free C binary can't do HTTPS itself. The checksum is computed
-natively, so `shasum`/`sha256sum` aren't needed.
+On macOS/Linux every shim symlink keeps working automatically, since a
+symlink always resolves to whatever's at the target path *now*. On Windows,
+a shim can be left pointing at the *old* binary (a hard link survives the
+swap, or the shim is a plain copy to begin with — see [`add`](#add)):
+`update` detects this by comparing each shim's own contents against the
+newly installed binary, lists any that are now stale, and offers to refresh
+them (recreating each one the same way `add` would, hard link first, falling
+back to a copy). `-y`/`--yes` skips that prompt — for unattended/scripted
+runs, same as `doctor fix -y`.
+
+Like `install`'s man page fallback, this shells out to `curl` (and, on
+macOS/Linux, `tar`; Windows uses PowerShell's `Expand-Archive` instead,
+already built in) — a dependency-free C binary can't do HTTPS itself. The
+checksum is computed natively, so `shasum`/`sha256sum` aren't needed.
 
 **Trust model.** The default location is GitHub's `latest/download` URL,
 fetched with `curl` restricted to HTTPS (including through redirects), so the
@@ -1081,6 +1112,13 @@ or run shims (`curl`/`tar` are only ever shelled out to by `update`, and by `ins
 fallback when it can't find a man page bundled next to itself — see
 `install` and `update` above).
 
+On Windows, building from source needs clang-cl/lld-link and an
+MSVC/Windows SDK sysroot (via [`xwin`](https://github.com/Jake-Shadle/xwin),
+no full Visual Studio install required) rather than "any C11 compiler" —
+see [`windows-port.md`](windows-port.md)'s Phase 1 for the exact toolchain
+setup and `cmake/windows-clang-cl.cmake` for the toolchain file itself.
+The prebuilt release binary (above) doesn't need any of this.
+
 With [`just`](https://github.com/casey/just) installed, `just build`
 autodetects your OS/arch and builds into `build-<os>-<arch>/`:
 
@@ -1109,9 +1147,16 @@ also installs [`man/shimback.1`](man/shimback.1) to `<prefix>/share/man/man1`).
 
 ## Platform support
 
-macOS and Linux (x86_64 and arm64) for v0.1.0. Windows is a long-term goal
-but isn't supported yet — the current implementation relies on POSIX
-symlinks, `fork`/`exec`, and Unix-style shell startup files throughout.
+macOS and Linux (x86_64 and arm64), and Windows (x86_64) for v0.1.0.
+Windows shims are hard links rather than symlinks (falling back to a
+plain copy when that's not possible, e.g. across drives — see
+[`add`](#add)), PATH integration covers PowerShell and cmd.exe, the
+interactive add wizard uses the native console API, and no man page ships
+there (`shimback --help`/`doctor` output is the fallback, same as
+everywhere else this project treats `--help` as authoritative) — see
+[`windows-port.md`](windows-port.md) for the full story, including a few
+genuine Windows-specific quirks found and fixed along the way. Windows
+ARM64 isn't built yet.
 
 ## License
 

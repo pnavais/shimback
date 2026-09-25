@@ -13,6 +13,7 @@
 
 #include "../config.h"
 #include "../paths.h"
+#include "../platform/platform.h"
 #include "../suggest.h"
 #include "../util.h"
 
@@ -281,6 +282,37 @@ static void print_symlink(const char *link_path, const char *self_exe) {
     label("symlink");
     pf(M_GREEN "%s" M_RESET, link_path);
 
+#ifdef _WIN32
+    /* A Windows shim is a hard link, not a symlink -- there's no separate
+     * "raw unresolved target" to read at all (unlike a symlink, a hard
+     * link just *is* the same file, so "dead"/"missing" as concepts don't
+     * carry over the same way either -- see windows-port.md Phase 3).
+     * looks_like_shimback_binary() (which already checks
+     * is_executable_file internally) is both the existence and validity
+     * check in one, mirroring check_symlink's identical Windows branch in
+     * doctor.c. */
+    if (access(link_path, F_OK) != 0) {
+        pf("  " TAG_FAIL " " M_RED "missing" M_RESET " " M_DIM
+           "-- `shimback doctor fix` recreates it" M_RESET "\n");
+        issue();
+        return;
+    }
+    if (!looks_like_shimback_binary(link_path)) {
+        pf("  " TAG_FAIL " " M_RED "exists but doesn't look like a shimback binary" M_RESET "\n");
+        issue();
+        return;
+    }
+    /* Unlike the POSIX branch, this doesn't distinguish "this exact
+     * binary" from "a different shimback binary" -- doing that properly
+     * needs a file-identity comparison (same volume + file index), not a
+     * path-string one (canonicalize() on a hard link can legitimately
+     * return any one of its several linked names, not necessarily
+     * self_exe's own), and that's more machinery than this cosmetic
+     * distinction is worth right now. */
+    pf("  " TAG_OK "\n");
+    label("");
+    pf(M_DIM "(hard link to a shimback binary)" M_RESET "\n");
+#else
     struct stat lst;
     if (lstat(link_path, &lst) != 0) {
         pf("  " TAG_FAIL " " M_RED "missing" M_RESET " " M_DIM
@@ -320,6 +352,7 @@ static void print_symlink(const char *link_path, const char *self_exe) {
         issue();
     }
     free(target);
+#endif
 }
 
 /* The first executable `name` on $PATH, exactly as the shell would find it
@@ -334,7 +367,8 @@ static char *first_on_path(const char *name) {
     char *copy = xstrdup(path_env);
     char *result = NULL;
     char *save = NULL;
-    for (char *dir = strtok_r(copy, ":", &save); dir && !result; dir = strtok_r(NULL, ":", &save)) {
+    for (char *dir = strtok_r(copy, PLAT_PATH_LIST_SEP, &save); dir && !result;
+         dir = strtok_r(NULL, PLAT_PATH_LIST_SEP, &save)) {
         char *candidate = path_join(dir, name);
         if (is_executable_file(candidate)) {
             result = candidate;
@@ -437,7 +471,9 @@ static void print_overview(const View *v) {
 static void print_locations(const View *v, ShimSource src, const char *split_path,
                             bool shadowed_entry, const char *cfg_path, const char *shim_dir) {
     section("Locations");
-    char *link_path = path_join(shim_dir, v->name);
+    char *shim_file = shim_file_name(v->name);
+    char *link_path = path_join(shim_dir, shim_file);
+    free(shim_file);
     print_symlink(link_path, v->self_exe);
     print_path_resolution(v->name, shim_dir);
 
@@ -669,12 +705,20 @@ static size_t max_len(const char *const *strs, size_t n) {
 }
 
 static void flow_head(const View *v, const char *shim_dir, const char *policy) {
-    char *link_path = path_join(shim_dir, v->name);
+    char *shim_file = shim_file_name(v->name);
+    char *link_path = path_join(shim_dir, shim_file);
+    free(shim_file);
     pf("  " M_DIM "$" M_RESET " " M_CYAN "%s" M_RESET " " M_DIM "<args>" M_RESET "\n", v->name);
     pf(RAIL "\n");
+#ifdef _WIN32
+    pf(RAIL "  " M_DIM "the shell finds the shim's hard link first on $PATH" M_RESET "\n");
+    pf("    " M_DIM "v" M_RESET "\n");
+    pf("  " M_GREEN "%s" M_RESET " " M_DIM "(hard link)" M_RESET "\n", link_path);
+#else
     pf(RAIL "  " M_DIM "the shell finds the shim's symlink first on $PATH" M_RESET "\n");
     pf("    " M_DIM "v" M_RESET "\n");
     pf("  " M_GREEN "%s" M_RESET " " M_DIM "(symlink)" M_RESET "\n", link_path);
+#endif
     pf(RAIL "\n");
     pf(RAIL "  " M_DIM "which is just shimback, started under the name '%s'" M_RESET "\n",
        v->name);
@@ -889,7 +933,9 @@ int cmd_info(int argc, char **argv) {
 
     char *shim_dir = shim_bin_dir();
     char *self_exe = self_exe_path();
-    char *link_path = path_join(shim_dir, name);
+    char *shim_file = shim_file_name(name);
+    char *link_path = path_join(shim_dir, shim_file);
+    free(shim_file);
 
     ShimEntry *entry = NULL;
     char *split_path = NULL;
@@ -898,8 +944,7 @@ int cmd_info(int argc, char **argv) {
     g_colorize = stdout_is_color();
 
     if (src == SHIM_SOURCE_ORPHAN) {
-        struct stat lst;
-        if (lstat(link_path, &lst) != 0) {
+        if (access(link_path, F_OK) != 0) {
             fprintf(stderr, "shimback: info: no shim configured for '%s'\n", name);
             size_t count = 0;
             char **names = collect_all_shim_names(&cfg, &count);

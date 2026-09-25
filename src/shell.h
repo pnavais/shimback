@@ -9,21 +9,36 @@ typedef enum {
     SHELL_ZSH,
     SHELL_BASH,
     SHELL_FISH,
+    SHELL_POWERSHELL,
+    SHELL_CMD,
     SHELL_UNKNOWN,
 } ShellKind;
 
-/* Detects the current shell from $SHELL's basename. */
+/* Detects the current shell (POSIX: from $SHELL's basename; Windows: from
+ * the immediate parent process's image name -- powershell.exe/pwsh.exe ->
+ * SHELL_POWERSHELL, cmd.exe -> SHELL_CMD, anything else -> SHELL_UNKNOWN,
+ * since Windows has no $SHELL-style env var). */
 ShellKind detect_current_shell(void);
 
 /* Whether `kind`'s binary is reachable on PATH (used by `init` to decide
- * which shells to configure). Meaningless for SHELL_UNKNOWN. */
+ * which shells to configure). Meaningless for SHELL_UNKNOWN. For
+ * SHELL_POWERSHELL, true if either edition (`pwsh` or `powershell`) is
+ * found. */
 bool shell_is_installed(ShellKind kind);
 
 const char *shell_kind_name(ShellKind kind);
 
-/* Parses "zsh"/"bash"/"fish" (case-sensitive, matching shell_kind_name's
- * output) into *out. Returns false, leaving *out untouched, for anything
- * else -- including "unknown", which is not a user-facing shell name. */
+/* Every shell kind this platform can configure (POSIX: zsh, bash, fish;
+ * Windows: PowerShell, cmd), for callers that want to sweep all of them
+ * (install --all, init, uninstall, find_installations) without duplicating
+ * the platform split themselves. Fills `out` (must have room for at least
+ * 3 entries) and returns the count actually written. */
+size_t shell_all_kinds(ShellKind *out);
+
+/* Parses "zsh"/"bash"/"fish"/"powershell"/"cmd" (case-sensitive, matching
+ * shell_kind_name's output) into *out. Returns false, leaving *out
+ * untouched, for anything else -- including "unknown", which is not a
+ * user-facing shell name. */
 bool shell_kind_from_name(const char *name, ShellKind *out);
 
 /* Ensures `dir` is prepended to PATH for `kind`. For SHELL_ZSH/SHELL_BASH,
@@ -35,14 +50,26 @@ bool shell_kind_from_name(const char *name, ShellKind *out);
  * single block instead of one per caller. For SHELL_FISH, via a dedicated
  * `tag`.fish snippet dropped into fish's conf.d (auto-sourced at startup,
  * so no markers needed -- shimback owns the whole file), unioned the same
- * way. For SHELL_UNKNOWN, prints the line to add manually and touches
- * nothing (always -- that message is the only way the user finds out, so
- * it ignores `verbose`). Returns false only on an actual I/O failure while
+ * way. For SHELL_POWERSHELL, via the same idempotent marker-block strategy
+ * injected into $PROFILE.CurrentUserAllHosts for every installed edition
+ * (Windows PowerShell and/or PowerShell 7+, whichever are found on PATH --
+ * both get it if both are installed, so it works regardless of which one
+ * ends up running). For SHELL_CMD, via the same marker-block strategy
+ * (using `rem` instead of `#`, cmd.exe's own comment syntax) merged into
+ * the HKCU\Software\Microsoft\Command Processor\AutoRun registry string.
+ * SHELL_POWERSHELL/SHELL_CMD also persist `dir` into HKCU\Environment\Path
+ * as a fallback layer for contexts that don't load a profile/AutoRun (see
+ * platform.h's plat_win_userenv_path_add) -- necessary for reachability
+ * there, but not by itself sufficient for first-in-PATH ordering, which
+ * the profile/AutoRun injection is what actually delivers. For
+ * SHELL_UNKNOWN, prints the line to add manually and touches nothing
+ * (always -- that message is the only way the user finds out, so it
+ * ignores `verbose`). Returns false only on an actual I/O failure while
  * writing.
  *
  * `verbose` gates only the informational "PATH updated in <file>" line
- * printed on success for SHELL_ZSH/SHELL_BASH/SHELL_FISH -- a failure still
- * always warns, regardless of `verbose`.
+ * printed on success for SHELL_ZSH/SHELL_BASH/SHELL_FISH/SHELL_POWERSHELL/
+ * SHELL_CMD -- a failure still always warns, regardless of `verbose`.
  *
  * Equivalent to shell_ensure_path_tagged(kind, dir, "shimback", verbose). */
 bool shell_ensure_path(ShellKind kind, const char *dir, bool verbose);
@@ -53,19 +80,24 @@ bool shell_ensure_path(ShellKind kind, const char *dir, bool verbose);
  * different directory set) coexist without colliding with the default. */
 bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, bool verbose);
 
-/* Removes the marker block (or, for SHELL_FISH, the conf.d snippet file)
- * tagged `tag`, if present, from `kind`'s usual startup file(s) -- the
- * inverse of shell_ensure_path_tagged, used by `uninstall --full`. A no-op
- * for SHELL_UNKNOWN, since shimback never writes anything for it. Returns
+/* Removes the marker block (or, for SHELL_FISH, the conf.d snippet file;
+ * for SHELL_POWERSHELL, the block from every profile touched by
+ * shell_ensure_path_tagged; for SHELL_CMD, the block from the AutoRun
+ * registry string) tagged `tag`, if present, from `kind`'s usual startup
+ * location(s) -- the inverse of shell_ensure_path_tagged, used by
+ * `uninstall --full`. SHELL_POWERSHELL/SHELL_CMD also remove each of that
+ * block's directories from HKCU\Environment\Path. A no-op for
+ * SHELL_UNKNOWN, since shimback never writes anything for it. Returns
  * false only on an actual I/O failure while writing. */
 bool shell_remove_path_tagged(ShellKind kind, const char *tag);
 
 /* Appends to `out` every directory recorded in `kind`'s PATH block tagged
- * `tag`, across every file where that shell's block may live (zsh: both
- * ~/.zshrc.local and ~/.zshrc; bash: .bashrc/.bash_profile/.profile; fish:
- * its conf.d snippet). Read-only, and best-effort: a shell with no such
- * block, or an unparseable one, just contributes nothing. Entries may repeat
- * across files; callers dedupe. */
+ * `tag`, across every location where that shell's block may live (zsh:
+ * both ~/.zshrc.local and ~/.zshrc; bash: .bashrc/.bash_profile/.profile;
+ * fish: its conf.d snippet; powershell: both editions' profiles; cmd: the
+ * AutoRun registry string). Read-only, and best-effort: a shell with no
+ * such block, or an unparseable one, just contributes nothing. Entries may
+ * repeat across locations; callers dedupe. */
 void shell_read_block_dirs(ShellKind kind, const char *tag, StrVec *out);
 
 /* True if ~/.zshrc.local exists but has no `tag`-marked block while

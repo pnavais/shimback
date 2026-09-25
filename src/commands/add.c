@@ -15,6 +15,7 @@
 
 #include "../config.h"
 #include "../paths.h"
+#include "../platform/platform.h"
 #include "../shell.h"
 #include "../tui.h"
 #include "../util.h"
@@ -102,7 +103,11 @@ static bool backup_file_if_exists(const char *path, const char *backup_path) {
  * failure. */
 static void restore_from_backup(const char *path, const char *backup_path) {
     if (access(backup_path, F_OK) == 0) {
-        if (rename(backup_path, path) != 0) {
+        /* plat_rename_replace(), not a bare rename(): `path` already
+         * exists here (that's exactly the case this restores) -- plain
+         * rename()/MoveFileW don't replace an existing destination on
+         * Windows, see platform.h. */
+        if (!plat_rename_replace(backup_path, path)) {
             warn("add: failed to restore %s from backup: %s", path, strerror(errno));
         }
     } else if (unlink(path) != 0 && errno != ENOENT) {
@@ -130,7 +135,7 @@ static void rollback_and_die(const char *cfg_path, const char *cfg_backup_path,
     if (split_target_path) {
         restore_from_backup(split_target_path, split_backup_path);
     }
-    char msg[512];
+    char msg[1024];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(msg, sizeof(msg), fmt, ap);
@@ -279,33 +284,36 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
             resolved_fallback);
     }
 
-    /* Read-only pre-flight: if something already occupies where the symlink
-     * would go and it isn't ours to replace, fail before touching the
+    /* Read-only pre-flight: if something already occupies where the shim
+     * link would go and it isn't ours to replace, fail before touching the
      * config at all -- no point loading/saving it only to then refuse the
      * filesystem half of the change. Doesn't itself write anything yet;
-     * see below for why the actual symlink create/replace waits until
-     * after the config is safely saved. */
-    char *symlink_path = path_join(shim_dir, name);
+     * see below for why the actual link create/replace waits until after
+     * the config is safely saved.
+     *
+     * shim_file_name() appends ".exe" on Windows -- shims are hard links
+     * there (see windows-port.md Phase 3), and cmd.exe/PowerShell only
+     * resolve a bare command name against a PATHEXT-listed extension. */
+    char *shim_file = shim_file_name(name);
+    char *symlink_path = path_join(shim_dir, shim_file);
+    free(shim_file);
     bool replacing_existing_symlink = false;
-    struct stat st;
-    if (lstat(symlink_path, &st) == 0) {
-        if (!S_ISLNK(st.st_mode)) {
-            die("add: %s already exists and is not a symlink; remove it manually first",
-                symlink_path);
-        }
-        /* Recognizes any shimback build/install location as ours, not
-         * just this exact running binary's own path -- an exact self_exe
-         * match here used to refuse to update a shim created by an older
-         * or relocated shimback binary even though it's still genuinely
-         * shimback's, and disagreed with uninstall's own (marker-based)
-         * recognition of the very same symlink (see review.md). */
-        char *existing_resolved = canonicalize(symlink_path);
-        bool shimback_owned = existing_resolved && looks_like_shimback_binary(existing_resolved);
-        if (!shimback_owned) {
-            die("add: %s already exists and is not a shimback-managed symlink; remove it "
+    if (access(symlink_path, F_OK) == 0) {
+        /* is_shim_dir_entry() recognizes any shimback build/install
+         * location as ours, not just this exact running binary's own path
+         * -- an exact self_exe match here used to refuse to update a shim
+         * created by an older or relocated shimback binary even though
+         * it's still genuinely shimback's, and disagreed with uninstall's
+         * own (marker-based) recognition of the very same link (see
+         * review.md). On Windows this is also the *only* signal available
+         * at all (a hard link has no distinct file type to check, unlike
+         * a POSIX symlink) -- see is_shim_dir_entry's own comment. */
+        if (!is_shim_dir_entry(symlink_path)) {
+            die("add: %s already exists and is not a shimback-managed shim; remove it "
                 "manually first",
                 symlink_path);
         }
+#ifndef _WIN32
         /* This ownership check and the eventual rename() that replaces
          * symlink_path (see below) aren't atomic with each other -- config
          * I/O runs in between, which takes measurable time. A directory
@@ -319,7 +327,13 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
          * one), but it rules out the actual precondition the race needs
          * -- another user able to write here at all. shim_dir always
          * exists at this point, since symlink_path (inside it) was just
-         * found. */
+         * found. POSIX-only: Windows' default per-user directory ACLs
+         * already aren't other-writable the way a misconfigured POSIX
+         * directory can be, and `st_mode`'s group/other bits aren't a
+         * meaningful signal there in the first place (UCRT synthesizes
+         * them from a single read-only attribute, not real ACL state) --
+         * a real equivalent would need an ACL-aware check, not a `stat()`
+         * bit-mask one; left as a known gap, not silently assumed safe. */
         struct stat dir_st;
         if (stat(shim_dir, &dir_st) == 0 && (dir_st.st_mode & (S_IWGRP | S_IWOTH))) {
             die("add: %s is writable by more than just its owner, which would let a "
@@ -327,6 +341,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
                 "restrict its permissions first (e.g. chmod go-w %s)",
                 shim_dir, shim_dir);
         }
+#endif
         replacing_existing_symlink = true;
     }
 
@@ -550,50 +565,54 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * never leave a dangling symlink behind with no matching config
      * entry, which used to happen when the symlink was created first. */
     if (replacing_existing_symlink) {
-        /* Build the replacement at a temp name first and rename() it over
-         * the old one, rather than unlink-then-symlink: rename() is
-         * atomic, so this can only ever fully succeed (new symlink in
-         * place) or fail before ever touching the existing one (old
-         * symlink still intact) -- never the unlink-succeeded-but-
-         * symlink-failed gap in between that would otherwise leave the
-         * name pointing at nothing at all. The symlink itself never
-         * encodes policy/source/fallback data, so its own survival doesn't
-         * need a rollback -- but the config data it now resolves to does,
-         * which is exactly what the backups above and below restore. */
+        /* Build the replacement at a temp name first and atomically rename
+         * it over the old one, rather than unlink-then-create:
+         * plat_rename_replace() (POSIX rename(); Windows MoveFileExW with
+         * MOVEFILE_REPLACE_EXISTING -- a bare rename()/MoveFileW there
+         * does *not* replace an existing destination, see platform.h) is
+         * atomic, so this can only ever fully succeed (new link in place)
+         * or fail before ever touching the existing one (old link still
+         * intact) -- never the unlink-succeeded-but-create-failed gap in
+         * between that would otherwise leave the name pointing at nothing
+         * at all. The link itself never encodes policy/source/fallback
+         * data, so its own survival doesn't need a rollback -- but the
+         * config data it now resolves to does, which is exactly what the
+         * backups above and below restore. */
         size_t tmp_len = strlen(symlink_path) + 32;
         char *tmp_link = xmalloc(tmp_len);
         snprintf(tmp_link, tmp_len, "%s.tmp.%d", symlink_path, (int)getpid());
-        if (symlink(self_exe, tmp_link) != 0) {
-            rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
-                              "add: failed to create replacement symlink %s: %s", tmp_link,
-                              strerror(errno));
+        if (!create_shim_link(self_exe, tmp_link, "add")) {
+            int link_errno = errno;
+            char link_err_msg[1024];
+            format_link_create_error(link_err_msg, sizeof(link_err_msg), "add", tmp_link,
+                                      self_exe, link_errno);
+            rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path, "%s",
+                              link_err_msg);
         }
         /* Revalidate right before the swap: this is as close as a plain
          * rename() gets to closing the TOCTOU window from the ownership
          * check above, shrinking it from "however long config I/O took"
          * down to the handful of syscalls between here and rename()
          * itself (see review.md). */
-        struct stat recheck_st;
-        char *recheck_resolved = NULL;
-        bool still_ours = lstat(symlink_path, &recheck_st) == 0 && S_ISLNK(recheck_st.st_mode) &&
-                           (recheck_resolved = canonicalize(symlink_path)) != NULL &&
-                           looks_like_shimback_binary(recheck_resolved);
-        free(recheck_resolved);
-        if (!still_ours) {
+        if (!is_shim_dir_entry(symlink_path)) {
             unlink(tmp_link);
             rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
                               "add: %s changed since it was checked; refusing to replace it",
                               symlink_path);
         }
-        if (rename(tmp_link, symlink_path) != 0) {
+        if (!plat_rename_replace(tmp_link, symlink_path)) {
             unlink(tmp_link);
             rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
                               "add: failed to replace existing symlink %s: %s", symlink_path,
                               strerror(errno));
         }
-    } else if (symlink(self_exe, symlink_path) != 0) {
-        rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
-                          "add: failed to create symlink %s: %s", symlink_path, strerror(errno));
+    } else if (!create_shim_link(self_exe, symlink_path, "add")) {
+        int link_errno = errno;
+        char link_err_msg[1024];
+        format_link_create_error(link_err_msg, sizeof(link_err_msg), "add", symlink_path,
+                                  self_exe, link_errno);
+        rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path, "%s",
+                          link_err_msg);
     }
 
     /* Everything succeeded -- the new config is durable and the symlink is

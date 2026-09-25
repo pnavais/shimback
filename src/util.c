@@ -7,15 +7,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
-#include <unistd.h>
+
+#include "platform/platform.h"
 
 bool stdout_is_color(void) {
-    return !getenv("NO_COLOR") && isatty(STDOUT_FILENO);
+    return !getenv("NO_COLOR") && plat_isatty_stdout();
 }
 
 bool stderr_is_color(void) {
-    return !getenv("NO_COLOR") && isatty(STDERR_FILENO);
+    return !getenv("NO_COLOR") && plat_isatty_stderr();
 }
 
 void die(const char *fmt, ...) {
@@ -184,14 +184,6 @@ bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count
         }
     }
     return true;
-}
-
-pid_t xwaitpid(pid_t pid, int *status) {
-    pid_t rc;
-    do {
-        rc = waitpid(pid, status, 0);
-    } while (rc < 0 && errno == EINTR);
-    return rc;
 }
 
 bool parse_size_bytes(const char *s, size_t *out) {
