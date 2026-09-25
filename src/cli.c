@@ -373,7 +373,15 @@ int cli_run(int argc, char **argv) {
         return cmd_uninstall(argc - 1, argv + 1);
     }
     if (strcmp(argv[1], "edit") == 0) {
+#ifdef _WIN32
+        /* edit.c is excluded from the Windows build entirely -- see
+         * windows-port.md's Phase 0 notes (wordexp() has no Windows
+         * equivalent, and the fallback-editor chain needs a real
+         * PATH-search-first redesign, not a mechanical port). */
+        die("edit: not yet implemented on Windows (see windows-port.md)");
+#else
         return cmd_edit(argc - 1, argv + 1);
+#endif
     }
     if (strcmp(argv[1], "info") == 0) {
         return cmd_info(argc - 1, argv + 1);

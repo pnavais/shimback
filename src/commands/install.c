@@ -9,11 +9,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include "../installation.h"
 #include "../paths.h"
+#include "../platform/platform.h"
 #include "../shell.h"
 #include "../util.h"
 #include "version.h"
@@ -42,7 +42,7 @@ static bool download_via_curl(const char *curl, const char *url, const char *des
      * temp file inside a directory only we can write into closes that
      * window outright rather than just narrowing it: nothing else can
      * touch the name curl is about to open, symlink or otherwise. */
-    char *tmpdir = mkdtemp(tmpl);
+    char *tmpdir = plat_mkdtemp(tmpl);
     if (!tmpdir) {
         return false;
     }
@@ -50,20 +50,8 @@ static bool download_via_curl(const char *curl, const char *url, const char *des
     char tmp_file[4224];
     snprintf(tmp_file, sizeof(tmp_file), "%s/shimback", tmpdir);
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        if (rmdir(tmpdir) != 0) {
-            warn("install: failed to remove temporary directory %s: %s", tmpdir,
-                 strerror(errno));
-        }
-        return false;
-    }
-    if (pid == 0) {
-        execl(curl, curl, "-fsSL", url, "-o", tmp_file, (char *)NULL);
-        _exit(127);
-    }
-    int status = 0;
-    bool ok = xwaitpid(pid, &status) >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    char *argv[] = {(char *)curl, (char *)"-fsSL", (char *)url, (char *)"-o", tmp_file, NULL};
+    bool ok = plat_run_inherited(curl, argv) == 0;
     if (ok && chmod(tmp_file, 0644) != 0) {
         /* Don't rename a file into place with whatever mode it happened
          * to get otherwise (mkdtemp()'s own directory is 0700, but that
@@ -248,11 +236,15 @@ int cmd_install(int argc, char **argv) {
         return 1;
     }
     if (same_prefix_installed && !force) {
+        char *existing_filename = shimback_exe_name();
+        char *existing_dest = path_join(bin_dir, existing_filename);
+        free(existing_filename);
         warn_colored(ANSI_YELLOW,
-                     "shimback is already installed at %s/shimback -- nothing to do. "
+                     "shimback is already installed at %s -- nothing to do. "
                      "`shimback update` upgrades it to the latest release; `shimback install "
                      "--force` overwrites it with this binary.",
-                     bin_dir);
+                     existing_dest);
+        free(existing_dest);
         free_installations(found, found_count);
         return 0;
     }
@@ -263,7 +255,9 @@ int cmd_install(int argc, char **argv) {
     }
 
     char *self_exe = self_exe_path();
-    char *dest = path_join(bin_dir, "shimback");
+    char *dest_filename = shimback_exe_name();
+    char *dest = path_join(bin_dir, dest_filename);
+    free(dest_filename);
 
     /* Unlike uninstall, which always verifies ownership before deleting
      * anything, install used to overwrite whatever was already at `dest`
@@ -306,8 +300,9 @@ int cmd_install(int argc, char **argv) {
      * installed shell" semantics for --all. */
     char *shim_dir = shim_bin_dir();
     if (all_shells) {
-        ShellKind kinds[] = {SHELL_ZSH, SHELL_BASH, SHELL_FISH};
-        for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+        ShellKind kinds[3];
+        size_t kind_count = shell_all_kinds(kinds);
+        for (size_t i = 0; i < kind_count; i++) {
             if (shell_is_installed(kinds[i])) {
                 ensure_shell_path(kinds[i], shim_dir, bin_dir);
             }

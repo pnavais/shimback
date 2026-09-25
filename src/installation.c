@@ -34,9 +34,10 @@ static bool already_listed(const Installation *list, size_t count, const char *b
 /* Every directory recorded in any shell's PATH block, current and legacy
  * tag alike (repeats possible). */
 static void collect_block_dirs(StrVec *dirs) {
-    ShellKind kinds[] = {SHELL_ZSH, SHELL_BASH, SHELL_FISH};
+    ShellKind kinds[3];
+    size_t kind_count = shell_all_kinds(kinds);
     const char *tags[] = {BLOCK_TAG, LEGACY_BLOCK_TAG};
-    for (size_t k = 0; k < sizeof(kinds) / sizeof(kinds[0]); k++) {
+    for (size_t k = 0; k < kind_count; k++) {
         for (size_t t = 0; t < sizeof(tags) / sizeof(tags[0]); t++) {
             shell_read_block_dirs(kinds[k], tags[t], dirs);
         }
@@ -44,7 +45,9 @@ static void collect_block_dirs(StrVec *dirs) {
 }
 
 static bool holds_shimback_binary(const char *dir) {
-    char *binary = path_join(dir, "shimback");
+    char *filename = shimback_exe_name();
+    char *binary = path_join(dir, filename);
+    free(filename);
     bool ok = is_executable_file(binary) && looks_like_shimback_binary(binary);
     free(binary);
     return ok;
@@ -85,7 +88,9 @@ size_t find_installations(Installation **out) {
         if (same_dir_path(dir, shim_dir) || already_listed(list, count, dir)) {
             continue;
         }
-        char *binary = path_join(dir, "shimback");
+        char *filename = shimback_exe_name();
+        char *binary = path_join(dir, filename);
+        free(filename);
         if (!is_executable_file(binary) || !looks_like_shimback_binary(binary)) {
             free(binary);
             continue;

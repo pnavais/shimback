@@ -11,6 +11,7 @@
 #include "../config.h"
 #include "../installation.h"
 #include "../paths.h"
+#include "../platform/platform.h"
 #include "../shell.h"
 #include "../util.h"
 
@@ -88,12 +89,14 @@ static void report_warn(const char *fmt, ...) {
  * that still resolves, even to a different-but-valid shimback binary
  * elsewhere) -- only genuinely dead or missing entries are "needed" fixes. */
 static void fix_symlink_if_needed(const char *shim_dir, const char *name, const char *self_exe) {
-    char *link_path = path_join(shim_dir, name);
+    char *shim_file = shim_file_name(name);
+    char *link_path = path_join(shim_dir, shim_file);
+    free(shim_file);
 
     /* Held across the whole check-then-recreate sequence below, so a
      * concurrent `add`/`remove`/`doctor fix` racing the same symlink as
      * the same user can't land in between the check and the unlink()+
-     * symlink() that acts on it (see review.md). shim_dir is guaranteed
+     * create that acts on it (see review.md). shim_dir is guaranteed
      * to exist here -- this is only ever reached for an already-known
      * shim entry. */
     int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
@@ -104,16 +107,33 @@ static void fix_symlink_if_needed(const char *shim_dir, const char *name, const 
         return;
     }
 
+#ifdef _WIN32
+    /* No "dangling" case on Windows at all (see windows-port.md Phase 3):
+     * a hard link has nothing separate to go missing out from under it --
+     * as long as this entry's own link exists, its file data is alive
+     * regardless of what happens to self_exe's own path. "missing" is the
+     * only repairable case there is to check for, and access() (which
+     * would be wrong on POSIX below -- it follows symlinks, conflating
+     * "missing" with "dangling") is exactly right here, since there's no
+     * separate target-resolution step to distinguish it from at all. */
+    bool missing = access(link_path, F_OK) != 0;
+    bool dangling = false;
+#else
+    /* lstat(), not access()/stat(): this must NOT follow the symlink --
+     * "missing" (the entry itself isn't there) and "dangling" (the entry
+     * is a symlink, but its target is gone) are different repairable
+     * cases with different messages, and access()/stat() alone can't tell
+     * them apart from each other (both would just report "doesn't exist"
+     * for either case, since both follow symlinks to their target). */
     struct stat lst;
-    int lst_rc = lstat(link_path, &lst);
-    bool is_link = lst_rc == 0 && S_ISLNK(lst.st_mode);
-
+    bool missing = lstat(link_path, &lst) != 0;
+    bool is_link = !missing && S_ISLNK(lst.st_mode);
     bool dangling = false;
     if (is_link) {
         struct stat st;
         dangling = stat(link_path, &st) != 0;
     }
-    bool missing = lst_rc != 0;
+#endif
 
     if (!missing && !dangling) {
         shim_dir_lock_release(shim_lock_fd);
@@ -121,14 +141,20 @@ static void fix_symlink_if_needed(const char *shim_dir, const char *name, const 
         return;
     }
 
+#ifndef _WIN32
     if (is_link) {
         unlink(link_path); /* drop the dangling symlink before recreating it */
     }
-    if (symlink(self_exe, link_path) == 0) {
+#endif
+    if (create_shim_link(self_exe, link_path, "doctor fix")) {
         report_fixed("recreated %s symlink %s -> %s", missing ? "missing" : "dangling", link_path,
                      self_exe);
     } else {
-        warn("doctor fix: failed to recreate symlink for '%s': %s", name, strerror(errno));
+        int link_errno = errno;
+        char link_err_msg[1024];
+        format_link_create_error(link_err_msg, sizeof(link_err_msg), "doctor fix", link_path,
+                                  self_exe, link_errno);
+        warn("%s", link_err_msg);
     }
     shim_dir_lock_release(shim_lock_fd);
     free(link_path);
@@ -249,13 +275,13 @@ static bool dir_on_path(const char *dir) {
     char *copy = xstrdup(path_env);
     bool found = false;
     char *saveptr = NULL;
-    char *tok = strtok_r(copy, ":", &saveptr);
+    char *tok = strtok_r(copy, PLAT_PATH_LIST_SEP, &saveptr);
     while (tok) {
         if (strcmp(tok, dir) == 0) {
             found = true;
             break;
         }
-        tok = strtok_r(NULL, ":", &saveptr);
+        tok = strtok_r(NULL, PLAT_PATH_LIST_SEP, &saveptr);
     }
     free(copy);
     return found;
@@ -267,9 +293,27 @@ static bool dir_on_path(const char *dir) {
  * where a failure surviving the repair attempt means the repair itself
  * failed (already warned about separately). */
 static void check_symlink(int *issues, const char *shim_dir, const char *name, bool fix_mode) {
-    char *link_path = path_join(shim_dir, name);
+    char *shim_file = shim_file_name(name);
+    char *link_path = path_join(shim_dir, shim_file);
+    free(shim_file);
     const char *fix_hint = fix_mode ? "" : " -- run `shimback doctor fix` to recreate it";
 
+#ifdef _WIN32
+    /* No separate "target" to resolve and check for a hard link -- its
+     * content already *is* the target's content (see windows-port.md
+     * Phase 3), so looks_like_shimback_binary() (which itself already
+     * checks is_executable_file internally) is both the existence and the
+     * validity check in one, unlike the POSIX branch's three separate
+     * steps below. */
+    if (access(link_path, F_OK) != 0) {
+        report_fail(issues, "no shim at %s%s", link_path, fix_hint);
+    } else if (!looks_like_shimback_binary(link_path)) {
+        report_fail(issues, "%s exists but doesn't look like a shimback binary", link_path);
+    } else {
+        report_ok("shim %s (hard link to the shimback binary)", link_path);
+    }
+    free(link_path);
+#else
     struct stat lst;
     if (lstat(link_path, &lst) != 0) {
         report_fail(issues, "no symlink at %s%s", link_path, fix_hint);
@@ -300,6 +344,7 @@ static void check_symlink(int *issues, const char *shim_dir, const char *name, b
     }
     free(target);
     free(link_path);
+#endif
 }
 
 /* Returns a newly allocated canonical path if `fallback` is a valid,
@@ -544,7 +589,9 @@ int cmd_doctor(int argc, char **argv) {
                  * before acting, since a concurrent `add` could have
                  * legitimately reclaimed this exact name while the prompt
                  * was waiting (see review.md). */
-                char *link_path = path_join(shim_dir, name);
+                char *shim_file = shim_file_name(name);
+                char *link_path = path_join(shim_dir, shim_file);
+                free(shim_file);
                 int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
                 if (shim_lock_fd < 0) {
                     warn("doctor fix: failed to acquire the shim directory lock on %s: %s -- "

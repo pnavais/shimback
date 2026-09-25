@@ -109,6 +109,100 @@ bool is_executable_file(const char *path);
  * authenticated ownership proof; see paths.c for the full reasoning. */
 bool looks_like_shimback_binary(const char *path);
 
+/* True if `entry_path` (an existing filesystem entry, typically found
+ * while scanning a shim directory) is one of shimback's own shim links --
+ * created by `add`, recognized the same permissive way
+ * looks_like_shimback_binary() already documents (any shimback build/
+ * install location, not just an exact match against this running binary's
+ * own path). POSIX: `entry_path` must be a symlink (deliberately stricter
+ * than a bare content check -- only `add` ever creates one here, but any
+ * other kind of file could coincidentally exist in the directory too)
+ * whose resolved target passes looks_like_shimback_binary(). Windows:
+ * shims are hard links, indistinguishable from an ordinary regular file
+ * by any syntactic check at all -- the file's own content (the same
+ * marker scan) is the only signal available, so `entry_path` is scanned
+ * directly, with no resolution step first (a hard link's content already
+ * *is* the shared file's content, nothing to follow). This asymmetry is
+ * inherent, not a shortcut: Windows genuinely cannot distinguish "a hard
+ * link to shimback" from "a plain file containing the same bytes", and
+ * doesn't need to -- both are equally valid, functioning shims. */
+bool is_shim_dir_entry(const char *entry_path);
+
+/* The filename a shim named `name` should have on disk in the shim
+ * directory (POSIX: `name` itself, unchanged; Windows: `name` + ".exe" --
+ * cmd.exe/PowerShell only resolve a bare command name against
+ * PATHEXT-listed extensions, so an extension-less shim would be invisible
+ * to normal invocation there; see windows-port.md Phase 3). Newly
+ * allocated. */
+char *shim_file_name(const char *name);
+
+/* The reverse of shim_file_name(): the logical shim name for a `filename`
+ * found while scanning the shim directory (POSIX: `filename` itself;
+ * Windows: `filename` with a trailing ".exe"/".EXE" stripped, if present --
+ * symmetric with shim_file_name(), and case-insensitive to match Windows'
+ * own filesystem semantics). Newly allocated. */
+char *shim_name_from_file(const char *filename);
+
+/* The filename shimback's own installed binary should have on disk
+ * (Windows: "shimback.exe"; POSIX: "shimback", unchanged) -- install.c's
+ * own destination, uninstall.c's and installation.c's lookup for an
+ * existing install, and update.c's extracted release binary all need to
+ * agree on this the same way every shim needs shim_file_name(). Just
+ * shim_file_name("shimback") under the hood; a separate name only so a
+ * call site reads "the shimback binary's own name" rather than the more
+ * surprising "shim_file_name of shimback". Newly allocated. */
+char *shimback_exe_name(void);
+
+/* Formats a message describing why plat_link_create(target, link_path)
+ * failed, given the errno captured immediately after it returned false,
+ * into `buf` (at most `bufcap` bytes, always NUL-terminated), prefixed
+ * with `cmd_prefix` (e.g. "add", "doctor fix") the way this codebase's
+ * other error messages already are. Windows' EXDEV specifically gets a
+ * real explanation instead of the CRT's own opaque string for it
+ * ("Improper link") -- a hard link (unlike a POSIX symlink, which is just
+ * a stored path and never cared what filesystem either side lived on)
+ * can't cross drives. By the time this is called, create_shim_link()
+ * below has already tried (and failed) to paper over exactly that case
+ * with a plain copy, so reaching this for EXDEV specifically means both
+ * the link *and* the copy fallback failed -- any other errno falls back
+ * to a plain `strerror()`-based message, same as before either of these
+ * existed. */
+void format_link_create_error(char *buf, size_t bufcap, const char *cmd_prefix,
+                               const char *link_path, const char *target, int link_errno);
+
+/* Creates a shim link at `link_path` sharing shimback's own binary
+ * (`target`) -- a hard link (plat_link_create()) by default, falling back
+ * to a plain copy (copy_executable()) specifically when that fails with
+ * EXDEV (Windows only: a hard link can't cross drives, but a copy has no
+ * such restriction -- see windows-port.md Phase 6's addendum). Prints a
+ * `warn_colored()` notice when the fallback is used, since a copy doesn't
+ * share disk space with shimback's binary the way a link does and won't
+ * automatically reflect a later `shimback update` either -- and, since
+ * `doctor fix`/`update` (unlike `add`/`install`) don't otherwise print
+ * any "restart your shell" reminder of their own, a reminder to do so is
+ * folded into this same notice so all three callers get it. Returns true on
+ * success (a real link, or a successful fallback copy). On failure,
+ * `errno` reflects the *original* plat_link_create() failure (even if a
+ * fallback copy was attempted and also failed -- that failure is reported
+ * separately via a `warn()`), so a caller's own
+ * format_link_create_error() call afterward still describes the primary
+ * reason. */
+bool create_shim_link(const char *target, const char *link_path, const char *cmd_prefix);
+
+/* Atomically replaces the shim link already at `link_path` with a fresh
+ * one to `target` -- builds the replacement at a temp name first via
+ * create_shim_link() (hard link, falling back to a copy on EXDEV) and
+ * swaps it into place with plat_rename_replace(), so this can only ever
+ * fully succeed or fail before ever touching the existing link (never
+ * leave `link_path` missing in between). For `shimback update` refreshing
+ * a shim left stale by a Windows hard link surviving the binary's own
+ * atomic replace (or by a copy-fallback shim, which never shares data
+ * with shimback's binary at all -- see create_shim_link()'s own comment).
+ * `cmd_prefix` is passed through to create_shim_link()'s own fallback
+ * warning. Returns false on failure, `errno` reflecting whichever of
+ * create_shim_link()/plat_rename_replace() actually failed. */
+bool refresh_shim_link(const char *target, const char *link_path, const char *cmd_prefix);
+
 /* Copies `src` to `dst` (as an executable, mode 0755), atomically via a
  * temp-file-plus-rename in `dst`'s own directory. Returns false on any I/O
  * failure, leaving `dst` untouched. */

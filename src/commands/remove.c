@@ -5,11 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include "../config.h"
 #include "../paths.h"
+#include "../platform/platform.h"
 #include "../suggest.h"
 #include "../util.h"
 
@@ -137,21 +137,21 @@ int cmd_remove(int argc, char **argv) {
      * would check and later unlink() the wrong symlink entirely, leaving
      * the *real* target's symlink behind as an orphan even though its
      * config entry was correctly removed below. */
-    char *symlink_path = path_join(shim_dir, name);
+    char *shim_file = shim_file_name(name);
+    char *symlink_path = path_join(shim_dir, shim_file);
+    free(shim_file);
 
     /* Read-only pre-flight: figure out whether there's a shimback-managed
      * symlink to remove, without touching it yet. The config is saved
      * first (below), and only once that succeeds is the symlink actually
      * unlinked -- so a failed save never leaves the symlink gone while the
-     * config still describes the shim as configured. */
+     * config still describes the shim as configured. is_shim_dir_entry()
+     * recognizes any shimback build/install location as ours, not just
+     * this exact running binary's own path -- see the matching comment in
+     * add.c and review.md. */
     bool have_managed_symlink = false;
-    struct stat st;
-    if (lstat(symlink_path, &st) == 0 && S_ISLNK(st.st_mode)) {
-        /* Recognizes any shimback build/install location as ours, not
-         * just this exact running binary's own path -- see the matching
-         * comment in add.c and review.md. */
-        char *resolved = canonicalize(symlink_path);
-        if (resolved && looks_like_shimback_binary(resolved)) {
+    if (access(symlink_path, F_OK) == 0) {
+        if (is_shim_dir_entry(symlink_path)) {
             have_managed_symlink = true;
         } else {
             warn("%s is not a shimback-managed symlink; leaving it alone", symlink_path);

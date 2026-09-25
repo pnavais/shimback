@@ -1,26 +1,15 @@
 #include "paths.h"
 
-#include <dirent.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "platform/platform.h"
 #include "util.h"
 #include "version.h"
-
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#elif defined(__linux__)
-/* readlink("/proc/self/exe", ...) needs no extra headers beyond unistd.h. */
-#else
-#error "unsupported platform: self_exe_path needs a platform-specific implementation"
-#endif
 
 char *path_join(const char *a, const char *b) {
     size_t alen = strlen(a);
@@ -49,21 +38,27 @@ bool is_valid_shim_name(const char *name) {
 }
 
 char *home_dir(void) {
-    const char *val = getenv("HOME");
-    if (val && val[0] != '\0') {
-        return xstrdup(val);
+    return plat_home_dir();
+}
+
+static bool path_looks_absolute(const char *path) {
+#ifdef _WIN32
+    /* Windows has no single leading-character convention for "absolute"
+     * the way POSIX's leading '/' is: either a drive letter ("C:\" /
+     * "C:/") or a UNC path ("\\server\share\..."). */
+    if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
+        path[1] == ':' && (path[2] == '\\' || path[2] == '/')) {
+        return true;
     }
-    struct passwd *pw = getpwuid(getuid());
-    if (pw && pw->pw_dir && pw->pw_dir[0] != '\0') {
-        return xstrdup(pw->pw_dir);
-    }
-    die("could not determine home directory (HOME is unset and no passwd entry found)");
-    return NULL; /* unreachable */
+    return path[0] == '\\' && path[1] == '\\';
+#else
+    return path[0] == '/';
+#endif
 }
 
 static char *xdg_env(const char *name) {
     const char *val = getenv(name);
-    if (!val || val[0] == '\0' || val[0] != '/') {
+    if (!val || val[0] == '\0' || !path_looks_absolute(val)) {
         return NULL;
     }
     return xstrdup(val);
@@ -77,19 +72,63 @@ char *xdg_data_home(void) {
     return xdg_env("XDG_DATA_HOME");
 }
 
-static char *base_dir(char *(*xdg_fn)(void), const char *fallback_leaf) {
+static bool path_is_dir(const char *path);
+
+#ifdef _WIN32
+/* Windows-only fallback used when no XDG_*_HOME override is set. Prefers
+ * the same ".config"/".local/share" (under %USERPROFILE%) layout macOS/
+ * Linux already use -- deliberately, not %APPDATA%/%LOCALAPPDATA%, so a
+ * config shared across WSL/Git-Bash/MSYS2 and native Windows (or just a
+ * dotfiles repo already set up that way) keeps working without a separate
+ * Windows-only location. If that "<base>/shimback" directory doesn't
+ * exist yet, but %APPDATA%/%LOCALAPPDATA%'s does (an install made back
+ * when that was the default), keeps using that instead -- so this default
+ * doesn't strand an existing install. A fresh install, or one where
+ * neither exists yet, gets the home-based default. */
+static char *win_base_dir(const char *env_name, const char *home_leaf) {
+    char *home = home_dir();
+    char *home_base = path_join(home, home_leaf);
+    free(home);
+
+    char *home_shimback_dir = path_join(home_base, "shimback");
+    bool home_exists = path_is_dir(home_shimback_dir);
+    free(home_shimback_dir);
+
+    if (!home_exists) {
+        const char *appdata_env = getenv(env_name);
+        if (appdata_env && appdata_env[0] != '\0') {
+            char *appdata_shimback_dir = path_join(appdata_env, "shimback");
+            bool appdata_exists = path_is_dir(appdata_shimback_dir);
+            free(appdata_shimback_dir);
+            if (appdata_exists) {
+                free(home_base);
+                return xstrdup(appdata_env);
+            }
+        }
+    }
+    return home_base;
+}
+#endif
+
+static char *base_dir(char *(*xdg_fn)(void), const char *win_env_name,
+                       const char *fallback_leaf) {
     char *base = xdg_fn();
     if (base) {
         return base;
     }
+#ifdef _WIN32
+    return win_base_dir(win_env_name, fallback_leaf);
+#else
+    (void)win_env_name;
     char *home = home_dir();
     char *result = path_join(home, fallback_leaf);
     free(home);
     return result;
+#endif
 }
 
 char *config_file_path(void) {
-    char *dir = base_dir(xdg_config_home, ".config");
+    char *dir = base_dir(xdg_config_home, "APPDATA", ".config");
     char *shimback_dir = path_join(dir, "shimback");
     free(dir);
     char *result = path_join(shimback_dir, "config.toml");
@@ -98,7 +137,7 @@ char *config_file_path(void) {
 }
 
 char *shim_bin_dir(void) {
-    char *dir = base_dir(xdg_data_home, ".local/share");
+    char *dir = base_dir(xdg_data_home, "LOCALAPPDATA", ".local/share");
     char *shimback_dir = path_join(dir, "shimback");
     free(dir);
     char *result = path_join(shimback_dir, "bin");
@@ -180,38 +219,30 @@ char **list_shim_symlink_names(size_t *out_count) {
     size_t count = 0;
     size_t cap = 0;
 
-    DIR *d = opendir(shim_dir);
-    if (d) {
-        struct dirent *ent;
-        while ((ent = readdir(d)) != NULL) {
-            if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
-                continue;
+    char **entries = plat_list_dir(shim_dir);
+    for (char **e = entries; e && *e; e++) {
+        char *entry_path = path_join(shim_dir, *e);
+        /* Recognizes any shimback build/install location as ours, not
+         * just this exact running binary's own path -- an exact
+         * self_exe_path() match used to make a shim from a relocated or
+         * pre-upgrade binary invisible to list/doctor even though
+         * uninstall's own sweep (also built on this same check) would
+         * still recognize and clean it up, giving inconsistent answers
+         * about the same symlink depending which command asked (see
+         * review.md). See is_shim_dir_entry's own comment for how this
+         * recognition differs by platform (symlink+resolve on POSIX,
+         * direct content-scan on Windows, since a hard link has nothing
+         * separate to resolve). */
+        if (is_shim_dir_entry(entry_path)) {
+            if (count == cap) {
+                cap = cap == 0 ? 8 : cap * 2;
+                names = xrealloc(names, cap * sizeof(char *));
             }
-            char *entry_path = path_join(shim_dir, ent->d_name);
-            struct stat lst;
-            if (lstat(entry_path, &lst) == 0 && S_ISLNK(lst.st_mode)) {
-                /* Recognizes any shimback build/install location as ours,
-                 * not just this exact running binary's own path -- an
-                 * exact self_exe_path() match used to make a shim from a
-                 * relocated or pre-upgrade binary invisible to list/doctor
-                 * even though uninstall's own sweep (also built on this
-                 * same check) would still recognize and clean it up,
-                 * giving inconsistent answers about the same symlink
-                 * depending which command asked (see review.md). */
-                char *resolved = canonicalize(entry_path);
-                if (resolved && looks_like_shimback_binary(resolved)) {
-                    if (count == cap) {
-                        cap = cap == 0 ? 8 : cap * 2;
-                        names = xrealloc(names, cap * sizeof(char *));
-                    }
-                    names[count++] = xstrdup(ent->d_name);
-                }
-                free(resolved);
-            }
-            free(entry_path);
+            names[count++] = shim_name_from_file(*e);
         }
-        closedir(d);
+        free(entry_path);
     }
+    plat_free_dir_entries(entries);
 
     free(shim_dir);
     *out_count = count;
@@ -234,14 +265,10 @@ static void append_unique_name(char ***names, size_t *count, size_t *cap, const 
 static void scan_split_config_dir(const char *dir, char ***names, size_t *count, size_t *cap) {
     const char *suffix = "-config.toml";
     const size_t suffix_len = strlen(suffix);
-    DIR *d = opendir(dir);
-    if (!d) {
-        return;
-    }
 
-    struct dirent *ent;
-    while ((ent = readdir(d)) != NULL) {
-        const char *filename = ent->d_name;
+    char **entries = plat_list_dir(dir);
+    for (char **e = entries; e && *e; e++) {
+        const char *filename = *e;
         size_t filename_len = strlen(filename);
         if (filename_len <= suffix_len ||
             strcmp(filename + filename_len - suffix_len, suffix) != 0) {
@@ -262,7 +289,7 @@ static void scan_split_config_dir(const char *dir, char ***names, size_t *count,
         }
         free(name);
     }
-    closedir(d);
+    plat_free_dir_entries(entries);
 }
 
 char **list_split_config_names(size_t *out_count) {
@@ -291,51 +318,12 @@ char **list_split_config_names(size_t *out_count) {
 }
 
 char *canonicalize(const char *path) {
-    /* realpath(path, NULL) is a POSIX.1-2008 extension that mallocs the
-     * result buffer itself; supported on both macOS and Linux libc. */
-    return realpath(path, NULL);
+    return plat_realpath(path);
 }
 
-#if defined(__APPLE__)
 char *self_exe_path(void) {
-    uint32_t size = 0;
-    _NSGetExecutablePath(NULL, &size); /* always returns -1 here, sets size */
-    char *buf = xmalloc(size);
-    if (_NSGetExecutablePath(buf, &size) != 0) {
-        die("failed to resolve the shimback executable's own path");
-    }
-    char *resolved = canonicalize(buf);
-    free(buf);
-    if (!resolved) {
-        die("failed to canonicalize executable path: %s", strerror(errno));
-    }
-    return resolved;
+    return plat_self_exe_path();
 }
-#elif defined(__linux__)
-char *self_exe_path(void) {
-    size_t cap = 256;
-    char *buf = xmalloc(cap);
-    ssize_t n;
-    for (;;) {
-        n = readlink("/proc/self/exe", buf, cap);
-        if (n < 0) {
-            die("failed to read /proc/self/exe: %s", strerror(errno));
-        }
-        if ((size_t)n < cap) {
-            break;
-        }
-        cap *= 2;
-        buf = xrealloc(buf, cap);
-    }
-    buf[n] = '\0';
-    char *resolved = canonicalize(buf);
-    free(buf);
-    if (!resolved) {
-        die("failed to canonicalize executable path: %s", strerror(errno));
-    }
-    return resolved;
-}
-#endif
 
 char *dir_of(const char *path) {
     const char *slash = strrchr(path, '/');
@@ -444,6 +432,119 @@ bool looks_like_shimback_binary(const char *path) {
     return found;
 }
 
+bool is_shim_dir_entry(const char *entry_path) {
+#ifdef _WIN32
+    return looks_like_shimback_binary(entry_path);
+#else
+    if (!plat_path_is_symlink(entry_path)) {
+        return false;
+    }
+    char *resolved = canonicalize(entry_path);
+    bool ok = resolved && looks_like_shimback_binary(resolved);
+    free(resolved);
+    return ok;
+#endif
+}
+
+char *shim_file_name(const char *name) {
+#ifdef _WIN32
+    size_t len = strlen(name);
+    char *result = xmalloc(len + 5); /* + ".exe" + NUL */
+    memcpy(result, name, len);
+    memcpy(result + len, ".exe", 5);
+    return result;
+#else
+    return xstrdup(name);
+#endif
+}
+
+char *shim_name_from_file(const char *filename) {
+#ifdef _WIN32
+    size_t len = strlen(filename);
+    if (len > 4 && _stricmp(filename + len - 4, ".exe") == 0) {
+        return xstrndup(filename, len - 4);
+    }
+    return xstrdup(filename);
+#else
+    return xstrdup(filename);
+#endif
+}
+
+char *shimback_exe_name(void) {
+    return shim_file_name("shimback");
+}
+
+void format_link_create_error(char *buf, size_t bufcap, const char *cmd_prefix,
+                               const char *link_path, const char *target, int link_errno) {
+#ifdef _WIN32
+    if (link_errno == EXDEV) {
+        snprintf(buf, bufcap,
+                 "%s: cannot create a shim at %s -- it and shimback's own binary (%s) are on "
+                 "different drives, and Windows hard links can't cross drives (unlike a POSIX "
+                 "symlink). A plain copy was tried as a fallback and also failed (see the "
+                 "warning above). Either run an installed copy of shimback from the same drive "
+                 "as your shim directory (`shimback install --prefix <path>`, then add shims "
+                 "via *that* copy, not this one), or set XDG_DATA_HOME to a directory on "
+                 "shimback's own drive instead.",
+                 cmd_prefix, link_path, target);
+        return;
+    }
+#else
+    (void)target;
+#endif
+    snprintf(buf, bufcap, "%s: failed to create shim link %s: %s", cmd_prefix, link_path,
+             strerror(link_errno));
+}
+
+bool create_shim_link(const char *target, const char *link_path, const char *cmd_prefix) {
+    if (plat_link_create(target, link_path)) {
+        return true;
+    }
+    int link_errno = errno;
+#ifdef _WIN32
+    if (link_errno == EXDEV) {
+        if (copy_executable(target, link_path)) {
+            warn_colored(ANSI_YELLOW,
+                         "%s: created a copy of shimback's binary at %s instead of a hard link "
+                         "-- they're on different drives, and Windows hard links can't cross "
+                         "drives. Keep in mind this copy won't automatically reflect a future "
+                         "`shimback update`. If you don't see it yet, restart your shell (or "
+                         "open a new terminal session) so any PATH changes are picked up.",
+                         cmd_prefix, link_path);
+            return true;
+        }
+        warn("%s: also failed to copy shimback's binary to %s as a fallback: %s", cmd_prefix,
+             link_path, strerror(errno));
+    }
+#endif
+    errno = link_errno; /* restore -- copy_executable's own failure path may have changed it,
+                          * and the caller's format_link_create_error() call needs to see the
+                          * *original* (here, primary) reason, not whatever the fallback's
+                          * own failure left behind. */
+    return false;
+}
+
+bool refresh_shim_link(const char *target, const char *link_path, const char *cmd_prefix) {
+    size_t tmp_len = strlen(link_path) + 32;
+    char *tmp_link = xmalloc(tmp_len);
+    snprintf(tmp_link, tmp_len, "%s.tmp.%d", link_path, (int)getpid());
+
+    if (!create_shim_link(target, tmp_link, cmd_prefix)) {
+        int e = errno;
+        free(tmp_link);
+        errno = e;
+        return false;
+    }
+    bool ok = plat_rename_replace(tmp_link, link_path);
+    if (!ok) {
+        int e = errno;
+        unlink(tmp_link);
+        errno = e;
+    }
+    free(tmp_link);
+    return ok;
+}
+
 static bool copy_file_mode(const char *src, const char *dst, mode_t mode) {
     FILE *in = fopen(src, "rb");
     if (!in) {
@@ -452,11 +553,11 @@ static bool copy_file_mode(const char *src, const char *dst, mode_t mode) {
 
     char tmp[4160];
     snprintf(tmp, sizeof(tmp), "%s.tmp.%d.XXXXXX", dst, (int)getpid());
-    /* mkstemp both creates the file exclusively (immune to a pre-planted
-     * symlink at this predictable-looking name -- a plain fopen(tmp, "wb")
-     * would silently follow one) and fills in an unguessable suffix,
-     * rather than relying on the pid alone. */
-    int fd = mkstemp(tmp);
+    /* plat_mkstemp both creates the file exclusively (immune to a
+     * pre-planted symlink at this predictable-looking name -- a plain
+     * fopen(tmp, "wb") would silently follow one) and fills in an
+     * unguessable suffix, rather than relying on the pid alone. */
+    int fd = plat_mkstemp(tmp);
     if (fd < 0) {
         fclose(in);
         return false;
@@ -482,10 +583,10 @@ static bool copy_file_mode(const char *src, const char *dst, mode_t mode) {
     fclose(in);
     fclose(out);
 
-    if (ok && chmod(tmp, mode) != 0) {
+    if (ok && !plat_chmod(tmp, (int)mode)) {
         ok = false;
     }
-    if (ok && rename(tmp, dst) == 0) {
+    if (ok && plat_rename_replace(tmp, dst)) {
         return true;
     }
     unlink(tmp);
@@ -525,7 +626,7 @@ bool mkdir_p(const char *dir) {
     for (char *p = copy + 1; *p; p++) {
         if (*p == '/') {
             *p = '\0';
-            if (mkdir(copy, 0755) != 0 && errno != EEXIST) {
+            if (plat_mkdir(copy) != 0 && errno != EEXIST) {
                 free(copy);
                 return false;
             }
@@ -537,7 +638,7 @@ bool mkdir_p(const char *dir) {
             *p = '/';
         }
     }
-    if (mkdir(copy, 0755) != 0 && errno != EEXIST) {
+    if (plat_mkdir(copy) != 0 && errno != EEXIST) {
         free(copy);
         return false;
     }
@@ -576,18 +677,13 @@ bool mkdir_p(const char *dir) {
  * already exist. */
 int shim_dir_lock_acquire(const char *shim_dir) {
     char *lock_path = path_join(shim_dir, SHIM_DIR_LOCK_FILENAME);
-    int fd = open(lock_path, O_CREAT | O_RDWR, 0600);
-    int open_errno = errno; /* free() below isn't guaranteed not to touch
-                              * errno, and callers (remove.c) distinguish
-                              * ENOENT ("shim_dir doesn't exist, nothing to
-                              * lock") from a real failure. */
+    int open_errno = 0;
+    int fd = plat_lockfile_open(lock_path, &open_errno);
     free(lock_path);
     if (fd < 0) {
+        /* callers (remove.c) distinguish ENOENT ("shim_dir doesn't exist,
+         * nothing to lock") from a real failure. */
         errno = open_errno;
-        return -1;
-    }
-    if (flock(fd, LOCK_EX) != 0) {
-        close(fd);
         return -1;
     }
     return fd;
@@ -597,10 +693,7 @@ int shim_dir_lock_acquire(const char *shim_dir) {
  * safe to call with -1 (a no-op) so callers don't need to track whether
  * acquisition actually succeeded before cleaning up. */
 void shim_dir_lock_release(int fd) {
-    if (fd >= 0) {
-        flock(fd, LOCK_UN);
-        close(fd);
-    }
+    plat_lockfile_close(fd);
 }
 
 /* Removes the lock file shim_dir_lock_acquire() creates inside `shim_dir`,
@@ -623,10 +716,29 @@ char *path_search(const char *name, const char *exclude_dir,
     char *path_copy = xstrdup(path_env);
     char *result = NULL;
     char *saveptr = NULL;
-    char *dir = strtok_r(path_copy, ":", &saveptr);
+    char *dir = strtok_r(path_copy, PLAT_PATH_LIST_SEP, &saveptr);
     while (dir) {
         if (dir[0] != '\0' && !(exclude_dir && strcmp(dir, exclude_dir) == 0)) {
             char *candidate = path_join(dir, name);
+#ifdef _WIN32
+            /* Windows resolves a bare, extension-less command name against
+             * %PATHEXT% (cmd.exe/CreateProcess both do this); `name` here
+             * is always passed bare by every caller (curl, pwsh,
+             * powershell, ...), so without this a stat() on the
+             * extension-less `candidate` above never matches the real
+             * "<name>.exe" file and every such search silently fails to
+             * find anything at all. Only .exe is handled -- the one
+             * extension every binary this codebase looks for actually
+             * has -- not the full %PATHEXT% list. */
+            size_t name_len = strlen(name);
+            bool already_has_exe = name_len > 4 && _stricmp(name + name_len - 4, ".exe") == 0;
+            if (!is_executable_file(candidate) && !already_has_exe) {
+                char *name_exe = shim_file_name(name); /* appends ".exe" */
+                free(candidate);
+                candidate = path_join(dir, name_exe);
+                free(name_exe);
+            }
+#endif
             if (is_executable_file(candidate)) {
                 char *resolved = canonicalize(candidate);
                 if (resolved) {
@@ -641,7 +753,7 @@ char *path_search(const char *name, const char *exclude_dir,
             }
             free(candidate);
         }
-        dir = strtok_r(NULL, ":", &saveptr);
+        dir = strtok_r(NULL, PLAT_PATH_LIST_SEP, &saveptr);
     }
     free(path_copy);
     return result;
@@ -664,21 +776,23 @@ char *force_resolve_binary_arg(const char *arg) {
     if (arg[0] == '/') {
         return xstrdup(arg);
     }
-    char cwd[4096];
-    if (!getcwd(cwd, sizeof(cwd))) {
+    char *cwd = plat_getcwd();
+    if (!cwd) {
         return NULL;
     }
-    return path_join(cwd, arg);
+    char *result = path_join(cwd, arg);
+    free(cwd);
+    return result;
 }
 
 bool write_file_atomic(const char *path, const char *data, size_t len, mode_t mode) {
     char tmp[4160];
     snprintf(tmp, sizeof(tmp), "%s.tmp.%d.XXXXXX", path, (int)getpid());
-    int fd = mkstemp(tmp);
+    int fd = plat_mkstemp(tmp);
     if (fd < 0) {
         return false;
     }
-    if (fchmod(fd, mode) != 0) {
+    if (!plat_fchmod(fd, (int)mode)) {
         close(fd);
         unlink(tmp);
         return false;
@@ -697,7 +811,7 @@ bool write_file_atomic(const char *path, const char *data, size_t len, mode_t mo
         unlink(tmp);
         return false;
     }
-    if (rename(tmp, path) != 0) {
+    if (!plat_rename_replace(tmp, path)) {
         unlink(tmp);
         return false;
     }

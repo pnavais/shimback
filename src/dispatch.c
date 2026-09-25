@@ -1,30 +1,25 @@
 #include "dispatch.h"
 
-#include <errno.h>
-#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
-#include <time.h>
-#include <unistd.h>
 
 #include "config.h"
 #include "paths.h"
+#include "platform/platform.h"
 #include "util.h"
 
-static int decode_exit_code(int status) {
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
+/* dispatch.c never calls plat_run_inherited/plat_run_captured directly
+ * (except the one plat_run_captured call site, which handles -1 inline) --
+ * every run_inherited-shaped call site here has always died immediately on
+ * a spawn/wait failure, so this wrapper preserves that instead of
+ * repeating the check at each of the half-dozen call sites below. */
+static int run_inherited_or_die(const char *exe, char *const argv[]) {
+    int code = plat_run_inherited(exe, argv);
+    if (code < 0) {
+        die("failed to run %s", exe);
     }
-    if (WIFSIGNALED(status)) {
-        return 128 + WTERMSIG(status);
-    }
-    return 1;
-}
-
-static bool child_succeeded(int status) {
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    return code;
 }
 
 /* Builds the argv to pass to exec: argv[0] = the shim's invoked name (so the
@@ -163,165 +158,6 @@ static bool route_args_fully_present(char *const *route_args, size_t route_arg_c
     return true;
 }
 
-/* Runs `exe` with real inherited stdio (no capturing) -- used whenever a run
- * is meant to be the "real", user-visible attempt: the fallback, or the
- * source when it equals the fallback. */
-static void run_inherited(const char *exe, char *const argv[], int *raw_status) {
-    pid_t pid = fork();
-    if (pid < 0) {
-        die("fork failed: %s", strerror(errno));
-    }
-    if (pid == 0) {
-        execv(exe, argv);
-        fprintf(stderr, "shimback: exec %s: %s\n", exe, strerror(errno));
-        _exit(127);
-    }
-    if (xwaitpid(pid, raw_status) < 0) {
-        /* waitpid() itself failing (not the child's own exit status --
-         * that's handled by the caller) means something is wrong with the
-         * process/signal environment (e.g. SIGCHLD set to SIG_IGN, so
-         * there's nothing left to wait for) and *raw_status was never
-         * written -- decoding it as if it were a real exit status would
-         * be reading uninitialized memory. There's no meaningful fallback
-         * decision to make without knowing how the child actually ended. */
-        die("waitpid failed: %s", strerror(errno));
-    }
-}
-
-/* Milliseconds elapsed since `start` (CLOCK_MONOTONIC, so immune to wall-
- * clock adjustments -- NTP, DST, someone changing the system clock). */
-static long elapsed_ms_since(const struct timespec *start) {
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    return (long)((now.tv_sec - start->tv_sec) * 1000 +
-                   (now.tv_nsec - start->tv_nsec) / 1000000);
-}
-
-/* Runs `exe` with stdout/stderr captured into buffers rather than streamed
- * live -- this is what makes a failed trial run invisible. Drains both
- * pipes via poll() rather than sequential reads, since the child may
- * interleave writes to both streams and a full pipe would otherwise
- * deadlock a sequential reader.
- *
- * `timeout_ms`/`limit_bytes` bound how long this invisibility can last:
- * whichever is hit first (the trial has run longer than `timeout_ms`, or
- * `out`+`err` together have grown past `limit_bytes`), shimback gives up on
- * ever hiding or falling back on this run -- it flushes whatever's been
- * captured so far straight to the real stdout/stderr and relays everything
- * read from that point on live instead of buffering it. Nothing is ever
- * discarded; the only thing that changes is that the caller can no longer
- * decide to fall back once *committed_live is set to true, since some of
- * the source's real output has already been shown. Still drains to EOF
- * either way (live relay doesn't need buffering, but the deadlock-avoidance
- * reason for draining both pipes via poll() applies regardless). */
-static void run_captured(const char *exe, char *const argv[], DynBuf *out, DynBuf *err,
-                          int *raw_status, int timeout_ms, size_t limit_bytes,
-                          bool *committed_live) {
-    int out_pipe[2];
-    int err_pipe[2];
-    if (pipe(out_pipe) != 0 || pipe(err_pipe) != 0) {
-        die("failed to create pipes: %s", strerror(errno));
-    }
-
-    pid_t pid = fork();
-    if (pid < 0) {
-        die("fork failed: %s", strerror(errno));
-    }
-    if (pid == 0) {
-        dup2(out_pipe[1], STDOUT_FILENO);
-        dup2(err_pipe[1], STDERR_FILENO);
-        close(out_pipe[0]);
-        close(out_pipe[1]);
-        close(err_pipe[0]);
-        close(err_pipe[1]);
-        execv(exe, argv);
-        fprintf(stderr, "shimback: exec %s: %s\n", exe, strerror(errno));
-        _exit(127);
-    }
-
-    close(out_pipe[1]);
-    close(err_pipe[1]);
-
-    struct timespec start;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-
-    bool out_done = false;
-    bool err_done = false;
-    bool live = false;
-    char chunk[4096];
-    while (!out_done || !err_done) {
-        struct pollfd fds[2];
-        fds[0].fd = out_done ? -1 : out_pipe[0];
-        fds[0].events = POLLIN;
-        fds[1].fd = err_done ? -1 : err_pipe[0];
-        fds[1].events = POLLIN;
-
-        /* Once committed to live relay there's no more deadline to watch
-         * for, so just block; until then, never wait past the deadline --
-         * otherwise a source that's gone quiet (a server that isn't
-         * chatty, just long-running) would never get re-checked against
-         * timeout_ms, since poll() would only wake for data that never
-         * comes. */
-        int poll_timeout = -1;
-        if (!live) {
-            long remaining = timeout_ms - elapsed_ms_since(&start);
-            poll_timeout = remaining > 0 ? (int)remaining : 0;
-        }
-
-        int rc = poll(fds, 2, poll_timeout);
-        if (rc < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            die("poll failed: %s", strerror(errno));
-        }
-
-        if (!live && (elapsed_ms_since(&start) >= timeout_ms || out->len + err->len >= limit_bytes)) {
-            fwrite(out->data, 1, out->len, stdout);
-            fwrite(err->data, 1, err->len, stderr);
-            fflush(stdout);
-            fflush(stderr);
-            live = true;
-            *committed_live = true;
-        }
-
-        if (!out_done && (fds[0].revents & (POLLIN | POLLHUP | POLLERR))) {
-            ssize_t n = read(out_pipe[0], chunk, sizeof(chunk));
-            if (n > 0) {
-                if (live) {
-                    fwrite(chunk, 1, (size_t)n, stdout);
-                    fflush(stdout);
-                } else {
-                    dynbuf_append(out, chunk, (size_t)n);
-                }
-            } else if (n == 0 || errno != EINTR) {
-                out_done = true;
-            }
-        }
-        if (!err_done && (fds[1].revents & (POLLIN | POLLHUP | POLLERR))) {
-            ssize_t n = read(err_pipe[0], chunk, sizeof(chunk));
-            if (n > 0) {
-                if (live) {
-                    fwrite(chunk, 1, (size_t)n, stderr);
-                    fflush(stderr);
-                } else {
-                    dynbuf_append(err, chunk, (size_t)n);
-                }
-            } else if (n == 0 || errno != EINTR) {
-                err_done = true;
-            }
-        }
-    }
-
-    close(out_pipe[0]);
-    close(err_pipe[0]);
-    if (xwaitpid(pid, raw_status) < 0) {
-        /* See run_inherited's identical check above for why this can't
-         * just fall through: *raw_status was never written. */
-        die("waitpid failed: %s", strerror(errno));
-    }
-}
-
 static void replay(DynBuf *out, DynBuf *err) {
     fwrite(out->data, 1, out->len, stdout);
     fflush(stdout);
@@ -376,10 +212,9 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
      * route-args -- no invisible trial run, no retry if it fails. */
     if (entry->policy == POLICY_REWRITE) {
         char **rewritten_argv = build_rewritten_argv(entry, shim_name, argc, argv);
-        int status = 0;
-        run_inherited(resolved_source, rewritten_argv, &status);
+        int code = run_inherited_or_die(resolved_source, rewritten_argv);
         free(rewritten_argv);
-        return decode_exit_code(status);
+        return code;
     }
 
     /* route-map is the other policy that never looks at fallback (which is
@@ -437,11 +272,10 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
             warn("'%s': route '%s' matched; running %s", shim_name, matched_route->match, target);
         }
 
-        int status = 0;
-        run_inherited(target, route_argv, &status);
+        int code = run_inherited_or_die(target, route_argv);
         free(route_argv);
         free(resolved_route_command);
-        return decode_exit_code(status);
+        return code;
     }
 
     /* Every remaining policy needs a fallback to potentially run. */
@@ -488,10 +322,9 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
             warn("'%s': routing arg matched; running fallback %s", shim_name, resolved_fallback);
         }
 
-        int status = 0;
-        run_inherited(target, route_argv, &status);
+        int code = run_inherited_or_die(target, route_argv);
         free(filtered);
-        return decode_exit_code(status);
+        return code;
     }
 
     if (entry->policy == POLICY_SPLIT_ARGS) {
@@ -534,10 +367,9 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
                      shim_name, resolved_fallback);
             }
 
-            int status = 0;
-            run_inherited(target, split_argv, &status);
+            int code = run_inherited_or_die(target, split_argv);
             free(filtered);
-            return decode_exit_code(status);
+            return code;
         }
         /* Neither side fully matched -- falls through to the normal
          * captured trial/fallback flow below, which treats POLICY_SPLIT_ARGS
@@ -557,23 +389,23 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         warn("'%s': source and fallback resolve to the same binary with the same arguments; "
              "running it directly",
              shim_name);
-        int status = 0;
-        run_inherited(resolved_source, source_argv, &status);
-        return decode_exit_code(status);
+        return run_inherited_or_die(resolved_source, source_argv);
     }
 
     DynBuf out;
     DynBuf err;
     dynbuf_init(&out);
     dynbuf_init(&err);
-    int status = 0;
     int effective_timeout_ms =
         entry->capture_timeout_set ? entry->capture_timeout_ms : cfg.capture_timeout_ms;
     size_t effective_limit_bytes =
         entry->capture_limit_set ? entry->capture_limit_bytes : cfg.capture_limit_bytes;
     bool committed_live = false;
-    run_captured(resolved_source, source_argv, &out, &err, &status, effective_timeout_ms,
-                 effective_limit_bytes, &committed_live);
+    int status = plat_run_captured(resolved_source, source_argv, &out, &err, effective_timeout_ms,
+                                    effective_limit_bytes, &committed_live);
+    if (status < 0) {
+        die("failed to run %s", resolved_source);
+    }
 
     if (committed_live) {
         /* The trial ran long enough, or produced enough output, that
@@ -583,10 +415,10 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
          * invocation. Just report what actually happened. */
         dynbuf_free(&out);
         dynbuf_free(&err);
-        return decode_exit_code(status);
+        return status;
     }
 
-    if (child_succeeded(status)) {
+    if (status == 0) {
         replay(&out, &err);
         dynbuf_free(&out);
         dynbuf_free(&err);
@@ -601,7 +433,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         should_fallback = true;
     } else if (entry->policy == POLICY_EXIT_CODE_MATCH) {
         should_fallback = false;
-        int source_exit_code = decode_exit_code(status);
+        int source_exit_code = status;
         for (size_t i = 0; i < entry->exit_code_count; i++) {
             if (entry->exit_codes[i] == source_exit_code) {
                 should_fallback = true;
@@ -625,14 +457,11 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         if (entry->diagnostic) {
             warn("'%s' failed; falling back to %s", shim_name, resolved_fallback);
         }
-        int fb_status = 0;
-        run_inherited(resolved_fallback, fallback_argv, &fb_status);
-        return decode_exit_code(fb_status);
+        return run_inherited_or_die(resolved_fallback, fallback_argv);
     }
 
     replay(&out, &err);
-    int code = decode_exit_code(status);
     dynbuf_free(&out);
     dynbuf_free(&err);
-    return code;
+    return status;
 }
