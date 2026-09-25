@@ -113,15 +113,22 @@ jobs:
       - name: Install xwin
         run: cargo install xwin --locked
 
+      # D:\, not C:\ -- xwin moves (renames) files from its cache into the
+      # splat output as a fast path, and the checkout/work directory on
+      # GitHub's windows runners lives on D:\ (confirmed directly: a first
+      # attempt at C:\msvc-sysroot failed with "The system cannot move the
+      # file to a different disk drive" -- the exact EXDEV-class problem
+      # this whole port spent a lot of time on elsewhere, this time hitting
+      # xwin itself rather than shimback).
       - name: Splat MSVC/Windows SDK sysroot
-        run: xwin --accept-license splat --output C:\msvc-sysroot
+        run: xwin --accept-license splat --output D:\msvc-sysroot
 
       # clang-cl/lld-link ship as part of the LLVM install already present
       # on GitHub's windows-2025 runner image, at this same path used for
       # local development (see windows-port.md Phase 1) -- not installed
       # separately here.
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/windows-clang-cl.cmake -DSHIMBACK_LLVM_BIN="C:\Program Files\LLVM\bin" -DSHIMBACK_MSVC_SYSROOT="C:\msvc-sysroot"
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/windows-clang-cl.cmake -DSHIMBACK_LLVM_BIN="C:\Program Files\LLVM\bin" -DSHIMBACK_MSVC_SYSROOT="D:\msvc-sysroot"
 
       - name: Build
         run: cmake --build build --config Release
