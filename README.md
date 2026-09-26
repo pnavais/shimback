@@ -840,8 +840,9 @@ no problems noticed -- `shimback doctor` runs the full set of checks
 A closing line counts the `[fail]`/`[warn]` items. `info` is read-only and
 informational (its exit status is `0` for any shim it can describe); use
 [`doctor`](#doctor) for the full health check. An unknown name fails with a
-typo suggestion, and a symlink with no configuration behind it (an orphan) is
-reported as such and exits `1`.
+plain "no shim configured" error (unlike `remove`/`edit`, `info` doesn't
+offer a typo suggestion), and a symlink with no configuration
+behind it (an orphan) is reported as such and exits `1`.
 
 ## Fallback policies
 
