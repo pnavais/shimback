@@ -373,6 +373,21 @@ static char *first_on_path(const char *name) {
     for (char *dir = strtok_r(copy, PLAT_PATH_LIST_SEP, &save); dir && !result;
          dir = strtok_r(NULL, PLAT_PATH_LIST_SEP, &save)) {
         char *candidate = path_join(dir, name);
+#ifdef _WIN32
+        /* Same .exe-retry path_search() itself needs (see its own comment)
+         * -- name is always the bare shim name here, and without this a
+         * stat() on the extension-less candidate never matches the real
+         * "<name>.exe" file, so every shim would always look unreachable
+         * from $PATH on Windows regardless of its real PATH setup. */
+        size_t name_len = strlen(name);
+        bool already_has_exe = name_len > 4 && _stricmp(name + name_len - 4, ".exe") == 0;
+        if (!is_executable_file(candidate) && !already_has_exe) {
+            char *name_exe = shim_file_name(name);
+            free(candidate);
+            candidate = path_join(dir, name_exe);
+            free(name_exe);
+        }
+#endif
         if (is_executable_file(candidate)) {
             result = candidate;
         } else {
@@ -884,6 +899,21 @@ static void print_flow(const View *v, const char *shim_dir) {
             pf("    " M_DIM "v" M_RESET "\n");
             run_source_line(v, src_path, "<rewritten args>");
             pf("\n  " M_DIM "(runs directly: live output, no trial run, no retry)" M_RESET "\n");
+            break;
+        }
+        case POLICY_PASSTHROUGH: {
+            run_source_line(v, src_path, "<args>");
+            pf(RAIL "         " M_DIM "(live output the whole time -- not captured)" M_RESET
+                    "\n");
+            pf(RAIL "\n");
+            size_t w = max_len((const char *const[]){"exit 0", "exit != 0"}, 2);
+            branch(false, w, "exit 0");
+            pf("its output is already shown; exit 0\n");
+            pf(RAIL "\n");
+            branch(true, w, "exit != 0");
+            run_fallback_text(v, "<args>");
+            pf("\n  " M_DIM "(fallback also runs with live output -- the source's own failure\n"
+               "   output has already been seen by the time it runs)" M_RESET "\n");
             break;
         }
         case POLICY_ROUTE_MAP: {

@@ -139,12 +139,38 @@ jobs:
         run: cmake --build build --config Release
 
       # No `ctest` step here: the existing test suite (tests/*.sh) is
-      # entirely POSIX-shell/symlink-based, predating this port, and a
-      # Windows-native equivalent (Pester, per windows-port.md Phase 8) is
-      # still owed, not yet written -- running the POSIX suite as-is here
-      # would fail on assumptions (symlinks, `.exe`-less names) this port
+      # entirely POSIX-shell/symlink-based, predating this port, and would
+      # fail on assumptions (symlinks, `.exe`-less names) this port
       # deliberately doesn't share, not on anything actually broken. The
-      # smoke test below is this job's real correctness gate for now.
+      # Windows-native Pester suite below (tests/windows/, Phase 8) is this
+      # job's real correctness gate instead.
+      #
+      # Pinned via -RequiredVersion, not whatever this runner image already
+      # has -- same reasoning as xwin's own --locked install above.
+      - name: Install Pester
+        shell: pwsh
+        run: Install-Module -Name Pester -RequiredVersion 5.6.1 -Force -SkipPublisherCheck -Scope CurrentUser
+
+      # SHIMBACK_TEST_REAL_SHELL=1: this runner is a fresh, disposable VM,
+      # so the specs that mutate the real PowerShell profile / cmd.exe
+      # AutoRun / HKCU\Environment\Path (safe here, not for a local dev
+      # machine -- see tests/windows/Common.ps1's own header comment) run
+      # for real, not skipped.
+      - name: Run Windows Pester suite
+        shell: pwsh
+        env:
+          SHIMBACK_EXE: build\shimback.exe
+          SHIMBACK_TEST_REAL_SHELL: "1"
+        run: |
+          Import-Module Pester -RequiredVersion 5.6.1 -Force
+          $config = New-PesterConfiguration
+          $config.Run.Path = "tests/windows"
+          $config.Output.Verbosity = "Detailed"
+          $result = Invoke-Pester -Configuration $config -PassThru
+          if ($result.FailedCount -gt 0) {
+            throw "$($result.FailedCount) Pester test(s) failed"
+          }
+
       - name: Package
         shell: pwsh
         run: |
