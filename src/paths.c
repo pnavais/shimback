@@ -612,6 +612,24 @@ static bool path_is_dir(const char *path) {
     return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+/* '/' everywhere; also '\' on Windows -- callers there don't all go through
+ * this project's own path_join() (which only ever emits '/'), e.g. a path
+ * arriving via an env var set by some other Windows tool, or built with
+ * PowerShell's own Join-Path, uses '\' -- and mkdir_p's per-component split
+ * below has to recognize those boundaries too, or a whole run of
+ * backslash-joined, not-yet-existing directories gets treated as a single
+ * unsplittable component and handed to plat_mkdir() in one shot, which
+ * (unlike this function) never creates more than one missing level at a
+ * time and fails with ENOENT -- found exactly this way, via a Pester test
+ * whose sandbox path was built with Join-Path. */
+static bool is_path_sep(char c) {
+#ifdef _WIN32
+    return c == '/' || c == '\\';
+#else
+    return c == '/';
+#endif
+}
+
 bool mkdir_p(const char *dir) {
     char *copy = xstrdup(dir);
     size_t len = strlen(copy);
@@ -619,8 +637,8 @@ bool mkdir_p(const char *dir) {
         free(copy);
         return false;
     }
-    /* Strip a trailing slash so we don't try to mkdir an empty final segment. */
-    if (copy[len - 1] == '/') {
+    /* Strip a trailing separator so we don't try to mkdir an empty final segment. */
+    if (is_path_sep(copy[len - 1])) {
         copy[len - 1] = '\0';
     }
     /* A Windows drive-letter root ("C:", "D:", ...) always exists and can
@@ -635,12 +653,13 @@ bool mkdir_p(const char *dir) {
     char *start = copy + 1;
     if (len >= 2 && copy[1] == ':') {
         start = copy + 2;
-        if (*start == '/') {
+        if (is_path_sep(*start)) {
             start++;
         }
     }
     for (char *p = start; *p; p++) {
-        if (*p == '/') {
+        if (is_path_sep(*p)) {
+            char sep = *p;
             *p = '\0';
             if (plat_mkdir(copy) != 0 && errno != EEXIST) {
                 free(copy);
@@ -651,7 +670,7 @@ bool mkdir_p(const char *dir) {
                 free(copy);
                 return false;
             }
-            *p = '/';
+            *p = sep;
         }
     }
     if (plat_mkdir(copy) != 0 && errno != EEXIST) {
@@ -775,21 +794,35 @@ char *path_search(const char *name, const char *exclude_dir,
     return result;
 }
 
+/* True if any character of `s` is a path separator (see is_path_sep) --
+ * distinguishes "looks like a path" (however it's spelled) from "looks
+ * like a bare command name to search $PATH for", the same way a plain
+ * `strchr(s, '/')` did before Windows backslash paths needed recognizing
+ * too. */
+static bool has_path_sep(const char *s) {
+    for (; *s; s++) {
+        if (is_path_sep(*s)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 char *resolve_binary_arg(const char *arg) {
     if (is_executable_file(arg)) {
         return canonicalize(arg);
     }
-    if (strchr(arg, '/') == NULL) {
+    if (!has_path_sep(arg)) {
         return path_search(arg, NULL, NULL);
     }
     return NULL;
 }
 
 char *force_resolve_binary_arg(const char *arg) {
-    if (strchr(arg, '/') == NULL) {
+    if (!has_path_sep(arg)) {
         return NULL;
     }
-    if (arg[0] == '/') {
+    if (path_looks_absolute(arg)) {
         return xstrdup(arg);
     }
     char *cwd = plat_getcwd();

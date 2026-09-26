@@ -1142,9 +1142,9 @@ fallback when it can't find a man page bundled next to itself — see
 On Windows, building from source needs clang-cl/lld-link and an
 MSVC/Windows SDK sysroot (via [`xwin`](https://github.com/Jake-Shadle/xwin),
 no full Visual Studio install required) rather than "any C11 compiler" —
-see [`windows-port.md`](windows-port.md)'s Phase 1 for the exact toolchain
-setup and `cmake/windows-clang-cl.cmake` for the toolchain file itself.
-The prebuilt release binary (above) doesn't need any of this.
+see [`cmake/windows-clang-cl.cmake`](cmake/windows-clang-cl.cmake) for the
+exact toolchain setup and usage. The prebuilt release binary (above)
+doesn't need any of this.
 
 With [`just`](https://github.com/casey/just) installed, `just build`
 autodetects your OS/arch and builds into `build-<os>-<arch>/`:
@@ -1180,10 +1180,10 @@ plain copy when that's not possible, e.g. across drives — see
 [`add`](#add)), PATH integration covers PowerShell and cmd.exe, the
 interactive add wizard uses the native console API, and no man page ships
 there (`shimback --help`/`doctor` output is the fallback, same as
-everywhere else this project treats `--help` as authoritative) — see
-[`windows-port.md`](windows-port.md) for the full story, including a few
-genuine Windows-specific quirks found and fixed along the way. Windows
-ARM64 isn't built yet.
+everywhere else this project treats `--help` as authoritative). A native
+Pester test suite ([`tests/windows/`](tests/windows)) covers this platform
+alongside the POSIX shell suite in [`tests/`](tests). Windows ARM64 isn't
+built yet.
 
 ## License
 

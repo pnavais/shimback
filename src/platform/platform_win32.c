@@ -110,14 +110,42 @@ static void append_quoted_arg(DynBuf *buf, const char *arg) {
     dynbuf_append_char(buf, '"');
 }
 
+/* True for a target CreateProcessW can't run directly: .bat/.cmd aren't
+ * real PE executables, so passing one as lpApplicationName makes Windows
+ * silently re-exec through cmd.exe on its own -- see build_command_line's
+ * own comment for why that matters here. */
+static bool is_batch_file(const char *exe) {
+    size_t len = strlen(exe);
+    return (len >= 4 && _stricmp(exe + len - 4, ".bat") == 0) ||
+           (len >= 4 && _stricmp(exe + len - 4, ".cmd") == 0);
+}
+
 /* CreateProcessW may write through this buffer (it's documented as
  * mutable), so the caller must not treat the result as read-only -- it
- * never is here anyway, since it's freed right after the call. */
-static wchar_t *build_command_line(char *const argv[]) {
+ * never is here anyway, since it's freed right after the call.
+ *
+ * `exe` (the same resolved path passed as lpApplicationName) is needed
+ * here, not just `argv`, because of a genuine Windows quirk found the hard
+ * way: for a .bat/.cmd target, CreateProcessW's own implicit re-exec
+ * through cmd.exe (since a batch file isn't a real PE executable) uses the
+ * command line's *first token* to decide what to run, not the
+ * lpApplicationName path actually passed to it -- confirmed directly with
+ * a minimal CreateProcessW repro (mismatched app/cmdline first token: the
+ * mismatched name failed with cmd.exe's "not recognized" error; making
+ * them match fixed it). Every other call site here builds argv[0] as the
+ * shim's own invoked name (see dispatch.c's build_argv), which is exactly
+ * what breaks this -- any shim wrapping a .bat/.cmd source or fallback
+ * (very common in the Node ecosystem: npm.cmd, yarn.cmd, tsc.cmd, ...)
+ * would otherwise always fail, trying to run its own name as a command.
+ * Fixed by substituting `exe` itself for argv[0] in that one case --
+ * lossless, since a batch script has no way to observe a spoofed argv[0]
+ * (via %0) differently from its own real invocation path anyway. */
+static wchar_t *build_command_line(const char *exe, char *const argv[]) {
     DynBuf buf;
     dynbuf_init(&buf);
+    bool batch = is_batch_file(exe);
     for (int i = 0; argv[i]; i++) {
-        append_quoted_arg(&buf, argv[i]);
+        append_quoted_arg(&buf, (i == 0 && batch) ? exe : argv[i]);
     }
     wchar_t *w = utf8_to_wide(dynbuf_cstr(&buf));
     dynbuf_free(&buf);
@@ -185,7 +213,7 @@ static void set_errno_from_win32(DWORD err) {
 
 int plat_run_inherited(const char *exe, char *const argv[]) {
     wchar_t *wexe = utf8_to_wide(exe);
-    wchar_t *cmdline = build_command_line(argv);
+    wchar_t *cmdline = build_command_line(exe, argv);
     if (!wexe || !cmdline) {
         free(wexe);
         free(cmdline);
@@ -258,7 +286,7 @@ int plat_run_captured(const char *exe, char *const argv[], DynBuf *out, DynBuf *
     SetHandleInformation(err_read, HANDLE_FLAG_INHERIT, 0);
 
     wchar_t *wexe = utf8_to_wide(exe);
-    wchar_t *cmdline = build_command_line(argv);
+    wchar_t *cmdline = build_command_line(exe, argv);
 
     STARTUPINFOW si;
     ZeroMemory(&si, sizeof(si));
@@ -378,7 +406,7 @@ long plat_capture_stdout(const char *exe, char *const argv[], char *buf, size_t 
                                   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
     wchar_t *wexe = utf8_to_wide(exe);
-    wchar_t *cmdline = build_command_line(argv);
+    wchar_t *cmdline = build_command_line(exe, argv);
 
     STARTUPINFOW si;
     ZeroMemory(&si, sizeof(si));

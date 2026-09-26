@@ -175,7 +175,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         }
         if (!resolved_fallback) {
             if (force) {
-                die("add: --force still needs a path for fallback (containing '/'), not a bare "
+                die("add: --force still needs a path for fallback (with a path separator), not a bare "
                     "name -- there's nothing to resolve '%s' against if it doesn't exist "
                     "anywhere yet",
                     fallback_arg);
@@ -213,7 +213,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         }
         if (!resolved_source_for_check) {
             if (force) {
-                die("add: --force still needs a path for source (containing '/'), not a bare "
+                die("add: --force still needs a path for source (with a path separator), not a bare "
                     "name -- there's nothing to resolve '%s' against if it doesn't exist "
                     "anywhere yet",
                     source_arg);
@@ -256,7 +256,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         }
         if (!resolved_route_command) {
             if (force) {
-                die("add: --force still needs a path for --route's command (containing '/'), "
+                die("add: --force still needs a path for --route's command (with a path separator), "
                     "not a bare name -- there's nothing to resolve '%s' against if it doesn't "
                     "exist anywhere yet",
                     route_command_arg);
