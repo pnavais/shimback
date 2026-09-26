@@ -296,6 +296,22 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     char **fallback_argv =
         build_argv(shim_name, entry->fallback_args, entry->fallback_arg_count, argc, argv);
 
+    /* passthrough never goes through the captured trial run below at all --
+     * source runs with live/inherited stdio from the start, so its output
+     * (success or failure) is visible in real time instead of being held
+     * back for a possible replay. Only the exit code is inspected
+     * afterward; any non-zero exit runs fallback the same way. Nothing is
+     * ever captured or hidden here, so diagnostic and the capture_timeout/
+     * capture_limit cutover don't apply -- validate_shim_entry rejects
+     * either being set alongside this policy (see config.h). */
+    if (entry->policy == POLICY_PASSTHROUGH) {
+        int status = run_inherited_or_die(resolved_source, source_argv);
+        if (status == 0) {
+            return status;
+        }
+        return run_inherited_or_die(resolved_fallback, fallback_argv);
+    }
+
     if (entry->policy == POLICY_ROUTE_ARGS) {
         bool matched = false;
         for (int i = 1; i < argc && !matched; i++) {

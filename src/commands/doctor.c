@@ -716,6 +716,21 @@ int cmd_doctor(int argc, char **argv) {
                 free(resolved_route);
             }
         }
+        if (e->policy == POLICY_PASSTHROUGH && e->diagnostic) {
+            report_fail(&issues,
+                         "policy is passthrough, which never captures or hides anything -- "
+                         "diagnostic has nothing to report");
+        }
+        if (e->policy == POLICY_PASSTHROUGH && e->capture_timeout_set) {
+            report_fail(&issues,
+                         "policy is passthrough, which never captures output -- a capture "
+                         "timeout has nothing to apply to");
+        }
+        if (e->policy == POLICY_PASSTHROUGH && e->capture_limit_set) {
+            report_fail(&issues,
+                         "policy is passthrough, which never captures output -- a capture "
+                         "limit has nothing to apply to");
+        }
 
         if (source == SHIM_SOURCE_SPLIT) {
             shim_entry_free(e);

@@ -623,7 +623,23 @@ bool mkdir_p(const char *dir) {
     if (copy[len - 1] == '/') {
         copy[len - 1] = '\0';
     }
-    for (char *p = copy + 1; *p; p++) {
+    /* A Windows drive-letter root ("C:", "D:", ...) always exists and can
+     * never usefully be mkdir'd -- and _wmkdir/stat on it behave
+     * inconsistently across Windows/CRT versions when given the bare "C:"
+     * form with no trailing separator (found the hard way: _wmkdir("C:")
+     * returned EACCES rather than EEXIST on one machine, while on another it
+     * returned EEXIST but the immediately following stat("C:") still
+     * reported it as not a directory) -- so skip straight past "C:/" rather
+     * than treating the drive root as just another path component. A POSIX
+     * absolute path always starts with '/', so this never fires there. */
+    char *start = copy + 1;
+    if (len >= 2 && copy[1] == ':') {
+        start = copy + 2;
+        if (*start == '/') {
+            start++;
+        }
+    }
+    for (char *p = start; *p; p++) {
         if (*p == '/') {
             *p = '\0';
             if (plat_mkdir(copy) != 0 && errno != EEXIST) {

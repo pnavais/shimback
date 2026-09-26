@@ -14,14 +14,14 @@
 | 7 | Packaging (`install.ps1`, CI, release artifact) | ✅ done — `build-windows` is green on a real GitHub Actions run (`workflow_dispatch`, not a tag, so the actual `v0.1.0` release was untouched), producing a genuine, independently-built, working `shimback.exe`. Took 5 CI iterations to get there; see Phase 7's CI addendum for every real bug that surfaced only by actually running it |
 | 8 | Pester test suite | ⬜ not started as a formal suite (this session's verification was manual) |
 
-**Outstanding action item (not a phase)**: re-cut `v0.1.0` itself with
-Windows support included, per the user's explicit decision -- delete the
-existing `v0.1.0` release + tag (nobody has downloaded it; the repo isn't
-published/promoted yet, so this was judged safe), then push a fresh
-`v0.1.0` tag at the current `main` to trigger the real release. A
-`0.1.0-unix` tag already marks the last pre-Windows commit for the
-record. Low-risk now that `build-windows` is proven green via
-`workflow_dispatch` runs against this exact code.
+**Done (was the outstanding action item)**: `v0.1.0` has been re-cut with
+Windows support included, per the user's explicit decision -- the old
+`v0.1.0` release + tag were deleted (nobody had downloaded it; the repo
+wasn't published/promoted yet, so this was judged safe), and a fresh
+`v0.1.0` tag pushed at the post-Windows-port `main`, producing a real
+GitHub Release with all platform assets, including
+`shimback-windows-x86_64.zip`. A `0.1.0-unix` tag still marks the last
+pre-Windows commit for the record.
 
 Build command and everything learned getting Phase 1 working: see Phase 1
 below. Phase 2's design decisions (Windows' fork/exec-failure collapsing,
@@ -577,6 +577,25 @@ with distinct source/fallback values resolving correctly. **Lesson**:
 compiling cleanly proved nothing about `getopt_long`'s correctness — only
 running it with real, distinguishable arguments did.
 
+**Addendum (new `passthrough` policy, added post-1.0-port for both
+platforms)**: a new `POLICY_PASSTHROUGH` skips `plat_run_captured()`
+entirely and calls `plat_run_inherited()` directly for source, then again
+for fallback on any non-zero exit -- exactly the "up-front, live/inherited
+stdio" shape `dispatch_run()` already used for `route-args`/`rewrite`/
+`split-args`/`route-map`, just gated on the exit code afterward instead of
+on the arguments beforehand. No new platform seam needed -- both
+`run_inherited_or_die()` call sites this policy uses already existed.
+`--diagnostic`/`--capture-timeout`/`--capture-limit` are rejected alongside
+this policy in `validate_shim_entry()`, since nothing is ever captured or
+hidden for any of them to apply to. Verified end-to-end on both platforms:
+Windows (a from-scratch sandbox, see this phase's own mkdir_p addendum
+under Phase 4 for why that needed its own fix first) and Linux (WSL,
+compiled directly with `gcc` against the existing source list since no
+`cmake` was available there) -- success, fallback, and both rejected-flag
+cases all behaved identically on both, plus the full existing `tests/*.sh`
+suite (extended with a new `passthrough` section in `test_dispatch.sh`)
+stayed green on Linux.
+
 ### Phase 3 — shim links (add/remove/doctor/info/uninstall)
 
 **✅ DONE as of 2026-09-23**, except the `update`-staleness fix below
@@ -809,6 +828,29 @@ config/data default-location decision — is now resolved and implemented:
   in Phase 1 testing), but worth cleaning up for a polished 1.0, not just
   left forever. Low priority relative to Phase 5, the only thing left
   outstanding from this phase.
+
+**Addendum (found while testing the `passthrough` policy, see Phase 2's own
+addendum below)**: `mkdir_p()`'s per-component walk always tried to
+`mkdir`/`stat` the bare Windows drive-letter root (`"C:"`, `"D:"`, no
+trailing separator) as if it were an ordinary path component, since its
+loop only ever skipped a POSIX leading `/`. `_wmkdir`/`stat` on that bare
+form turned out to behave inconsistently across Windows/CRT versions --
+`_wmkdir("C:")` returned `EACCES` on one machine, immediately aborting the
+whole call; on another it returned `EEXIST` as hoped, but the very next
+`stat("C:")` (no trailing separator) still reported "not a directory",
+aborting it anyway with `ENOTDIR`. Every prior real Windows test this
+project ran happened to install into a location whose full parent chain
+already existed up to and including the drive root reported success for
+unrelated reasons, or never exercised a from-scratch `mkdir_p` on this
+exact machine/CRT combination -- this was only caught because testing
+`passthrough` needed a fully isolated, from-scratch `$XDG_CONFIG_HOME`
+sandbox (real `init`/`add` couldn't be used directly either, since
+`shell.c`'s PowerShell-profile lookup uses the real Windows "Documents"
+special folder regardless of `$HOME`/XDG overrides -- a separate, accepted
+limitation for local dev testing, not a bug). Fixed by skipping straight
+past `"C:/"` (or bare `"C:"`) to the first real path segment, the same way
+the existing code already skips a POSIX leading `/` — a drive root always
+exists and is never usefully `mkdir`'d.
 
 ### Phase 5 — shell integration (shell.c) — the other genuinely new subsystem
 

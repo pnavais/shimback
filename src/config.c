@@ -51,6 +51,7 @@ const char *policy_to_string(Policy p) {
         case POLICY_REWRITE: return "rewrite";
         case POLICY_SPLIT_ARGS: return "split-args";
         case POLICY_ROUTE_MAP: return "route-map";
+        case POLICY_PASSTHROUGH: return "passthrough";
         case POLICY_EXIT_CODE:
         default: return "exit-code";
     }
@@ -85,6 +86,10 @@ bool policy_from_string(const char *s, Policy *out) {
         *out = POLICY_ROUTE_MAP;
         return true;
     }
+    if (strcmp(s, "passthrough") == 0) {
+        *out = POLICY_PASSTHROUGH;
+        return true;
+    }
     return false;
 }
 
@@ -96,6 +101,7 @@ const char *policy_color(Policy p) {
         case POLICY_REWRITE: return ANSI_GREEN;
         case POLICY_SPLIT_ARGS: return ANSI_RED;
         case POLICY_ROUTE_MAP: return ANSI_BLUE;
+        case POLICY_PASSTHROUGH: return ANSI_BOLD ANSI_MAGENTA;
         case POLICY_EXIT_CODE:
         default: return NULL;
     }
@@ -751,6 +757,27 @@ ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t er
     if (entry->policy == POLICY_ROUTE_MAP && entry->route_count == 0) {
         snprintf(errbuf, errbuf_size,
                  "shim '%s' uses policy \"route-map\" but has no routes", entry->name);
+        return CONFIG_ERR_VALIDATION;
+    }
+    if (entry->policy == POLICY_PASSTHROUGH && entry->diagnostic) {
+        snprintf(errbuf, errbuf_size,
+                 "shim '%s' uses policy \"passthrough\", which never captures or hides "
+                 "anything -- \"diagnostic\" has nothing to report",
+                 entry->name);
+        return CONFIG_ERR_VALIDATION;
+    }
+    if (entry->policy == POLICY_PASSTHROUGH && entry->capture_timeout_set) {
+        snprintf(errbuf, errbuf_size,
+                 "shim '%s' uses policy \"passthrough\", which never captures output -- "
+                 "a capture timeout has nothing to apply to",
+                 entry->name);
+        return CONFIG_ERR_VALIDATION;
+    }
+    if (entry->policy == POLICY_PASSTHROUGH && entry->capture_limit_set) {
+        snprintf(errbuf, errbuf_size,
+                 "shim '%s' uses policy \"passthrough\", which never captures output -- "
+                 "a capture limit has nothing to apply to",
+                 entry->name);
         return CONFIG_ERR_VALIDATION;
     }
     /* parse_route_field() lets a hand-edited [[...routes]] block omit either

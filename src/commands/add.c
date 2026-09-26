@@ -25,7 +25,7 @@ static const char *USAGE =
     "usage: shimback add <name> [-s <source>] [--source-arg <arg>]...\n"
     "                    -f <fallback> [--fallback-arg <arg>]...\n"
     "                    [--policy exit-code|heuristic|exit-code-match|route-args|rewrite|\n"
-    "                              split-args|route-map]\n"
+    "                              split-args|route-map|passthrough]\n"
     "                    [--error-pattern <p>]... [--exit-code <code>]...\n"
     "                    [--route-arg <arg>]... [--strip-matched-args]\n"
     "                    [--split-source-arg <arg>]... [--split-fallback-arg <arg>]...\n"
@@ -52,7 +52,11 @@ static const char *USAGE =
     "route-args). No match runs source, exactly like route-args' own source/fallback default.\n"
     "Each route's own extra fixed arguments aren't settable from this flag -- edit the\n"
     "resulting config.toml's `args = [...]` under that route's [[shims.<name>.routes]] block.\n"
-    "Re-running add keeps those args for any route whose <match> and <command> are unchanged.\n";
+    "Re-running add keeps those args for any route whose <match> and <command> are unchanged.\n"
+    "--policy passthrough runs source with its output visible the whole time (no invisible\n"
+    "trial run), falling back on any non-zero exit just like exit-code -- --diagnostic and\n"
+    "--capture-timeout/--capture-limit are rejected with this policy, since nothing is ever\n"
+    "captured or hidden for them to apply to.\n";
 
 #define OPT_STRIP_MATCHED_ARGS 1000
 #define OPT_SOURCE_ARG 1001

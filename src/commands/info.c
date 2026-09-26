@@ -250,6 +250,9 @@ static const char *policy_summary(Policy p) {
             return "Rewrites matching arguments, then runs the source (no fallback).";
         case POLICY_ROUTE_MAP:
             return "Routes to any number of commands, based on the invocation's arguments.";
+        case POLICY_PASSTHROUGH:
+            return "Runs the source with its output visible the whole time (no hidden trial "
+                   "run); falls back if it exits non-zero.";
     }
     return "";
 }
@@ -456,6 +459,9 @@ static void print_overview(const View *v) {
     if (e->diagnostic) {
         pf(M_GREEN "on" M_RESET " " M_DIM "(prints a note to stderr whenever a fallback or "
            "route is taken)" M_RESET "\n");
+    } else if (e->policy == POLICY_PASSTHROUGH) {
+        pf(M_DIM "off (not applicable -- this policy never hides anything to report on)"
+           M_RESET "\n");
     } else {
         pf(M_DIM "off" M_RESET "\n");
     }
@@ -634,6 +640,11 @@ static void print_policy_settings(const View *v) {
             print_yes_no(e->strip_matched_args);
             break;
         }
+        case POLICY_PASSTHROUGH:
+            label("falls back on");
+            pf("any non-zero exit from the source " M_DIM "(same as exit-code, but source and "
+               "fallback both run with live output instead of a hidden trial run)" M_RESET "\n");
+            break;
     }
 }
 

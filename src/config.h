@@ -47,8 +47,20 @@
  * route matching falls through to source, exactly like route-args' own
  * source/fallback default. Unlike route-args, two different routes may
  * point at the very same command with different `args` (see RouteEntry).
+ * POLICY_PASSTHROUGH: like POLICY_EXIT_CODE (fall back on any non-zero
+ * exit), but never captures source's output at all -- source runs with
+ * live/inherited stdio from the start, so its output streams to the
+ * terminal in real time instead of being held back and only replayed on
+ * success. On non-zero exit, fallback also runs with live/inherited stdio.
+ * The tradeoff for this "always visible" behavior is that shimback can no
+ * longer hide a source failure's output the way every capture-based policy
+ * can -- by the time fallback runs, the source's own error output has
+ * already been seen. Because nothing is ever captured or hidden here,
+ * `diagnostic` and the capture_timeout_ms/capture_limit_bytes cutover
+ * (see below) have nothing to apply to and are rejected by
+ * validate_shim_entry if set alongside this policy.
  *
- * Independent of all seven: source_args/fallback_args (see ShimEntry) let
+ * Independent of all eight: source_args/fallback_args (see ShimEntry) let
  * any shim, under any policy, also work as a plain alias with flags baked
  * in -- e.g. source "ls" with source_args ["-ltrah"] always runs
  * "ls -ltrah <whatever else was typed>", the same way `alias cools='ls
@@ -61,6 +73,7 @@ typedef enum {
     POLICY_REWRITE,
     POLICY_SPLIT_ARGS,
     POLICY_ROUTE_MAP,
+    POLICY_PASSTHROUGH,
 } Policy;
 
 /* One entry in a POLICY_ROUTE_MAP shim's `routes` list. Unlike
