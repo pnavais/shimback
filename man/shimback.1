@@ -711,9 +711,12 @@ isn't set); plain ASCII otherwise.
 Read\-only and informational: the exit status is 0 for any shim it can
 describe, however many problems it points out
 .RB ( doctor
-is the full health check). An unknown name fails with a typo suggestion,
-and a symlink with no configuration behind it (an orphan) is reported as
-such and exits 1.
+is the full health check). An unknown name fails with a plain "no shim
+configured" error (unlike
+.BR remove / edit ,
+.B info
+doesn't offer a typo suggestion), and a symlink with no configuration
+behind it (an orphan) is reported as such and exits 1.
 .RS
 .PP
 Example:
