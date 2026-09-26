@@ -94,7 +94,8 @@ see [Building](#building) below.
    arguments against the **fallback** command instead. If the source
    succeeds, its output is passed through as if `shimback` weren't there at
    all. (`route-args`, `split-args`, `rewrite`, and `route-map` are
-   exceptions to this "try source, maybe fall back" shape — see below.)
+   exceptions to this "try source, maybe fall back" shape, and `passthrough`
+   is an exception to the "invisible trial run" below — see below.)
 
 A failed trial run of the source command is designed to be **invisible**:
 its stdout and stderr are captured, not streamed live, and are discarded
@@ -124,7 +125,7 @@ shim — see `--capture-timeout`/`--capture-limit` below.
 ```
 shimback add <name> [-s <source>] [--source-arg <arg>]...
                      -f <fallback> [--fallback-arg <arg>]...
-                     [--policy exit-code|heuristic|exit-code-match|route-args|rewrite|split-args|route-map]
+                     [--policy exit-code|heuristic|exit-code-match|route-args|rewrite|split-args|route-map|passthrough]
                      [--error-pattern <p>]... [--exit-code <code>]...
                      [--route-arg <arg>]... [--strip-matched-args]
                      [--split-source-arg <arg>]... [--split-fallback-arg <arg>]...
@@ -448,8 +449,8 @@ When stdout is a terminal (and [`NO_COLOR`](https://no-color.org/) isn't
 set): shim names are bold cyan; an explicit source is green and `auto` is
 dimmed; the fallback name is blue; the policy column is colored by kind
 (`heuristic` yellow, `exit-code-match` magenta, `route-args` cyan,
-`rewrite` green, `split-args` red, `route-map` blue, `exit-code` uncolored
-as the baseline); `false`
+`rewrite` green, `split-args` red, `route-map` blue, `passthrough` bold
+magenta, `exit-code` uncolored as the baseline); `false`
 diagnostics are dimmed and `true` ones are green; column headers are bold
 yellow. Piping the output (e.g. to a file or another command) disables
 color automatically.
@@ -969,6 +970,25 @@ reported as such and exits `1`.
   in. `add` rejects two routes that would resolve to an identical
   `(command, args)` pair — the second could never fire — both at `add` time
   and on every config load.
+- **`passthrough`**: falls back on any non-zero exit, exactly like
+  `exit-code`, but skips the invisible trial run entirely — the source runs
+  with live/inherited stdio from the start, so its output (success *or*
+  failure) streams to your terminal in real time instead of being held back
+  for a possible replay:
+
+  ```sh
+  shimback add terraform -s /opt/terraform-1.5/bin/terraform \
+      -f /opt/terraform-1.9/bin/terraform \
+      --policy passthrough
+  ```
+
+  This trades away the "invisible" property every other fallback-on-failure
+  policy has: by the time fallback runs, the source's own failure output has
+  already been seen. Useful when you'd rather watch a slow or chatty command
+  run live than wait for it to finish before anything shows up. Because
+  nothing is ever captured or hidden here, `--diagnostic` and
+  `--capture-timeout`/`--capture-limit` are rejected if set alongside this
+  policy — there's nothing for any of them to apply to.
 
 > **Note:** `exit-code` is deliberately the least precise policy (any
 > failure triggers a retry) and needs no extra configuration. `heuristic`,
@@ -986,7 +1006,9 @@ reported as such and exits `1`.
 > (or how to rewrite it) up front from the arguments alone, never looking
 > at the exit code at all. `split-args` is a conditional exception — up
 > front from the arguments when one side fully matches, exit-code-like
-> otherwise.
+> otherwise. `passthrough` is exit-code-like in *when* it falls back, but
+> unlike every other policy here, its trial run is never captured or hidden
+> in the first place — see its own entry above.
 
 ### Diagnostics
 
@@ -997,6 +1019,10 @@ whenever that shim falls back:
 ```
 shimback: 'sed' failed; falling back to /usr/bin/sed
 ```
+
+Not available for `--policy passthrough`: nothing is ever hidden under that
+policy, so there's nothing for a diagnostic to report — `add`/config
+validation rejects the combination.
 
 ## Configuration
 

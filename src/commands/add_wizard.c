@@ -58,11 +58,11 @@ typedef enum {
     PAGE_DONE,
 } PageId;
 
-#define POLICY_COUNT 7
+#define POLICY_COUNT 8
 
 static const char *const POLICY_NAMES[POLICY_COUNT] = {
     "exit-code",       "heuristic", "exit-code-match", "route-args",
-    "rewrite",         "split-args", "route-map",
+    "rewrite",         "split-args", "route-map",      "passthrough",
 };
 static const char *const POLICY_DESCRIPTIONS[POLICY_COUNT] = {
     "Fall back whenever source exits non-zero (the default).",
@@ -72,6 +72,7 @@ static const char *const POLICY_DESCRIPTIONS[POLICY_COUNT] = {
     "Always run source, rewriting matched arguments first; no fallback used.",
     "Pick source or fallback up front, from each side's own most-discriminating args.",
     "Route to any number of other commands, based on the invocation's arguments.",
+    "Like exit-code, but never hides source's output -- no diagnostic or capture limits.",
 };
 
 /* Working state for the whole wizard: one field (plus a "committed yet"
@@ -141,6 +142,11 @@ static PageId after_fallback(Policy policy) {
         case POLICY_REWRITE: return PAGE_REWRITE;
         case POLICY_SPLIT_ARGS: return PAGE_SPLIT_SOURCE_ARGS;
         case POLICY_ROUTE_MAP: return PAGE_ROUTE_MAP;
+        /* passthrough never hides anything, so PAGE_DIAGNOSTIC (which only
+         * asks whether to print a note when a hidden failure falls back)
+         * has nothing to ask -- skip straight to split-config, same as
+         * PAGE_DIAGNOSTIC itself would. */
+        case POLICY_PASSTHROUGH: return PAGE_SPLIT_CONFIG;
         case POLICY_EXIT_CODE:
         default: return PAGE_DIAGNOSTIC;
     }

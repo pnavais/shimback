@@ -439,4 +439,62 @@ assert_contains "add: malformed --capture-limit error is clear" "$(cat "$SANDBOX
 assert_contains "add: --capture-limit 8MiB resolves to bytes" "$(cat "$(config_file)")" \
     'capture_limit = "8388608"'
 
+# --- passthrough policy: like exit-code (falls back on any non-zero exit),
+# but never captures/hides source's output -- unlike every policy above,
+# a failing source's own stdout/stderr must still show up even though
+# fallback also runs. ---
+"$SHIMBACK" add pttool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --policy passthrough >/dev/null
+
+PTTOOL="$(shim_path pttool)"
+
+out="$(FAKE_EXIT_CODE=0 FAKE_STDOUT="hello-out" FAKE_STDERR="hello-err" "$PTTOOL" 2>"$SANDBOX/err")"
+code=$?
+assert_eq "passthrough success: exit status" "0" "$code"
+assert_eq "passthrough success: stdout" "hello-out" "$out"
+assert_eq "passthrough success: stderr" "hello-err" "$(cat "$SANDBOX/err")"
+
+out="$(FAKE_EXIT_CODE=1 FAKE_STDOUT="visible-out" FAKE_STDERR="visible-err" "$PTTOOL" abc \
+    2>"$SANDBOX/err")"
+code=$?
+assert_eq "passthrough failure: falls back to exit 0" "0" "$code"
+assert_contains "passthrough failure: fallback ran" "$out" "FALLBACK_RAN:abc"
+assert_contains "passthrough failure: source stdout is still visible (not hidden)" "$out" \
+    "visible-out"
+assert_contains "passthrough failure: source stderr is still visible (not hidden)" \
+    "$(cat "$SANDBOX/err")" "visible-err"
+
+# --- passthrough + --diagnostic is rejected at add time: nothing is ever
+# hidden under this policy, so there's nothing for diagnostic to report ---
+out="$("$SHIMBACK" add badptdiag -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --policy passthrough \
+    --diagnostic 2>&1)"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add with policy passthrough and --diagnostic should have failed"
+fi
+assert_contains "passthrough + diagnostic: error is clear" "$out" \
+    "which never captures or hides anything"
+assert_not_contains "passthrough + diagnostic: nothing written to config" \
+    "$("$SHIMBACK" list)" "badptdiag"
+
+# --- passthrough + --capture-timeout/--capture-limit are rejected too:
+# nothing is ever captured under this policy, so neither has anything to
+# apply to ---
+out="$("$SHIMBACK" add badptimeout -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --policy passthrough \
+    --capture-timeout 500 2>&1)"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add with policy passthrough and --capture-timeout should have failed"
+fi
+assert_contains "passthrough + capture-timeout: error is clear" "$out" \
+    "a capture timeout has nothing to apply to"
+
+out="$("$SHIMBACK" add badptlimit -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --policy passthrough \
+    --capture-limit 1KiB 2>&1)"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add with policy passthrough and --capture-limit should have failed"
+fi
+assert_contains "passthrough + capture-limit: error is clear" "$out" \
+    "a capture limit has nothing to apply to"
+
 finish

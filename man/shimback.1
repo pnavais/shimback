@@ -1,4 +1,4 @@
-.TH SHIMBACK 1 "2026-09-12" "shimback 0.1.0" "User Commands"
+.TH SHIMBACK 1 "2026-09-26" "shimback 0.1.0" "User Commands"
 .SH NAME
 shimback \- run a primary command, transparently fall back to another
 .SH SYNOPSIS
@@ -6,11 +6,12 @@ shimback \- run a primary command, transparently fall back to another
 .I name
 [\fB\-s\fR \fIsource\fR] [\fB\-\-source\-arg\fR \fIarg\fR]\|.\|.\|.
 \fB\-f\fR \fIfallback\fR [\fB\-\-fallback\-arg\fR \fIarg\fR]\|.\|.\|.
-[\fB\-\-policy\fR \fIexit\-code\fR|\fIheuristic\fR|\fIexit\-code\-match\fR|\fIroute\-args\fR|\fIrewrite\fR|\fIsplit\-args\fR]
+[\fB\-\-policy\fR \fIexit\-code\fR|\fIheuristic\fR|\fIexit\-code\-match\fR|\fIroute\-args\fR|\fIrewrite\fR|\fIsplit\-args\fR|\fIroute\-map\fR|\fIpassthrough\fR]
 [\fB\-\-error\-pattern\fR \fIp\fR]\|.\|.\|. [\fB\-\-exit\-code\fR \fIcode\fR]\|.\|.\|.
 [\fB\-\-route\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-strip\-matched\-args\fR]
 [\fB\-\-split\-source\-arg\fR \fIarg\fR]\|.\|.\|. [\fB\-\-split\-fallback\-arg\fR \fIarg\fR]\|.\|.\|.
-[\fB\-\-rewrite\fR \fIfrom\fR=\fIto\fR]\|.\|.\|. [\fB\-\-diagnostic\fR] [\fB\-\-force\fR]
+[\fB\-\-rewrite\fR \fIfrom\fR=\fIto\fR]\|.\|.\|. [\fB\-\-route\fR \fImatch\fR=\fIcommand\fR]\|.\|.\|.
+[\fB\-\-diagnostic\fR] [\fB\-\-force\fR]
 [\fB\-v\fR|\fB\-\-verbose\fR]
 [\fB\-\-capture\-timeout\fR \fIms\fR] [\fB\-\-capture\-limit\fR \fIsize\fR]
 .br
@@ -131,8 +132,10 @@ at dispatch time, skipping shimback's own shim directory) with
 under the given policy.
 .B \-f
 is required for every policy except
-.IR rewrite ,
-which never uses a fallback at all. Both
+.I rewrite
+and
+.IR route\-map ,
+neither of which ever uses a fallback at all. Both
 .B \-s
 and
 .B \-f
@@ -263,8 +266,10 @@ values land before the (possibly rewritten) invocation arguments, and are
 never themselves subject to rewriting.
 .B \-\-fallback\-arg
 has nothing to attach to without a fallback (only possible under
-.IR rewrite ,
-the one policy where
+.I rewrite
+or
+.IR route\-map ,
+the two policies where
 .B \-f
 is optional) \(em given without one, it's discarded with a yellow warning
 rather than kept around uselessly. The interactive wizard (below) goes a
@@ -380,12 +385,14 @@ route args and strip\-matched\-args for
 .IR route\-args ,
 source/fallback route args and strip\-matched\-args for
 .IR split\-args ,
-and each
+each
 .I from
 ->
 .I to
 pair for
-.IR rewrite ).
+.IR rewrite ,
+and every route (plus its own baked\-in args) for
+.IR route\-map ).
 A shim with none of the above configured has nothing extra to show.
 .RS
 .PP
@@ -814,6 +821,91 @@ shimback add ls \-s /bin/ls \-\-policy rewrite \-\-rewrite "\-\-full=\-ltrah"
 .fi
 .RE
 .RE
+.TP
+.B route\-map
+.I route\-args
+generalized from a single fallback to any number of them. Like
+.IR rewrite ,
+.B \-\-fallback
+is optional and never used. Each
+.BI "\-\-route " match = command
+rule (repeatable) is checked, in order, against the invocation's arguments;
+the first one whose
+.I match
+exactly equals one of them runs
+.I command
+instead of the source, live and inherited, no capture, no retry. No match
+at all runs the source, exactly like
+.IR route\-args \(aq
+own no\-match case. Unlike
+.IR route\-args ,
+the same command can appear in more than one route \(em the motivating case
+is a version\-selecting shim.
+.B \-\-strip\-matched\-args
+works the same as for
+.IR route\-args ,
+removing whichever route's matched token before forwarding the rest. A
+route can also carry its own fixed arguments \(em not settable via
+.B \-\-route
+itself (its
+.I match=command
+shape has no room for a third field without ambiguous shell quoting), but
+editable directly in
+.IR config.toml 's
+.I args = [...]
+under that route's
+.I [[shims.<name>.routes]]
+block \(em which is what lets the same command be reused across two routes
+with different behavior.
+.B add
+rejects two routes that would resolve to an identical
+.RI ( command ", " args )
+pair \(em the second could never fire \(em both at
+.B add
+time and on every config load. Requires at least one
+.BR \-\-route .
+.RS
+.PP
+Example:
+.RS
+.nf
+shimback add java \-s /opt/java17/bin/java \e
+    \-\-policy route\-map \e
+    \-\-route "\-\-v8=/opt/java8/bin/java" \e
+    \-\-route "\-\-v25=/opt/java25/bin/java"
+.fi
+.RE
+.RE
+.TP
+.B passthrough
+Falls back on any non\-zero exit, exactly like
+.IR exit\-code ,
+but skips the invisible trial run entirely \(em the source runs with live,
+inherited stdio from the start, so its output (success
+.I or
+failure) streams to the terminal in real time instead of being held back
+for a possible replay. This trades away the "invisible" property every
+other fallback\-on\-failure policy has: by the time fallback runs, the
+source's own failure output has already been seen. Because nothing is ever
+captured or hidden under this policy,
+.B \-\-diagnostic
+and
+.B \-\-capture\-timeout
+/
+.B \-\-capture\-limit
+are rejected if set alongside it \(em there is nothing for any of them to
+apply to.
+.RS
+.PP
+Example:
+.RS
+.nf
+shimback add terraform \-s /opt/terraform\-1.5/bin/terraform \e
+    \-f /opt/terraform\-1.9/bin/terraform \e
+    \-\-policy passthrough
+.fi
+.RE
+.RE
 .SH DIAGNOSTICS
 By default, falling back leaves no trace. Pass
 .B \-\-diagnostic
@@ -828,6 +920,12 @@ back:
 shimback: 'sed' failed; falling back to /usr/bin/sed
 .fi
 .RE
+Not available for
+.IR passthrough :
+nothing is ever hidden under that policy, so there is nothing for a
+diagnostic to report \(em
+.B add
+and config validation reject the combination.
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/shimback/config.toml
