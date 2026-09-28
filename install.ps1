@@ -1,8 +1,7 @@
 # shimback installer -- downloads the right prebuilt binary for this
 # machine from GitHub Releases and hands it to `shimback install`, which
 # does the rest (copies itself to a stable location, sets up PATH, installs
-# the man page). Windows x86_64 only -- see windows-port.md's "Resolved
-# decisions" for why ARM64 isn't built yet. Usage:
+# the man page). Windows x86_64 and arm64. Usage:
 #
 #   irm https://raw.githubusercontent.com/pnavais/shimback/main/install.ps1 | iex
 #
@@ -57,10 +56,30 @@ function Write-Indented($text) {
     ($text -split "`r?`n") | ForEach-Object { Write-Host "  $_" }
 }
 
+# Reports THIS PROCESS's own architecture, not necessarily the underlying
+# hardware's -- e.g. an x64 PowerShell running via Windows' x64-on-ARM64
+# emulation layer reports "x86_64" here, not "arm64". Deliberately matches
+# install.sh's own uname()-based detect_arch(), which has the equivalent
+# behavior for a Rosetta-translated shell on Apple Silicon (uname -m
+# reports the process's own architecture there too): install to whatever
+# this installer is actually running as, not necessarily the fastest
+# option the hardware could support.
+function Get-WindowsArch {
+    switch ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture) {
+        "X64" { return "x86_64" }
+        "Arm64" { return "arm64" }
+        default {
+            Die "unsupported architecture '$_' -- shimback ships Windows x86_64 and arm64 binaries only. Build from source instead: https://github.com/$Repo#building"
+        }
+    }
+}
+
 function Main {
     Write-Banner
 
-    $asset = "shimback-windows-x86_64.zip"
+    $arch = Get-WindowsArch
+    $pkgName = "shimback-windows-$arch"
+    $asset = "$pkgName.zip"
     $version = if ($env:SHIMBACK_VERSION) { $env:SHIMBACK_VERSION } else { "latest" }
     $baseUrl = if ($version -eq "latest") {
         "https://github.com/$Repo/releases/latest/download"
@@ -80,7 +99,7 @@ function Main {
         try {
             Invoke-WebRequest -Uri $url -OutFile $assetPath -UseBasicParsing
         } catch {
-            Die "failed to download $url -- check that a '$version' release exists for windows/x86_64"
+            Die "failed to download $url -- check that a '$version' release exists for windows/$arch"
         }
         Write-Host "  [ok] Download complete"
 
@@ -102,7 +121,7 @@ function Main {
         Write-Host "  [ok] Checksum verified"
 
         Expand-Archive -LiteralPath $assetPath -DestinationPath $tmpDir -Force
-        $bin = Join-Path $tmpDir "shimback-windows-x86_64\shimback.exe"
+        $bin = Join-Path $tmpDir "$pkgName\shimback.exe"
         if (-not (Test-Path $bin)) {
             Die "downloaded archive didn't contain an executable 'shimback.exe' binary"
         }

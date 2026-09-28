@@ -86,15 +86,36 @@ jobs:
           name: shimback-${{ matrix.os_name }}-${{ matrix.arch }}
           path: shimback-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz
 
-  # Windows x86_64 (ARM64 deferred -- see windows-port.md's "Resolved
-  # decisions"). A separate job rather than another matrix leg on `build`
-  # above: every step here needs its own PowerShell/toolchain/packaging
-  # logic, not just a different shell for the same commands, so folding it
-  # into the shared macOS/Linux step list via `if: runner.os == 'Windows'`
-  # on each one would be messier than just keeping it apart.
+  # Windows x86_64 and arm64. ARM64 was deferred for a long time (see git
+  # history's now-folded-in windows-port.md "Resolved decisions") purely
+  # because there was no way to run this job's Pester suite on real Windows
+  # ARM64 hardware in CI -- cross-compiling it was proven working from the
+  # start (a hello-world binary's PE header confirmed as genuine
+  # IMAGE_FILE_MACHINE_ARM64). GitHub's windows-11-arm hosted runners (GA,
+  # free for public repos) close that gap, so this is now a matrix over the
+  # two Windows arches -- unlike the Windows-vs-macOS/Linux split above,
+  # these two legs share every single step, just a different runner,
+  # target triple, xwin --arch, and asset name.
   build-windows:
-    runs-on: windows-2025
-    name: build (windows-x86_64)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            xwin_arch: x86_64
+          - arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            # xwin's own vocabulary is "aarch64", not "arm64" -- matches
+            # `matrix.target`'s triple, kept as its own field since the
+            # package/asset name below deliberately uses "arm64" instead,
+            # for consistency with the macOS/Linux arm64 asset names above.
+            xwin_arch: aarch64
+
+    runs-on: ${{ matrix.runner }}
+    name: build (windows-${{ matrix.arch }})
 
     steps:
       - uses: actions/checkout@v7
@@ -103,37 +124,44 @@ jobs:
         run: choco install ninja --no-progress -y
 
       # xwin (https://github.com/Jake-Shadle/xwin) splats an MSVC/Windows
-      # SDK sysroot without a full Visual Studio install -- see
-      # windows-port.md's Phase 1 for why this project builds with
-      # clang-cl/lld-link against a splatted sysroot rather than MSVC's
-      # own cl.exe/link.exe directly. `cargo install` rather than pinning
-      # a prebuilt-binary download URL: Rust/cargo already ships on
-      # GitHub's windows runners, and this avoids a release-asset URL
-      # that could silently break if xwin's own artifact naming changes.
+      # SDK sysroot without a full Visual Studio install -- see the
+      # toolchain file (cmake/windows-clang-cl.cmake) for why this project
+      # builds with clang-cl/lld-link against a splatted sysroot rather
+      # than MSVC's own cl.exe/link.exe directly. `cargo install` rather
+      # than pinning a prebuilt-binary download URL: Rust/cargo already
+      # ships on GitHub's windows runners (both x86_64 and arm64), and this
+      # avoids a release-asset URL that could silently break if xwin's own
+      # artifact naming changes.
       - name: Install xwin
         run: cargo install xwin --locked
 
       # D:\, not C:\ -- xwin moves (renames) files from its cache into the
       # splat output as a fast path, and the checkout/work directory on
-      # GitHub's windows runners lives on D:\ (confirmed directly: a first
-      # attempt at C:\msvc-sysroot failed with "The system cannot move the
-      # file to a different disk drive" -- the exact EXDEV-class problem
-      # this whole port spent a lot of time on elsewhere, this time hitting
-      # xwin itself rather than shimback).
+      # GitHub's windows-2025 runner lives on D:\ (confirmed directly: a
+      # first attempt at C:\msvc-sysroot failed with "The system cannot
+      # move the file to a different disk drive" -- the exact EXDEV-class
+      # problem this whole port spent a lot of time on elsewhere, that time
+      # hitting xwin itself rather than shimback). Assumed, not yet
+      # independently confirmed, to hold the same way on windows-11-arm --
+      # both images come from the same runner-images build pipeline, so
+      # this is the reasonable starting assumption, not a guess pulled from
+      # nowhere; a real CI run is what actually settles it.
       - name: Splat MSVC/Windows SDK sysroot
-        run: xwin --accept-license splat --output D:\msvc-sysroot
+        run: xwin --accept-license --arch ${{ matrix.xwin_arch }} splat --output D:\msvc-sysroot
 
       # clang-cl/lld-link ship as part of the LLVM install already present
-      # on GitHub's windows-2025 runner image, at this same path used for
-      # local development (see windows-port.md Phase 1) -- not installed
-      # separately here. CMAKE_TOOLCHAIN_FILE is quoted -- confirmed the
-      # hard way, both here and earlier during local setup, that pwsh (the
-      # default shell for `run:` steps on this runner) mangles an unquoted
+      # on GitHub's windows runner images, at this same path -- confirmed
+      # directly for windows-2025; assumed, same reasoning as the D:\ note
+      # above, to hold for windows-11-arm too (same build pipeline, same
+      # Chocolatey-based LLVM install step). Not installed separately here.
+      # CMAKE_TOOLCHAIN_FILE is quoted -- confirmed the hard way, both here
+      # and earlier during local setup, that pwsh (the default shell for
+      # `run:` steps on these runners) mangles an unquoted
       # `cmake/windows-clang-cl.cmake` value, which CMake then reports as
       # "Could not find toolchain file: cmake/windows-clang-cl" (the
       # trailing ".cmake" silently dropped).
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_TOOLCHAIN_FILE=cmake/windows-clang-cl.cmake" -DSHIMBACK_LLVM_BIN="C:\Program Files\LLVM\bin" -DSHIMBACK_MSVC_SYSROOT="D:\msvc-sysroot"
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_TOOLCHAIN_FILE=cmake/windows-clang-cl.cmake" -DSHIMBACK_LLVM_BIN="C:\Program Files\LLVM\bin" -DSHIMBACK_MSVC_SYSROOT="D:\msvc-sysroot" -DSHIMBACK_WIN_TARGET=${{ matrix.target }}
 
       - name: Build
         run: cmake --build build --config Release
@@ -142,8 +170,12 @@ jobs:
       # entirely POSIX-shell/symlink-based, predating this port, and would
       # fail on assumptions (symlinks, `.exe`-less names) this port
       # deliberately doesn't share, not on anything actually broken. The
-      # Windows-native Pester suite below (tests/windows/, Phase 8) is this
-      # job's real correctness gate instead.
+      # Windows-native Pester suite below (tests/windows/) is this job's
+      # real correctness gate instead -- and, for the arm64 leg
+      # specifically, the reason this needs a native windows-11-arm runner
+      # in the first place: an ARM64 Windows binary can't run on x86_64
+      # Windows at all (no such emulation direction exists), so there's no
+      # way to actually exercise it short of real ARM64 hardware.
       #
       # Pinned via -RequiredVersion, not whatever this runner image already
       # has -- same reasoning as xwin's own --locked install above.
@@ -175,7 +207,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $pkgDir = "shimback-windows-x86_64"
+          $pkgDir = "shimback-windows-${{ matrix.arch }}"
           New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
           Copy-Item build\shimback.exe $pkgDir\
           Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE $pkgDir\
@@ -184,14 +216,14 @@ jobs:
       # Mirrors the macOS/Linux smoke test above (re-derive everything
       # from the packaged archive itself, on the same runner, rather than
       # trusting the in-tree build dir): no man page (Windows builds don't
-      # ship one, see windows-port.md Phase 7), `.exe`-suffixed binary,
-      # and install.ps1's own expected archive layout
-      # (shimback-windows-x86_64\shimback.exe) checked directly.
+      # ship one), `.exe`-suffixed binary, and install.ps1's own expected
+      # archive layout (shimback-windows-<arch>\shimback.exe) checked
+      # directly.
       - name: Smoke-test the packaged archive
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $pkgDir = "shimback-windows-x86_64"
+          $pkgDir = "shimback-windows-${{ matrix.arch }}"
           $smokeDir = Join-Path $env:TEMP ("shimback-smoke." + [System.IO.Path]::GetRandomFileName())
           Expand-Archive -LiteralPath "$pkgDir.zip" -DestinationPath $smokeDir
           $extracted = Join-Path $smokeDir $pkgDir
@@ -209,8 +241,8 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: shimback-windows-x86_64
-          path: shimback-windows-x86_64.zip
+          name: shimback-windows-${{ matrix.arch }}
+          path: shimback-windows-${{ matrix.arch }}.zip
 
   release:
     needs: [build, build-windows]

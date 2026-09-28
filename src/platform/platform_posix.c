@@ -11,6 +11,7 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h> /* pid_t */
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
@@ -302,6 +303,23 @@ char *plat_self_exe_path(void) {
     return resolved;
 }
 #endif
+
+bool plat_process_arch(char *out, size_t out_size) {
+    struct utsname u;
+    if (uname(&u) != 0) {
+        return false;
+    }
+    const char *arch;
+    if (strcmp(u.machine, "x86_64") == 0 || strcmp(u.machine, "amd64") == 0) {
+        arch = "x86_64";
+    } else if (strcmp(u.machine, "arm64") == 0 || strcmp(u.machine, "aarch64") == 0) {
+        arch = "arm64";
+    } else {
+        return false;
+    }
+    snprintf(out, out_size, "%s", arch);
+    return true;
+}
 
 char **plat_list_dir(const char *dir) {
     DIR *d = opendir(dir);

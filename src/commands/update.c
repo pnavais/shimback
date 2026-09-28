@@ -10,7 +10,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #ifndef _WIN32
-#include <sys/utsname.h> /* no Windows equivalent -- see platform_asset() */
+#include <sys/utsname.h> /* no Windows equivalent -- see platform_asset()'s Windows branch */
 #endif
 #include <unistd.h>
 
@@ -136,36 +136,28 @@ static void rmtree(const char *path) {
  * machine's"). Returns false for a platform shimback ships no binary for. */
 static bool platform_asset(char *out, size_t out_size) {
 #ifdef _WIN32
-    /* uname()/struct utsname have no Windows equivalent at all -- but
-     * Windows doesn't need one here: unlike macOS/Linux, this project
-     * only ever builds/ships Windows x86_64 (ARM64 deferred, see
-     * windows-port.md's "Resolved decisions"), so there's nothing to
-     * detect. */
-    snprintf(out, out_size, "shimback-windows-x86_64");
-    return true;
+    const char *os = "windows";
 #else
+    const char *os = NULL;
     struct utsname u;
     if (uname(&u) != 0) {
         return false;
     }
-    const char *os = NULL;
     if (strcmp(u.sysname, "Darwin") == 0) {
         os = "macos";
     } else if (strcmp(u.sysname, "Linux") == 0) {
         os = "linux";
     }
-    const char *arch = NULL;
-    if (strcmp(u.machine, "x86_64") == 0 || strcmp(u.machine, "amd64") == 0) {
-        arch = "x86_64";
-    } else if (strcmp(u.machine, "arm64") == 0 || strcmp(u.machine, "aarch64") == 0) {
-        arch = "arm64";
+    if (!os) {
+        return false;
     }
-    if (!os || !arch) {
+#endif
+    char arch[16];
+    if (!plat_process_arch(arch, sizeof(arch))) {
         return false;
     }
     snprintf(out, out_size, "shimback-%s-%s", os, arch);
     return true;
-#endif
 }
 
 /* Finds `asset`'s digest in a SHA256SUMS file ("<hex>  <name>" per line, the
