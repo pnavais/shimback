@@ -135,25 +135,30 @@ jobs:
       - name: Install xwin
         run: cargo install xwin --locked
 
-      # D:\, not C:\ -- xwin moves (renames) files from its cache into the
-      # splat output as a fast path, and the checkout/work directory on
-      # GitHub's windows-2025 runner lives on D:\ (confirmed directly: a
-      # first attempt at C:\msvc-sysroot failed with "The system cannot
-      # move the file to a different disk drive" -- the exact EXDEV-class
-      # problem this whole port spent a lot of time on elsewhere, that time
-      # hitting xwin itself rather than shimback). Assumed, not yet
-      # independently confirmed, to hold the same way on windows-11-arm --
-      # both images come from the same runner-images build pipeline, so
-      # this is the reasonable starting assumption, not a guess pulled from
-      # nowhere; a real CI run is what actually settles it.
+      # $env:RUNNER_TEMP, not a hardcoded drive letter -- xwin moves
+      # (renames) files from its cache into the splat output as a fast
+      # path, which fails across drives ("The system cannot move the file
+      # to a different disk drive", the exact EXDEV-class problem this
+      # whole port spent a lot of time on elsewhere, that time hitting
+      # xwin itself rather than shimback). The fix isn't "use D:\" as such
+      # -- it's "use whatever drive this job's own scratch space is
+      # already on", which is exactly what RUNNER_TEMP is *for* and is
+      # guaranteed to be (that's why GitHub puts it, and the checkout, on
+      # D:\ on windows-2025 in the first place). A hardcoded `D:\msvc-
+      # sysroot` was tried here first and confirmed, for real, to fail
+      # outright on windows-11-arm ("The system cannot find the path
+      # specified" -- no D:\ drive exists on that image at all), which is
+      # exactly the kind of per-runner-image assumption this rewrite stops
+      # needing to make.
       - name: Splat MSVC/Windows SDK sysroot
-        run: xwin --accept-license --arch ${{ matrix.xwin_arch }} splat --output D:\msvc-sysroot
+        shell: pwsh
+        run: xwin --accept-license --arch ${{ matrix.xwin_arch }} splat --output "$env:RUNNER_TEMP\msvc-sysroot"
 
       # clang-cl/lld-link ship as part of the LLVM install already present
       # on GitHub's windows runner images, at this same path -- confirmed
-      # directly for windows-2025; assumed, same reasoning as the D:\ note
-      # above, to hold for windows-11-arm too (same build pipeline, same
-      # Chocolatey-based LLVM install step). Not installed separately here.
+      # directly for windows-2025 and, per the same build pipeline
+      # producing both images, assumed (not yet independently confirmed)
+      # to hold for windows-11-arm too. Not installed separately here.
       # CMAKE_TOOLCHAIN_FILE is quoted -- confirmed the hard way, both here
       # and earlier during local setup, that pwsh (the default shell for
       # `run:` steps on these runners) mangles an unquoted
@@ -161,7 +166,8 @@ jobs:
       # "Could not find toolchain file: cmake/windows-clang-cl" (the
       # trailing ".cmake" silently dropped).
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_TOOLCHAIN_FILE=cmake/windows-clang-cl.cmake" -DSHIMBACK_LLVM_BIN="C:\Program Files\LLVM\bin" -DSHIMBACK_MSVC_SYSROOT="D:\msvc-sysroot" -DSHIMBACK_WIN_TARGET=${{ matrix.target }}
+        shell: pwsh
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_TOOLCHAIN_FILE=cmake/windows-clang-cl.cmake" -DSHIMBACK_LLVM_BIN="C:\Program Files\LLVM\bin" -DSHIMBACK_MSVC_SYSROOT="$env:RUNNER_TEMP\msvc-sysroot" -DSHIMBACK_WIN_TARGET=${{ matrix.target }}
 
       - name: Build
         run: cmake --build build --config Release
