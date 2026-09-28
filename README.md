@@ -2,7 +2,7 @@
 
 [![Build](https://github.com/pnavais/shimback/actions/workflows/release.yml/badge.svg)](https://github.com/pnavais/shimback/actions/workflows/release.yml) [![Version](https://img.shields.io/github/v/release/pnavais/shimback?label=version)](https://github.com/pnavais/shimback/releases/latest)
 
-![shimback banner](assets/banner.png)
+![shimback banner](assets/banner-white.png)
 
 `shimback` is a small, dependency-free command-line shim: it wraps a command
 name (e.g. `sed`) with a **source** binary to run and a **fallback** binary
