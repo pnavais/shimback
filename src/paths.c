@@ -516,6 +516,8 @@ bool create_shim_link(const char *target, const char *link_path, const char *cmd
         warn("%s: also failed to copy shimback's binary to %s as a fallback: %s", cmd_prefix,
              link_path, strerror(errno));
     }
+#else
+    (void)cmd_prefix;
 #endif
     errno = link_errno; /* restore -- copy_executable's own failure path may have changed it,
                           * and the caller's format_link_create_error() call needs to see the
