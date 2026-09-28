@@ -54,11 +54,22 @@ if(NOT DEFINED SHIMBACK_LLVM_BIN)
     set(SHIMBACK_LLVM_BIN "")
   endif()
 endif()
+# CMAKE_HOST_WIN32, not CMAKE_SYSTEM_NAME (already forced to "Windows" above,
+# since that's the *target*) -- this toolchain file is also used to
+# cross-compile for Windows from a macOS/Linux dev machine (e.g. via
+# Homebrew's llvm/lld formulae), where the host-side clang-cl/lld-link
+# binaries are plain Mach-O/ELF executables with no ".exe" suffix, even
+# though everything they *produce* is a Windows PE file either way.
+if(CMAKE_HOST_WIN32)
+  set(SHIMBACK_HOST_EXE_SUFFIX ".exe")
+else()
+  set(SHIMBACK_HOST_EXE_SUFFIX "")
+endif()
 if(SHIMBACK_LLVM_BIN)
-  set(CMAKE_C_COMPILER "${SHIMBACK_LLVM_BIN}/clang-cl.exe" CACHE FILEPATH "")
-  set(CMAKE_LINKER "${SHIMBACK_LLVM_BIN}/lld-link.exe" CACHE FILEPATH "")
-  set(CMAKE_RC_COMPILER "${SHIMBACK_LLVM_BIN}/llvm-rc.exe" CACHE FILEPATH "")
-  set(CMAKE_MT "${SHIMBACK_LLVM_BIN}/llvm-mt.exe" CACHE FILEPATH "")
+  set(CMAKE_C_COMPILER "${SHIMBACK_LLVM_BIN}/clang-cl${SHIMBACK_HOST_EXE_SUFFIX}" CACHE FILEPATH "")
+  set(CMAKE_LINKER "${SHIMBACK_LLVM_BIN}/lld-link${SHIMBACK_HOST_EXE_SUFFIX}" CACHE FILEPATH "")
+  set(CMAKE_RC_COMPILER "${SHIMBACK_LLVM_BIN}/llvm-rc${SHIMBACK_HOST_EXE_SUFFIX}" CACHE FILEPATH "")
+  set(CMAKE_MT "${SHIMBACK_LLVM_BIN}/llvm-mt${SHIMBACK_HOST_EXE_SUFFIX}" CACHE FILEPATH "")
 else()
   set(CMAKE_C_COMPILER clang-cl CACHE FILEPATH "")
   set(CMAKE_LINKER lld-link CACHE FILEPATH "")

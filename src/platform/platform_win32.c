@@ -507,6 +507,33 @@ char *plat_self_exe_path(void) {
     return result;
 }
 
+bool plat_process_arch(char *out, size_t out_size) {
+    /* IsWow64Process2 (Windows 10 1709+) reports both this process's own
+     * machine type and the underlying native one, separately -- exactly
+     * what's needed to report the *process's own* architecture even under
+     * emulation (see platform.h's doc comment): when process_machine comes
+     * back IMAGE_FILE_MACHINE_UNKNOWN, nothing is being translated, so
+     * native_machine is this process's own architecture too; otherwise
+     * process_machine (what this binary was actually built as, e.g. AMD64
+     * for an x86_64 build running via Windows' x64-on-ARM64 layer) is the
+     * one to report, not native_machine (the real ARM64 hardware). */
+    USHORT process_machine = IMAGE_FILE_MACHINE_UNKNOWN;
+    USHORT native_machine = IMAGE_FILE_MACHINE_UNKNOWN;
+    if (!IsWow64Process2(GetCurrentProcess(), &process_machine, &native_machine)) {
+        return false;
+    }
+    USHORT effective =
+        (process_machine != IMAGE_FILE_MACHINE_UNKNOWN) ? process_machine : native_machine;
+    const char *arch;
+    switch (effective) {
+        case IMAGE_FILE_MACHINE_AMD64: arch = "x86_64"; break;
+        case IMAGE_FILE_MACHINE_ARM64: arch = "arm64"; break;
+        default: return false;
+    }
+    snprintf(out, out_size, "%s", arch);
+    return true;
+}
+
 char **plat_list_dir(const char *dir) {
     char pattern_utf8[4160];
     snprintf(pattern_utf8, sizeof(pattern_utf8), "%s\\*", dir);

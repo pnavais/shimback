@@ -83,6 +83,20 @@ char *plat_home_dir(void);
  * it can't be determined -- same reasoning as plat_home_dir. */
 char *plat_self_exe_path(void);
 
+/* This *running binary's own* CPU architecture, as a short lowercase string
+ * ("x86_64"/"arm64", matching `uname -m`'s vocabulary and this project's own
+ * release-asset naming) -- for `update`'s asset selection. Deliberately the
+ * build actually running, not necessarily the underlying hardware: POSIX's
+ * uname() already reports a Rosetta-translated x86_64 process's own
+ * architecture on Apple Silicon, not the native arm64 chip underneath, and
+ * Windows' x64-on-ARM64 emulation is handled the same way here (via
+ * IsWow64Process2) for the same reason -- `update` must never silently
+ * switch someone onto a different-architecture build than the one they
+ * currently have installed and running. Writes into `out` (`out_size`
+ * bytes, NUL-terminated); returns false if the architecture isn't one this
+ * project ships (or couldn't be determined at all). */
+bool plat_process_arch(char *out, size_t out_size);
+
 /* Lists every entry name directly inside `dir` except "." and ".."
  * (NUL-terminated array of names, not full paths -- join with `dir`
  * yourself). NULL if `dir` doesn't exist or can't be opened, which every
