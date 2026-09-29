@@ -64,47 +64,20 @@ Describe "hard links" {
     }
 
     It "falls back to a copy across drives, with the restart-your-shell reminder" {
-        # TEMPORARY diagnostics -- remove once the windows-arm64 CI behavior here is understood.
-        Write-Host "DIAG exe path: $(Get-ShimbackExe)"
-        Write-Host "DIAG exe drive name: $((Get-Item (Get-ShimbackExe)).PSDrive.Name)"
-        Get-PSDrive -PSProvider FileSystem | ForEach-Object {
-            Write-Host "DIAG PSDrive: Name=$($_.Name) Root=$($_.Root) Free=$($_.Free) Used=$($_.Used)"
-        }
-
+        # Get-PSDrive -PSProvider FileSystem doesn't only return real OS drive
+        # letters -- confirmed the hard way on a windows-11-arm hosted runner,
+        # which (alongside the real "C") also lists "Temp" (a PowerShell-only
+        # alias into C:\Users\...\Temp) and "TestDrive" (Pester's own sandbox
+        # alias), neither a real second volume. Restricting to single-letter
+        # names is what a real drive letter always looks like, and is enough
+        # to rule both pseudo-drives out; a genuinely different letter is
+        # always a different volume on Windows (unlike POSIX bind mounts),
+        # so no further same-volume check is needed once this filters clean.
         $otherDrive = (Get-PSDrive -PSProvider FileSystem | Where-Object {
-                $_.Name -ne (Get-Item (Get-ShimbackExe)).PSDrive.Name -and $_.Free -gt 10MB
+                $_.Name -match '^[A-Za-z]$' -and $_.Name -ne (Get-Item (Get-ShimbackExe)).PSDrive.Name -and $_.Free -gt 10MB
             } | Select-Object -First 1).Name
-        Write-Host "DIAG selected otherDrive: '$otherDrive'"
         if (-not $otherDrive) {
             Set-ItResult -Skipped -Because "no second writable drive available on this machine to force a cross-drive copy"
-            return
-        }
-
-        # A different drive LETTER doesn't guarantee a different NTFS volume --
-        # confirmed the hard way on a windows-11-arm hosted runner, which offers
-        # a second FileSystem PSDrive that isn't actually a separate volume from
-        # the exe's own drive, so CreateHardLinkW succeeds for real across them
-        # and this whole test's premise (forcing the copy-fallback path) never
-        # fires. shimback's own fallback is driven by whether CreateHardLinkW
-        # itself succeeds, not by drive letter, so probe with that exact
-        # mechanism (fsutil hardlink create) before trusting the letter.
-        $probeSrc = Join-Path $env:TEMP ("shimback-hardlink-probe-" + [Guid]::NewGuid().ToString("N") + ".tmp")
-        $probeDst = Join-Path "${otherDrive}:\" ("shimback-hardlink-probe-" + [Guid]::NewGuid().ToString("N") + ".tmp")
-        Set-Content -Path $probeSrc -Value "probe"
-        try {
-            $probeOut = & fsutil hardlink create $probeDst $probeSrc 2>&1 | Out-String
-            $sameVolume = ($LASTEXITCODE -eq 0)
-            Write-Host "DIAG probeSrc: $probeSrc"
-            Write-Host "DIAG probeDst: $probeDst"
-            Write-Host "DIAG fsutil exit: $LASTEXITCODE output: $probeOut"
-            Write-Host "DIAG sameVolume: $sameVolume"
-        }
-        finally {
-            Remove-Item -Force $probeSrc -ErrorAction SilentlyContinue
-            Remove-Item -Force $probeDst -ErrorAction SilentlyContinue
-        }
-        if ($sameVolume) {
-            Set-ItResult -Skipped -Because "'$otherDrive' isn't actually a separate volume from the exe's own drive on this machine, so a real cross-volume drive isn't available to force the copy fallback"
             return
         }
 
