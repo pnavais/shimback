@@ -145,6 +145,15 @@ char *shim_bin_dir(void) {
     return result;
 }
 
+char *default_backup_dir(void) {
+    char *dir = base_dir(xdg_config_home, "APPDATA", ".config");
+    char *shimback_dir = path_join(dir, "shimback");
+    free(dir);
+    char *result = path_join(shimback_dir, "backups");
+    free(shimback_dir);
+    return result;
+}
+
 char *split_config_filename(const char *name) {
     /* Defense in depth, not the primary check: every legitimate caller is
      * expected to have already validated `name` against

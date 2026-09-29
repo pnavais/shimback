@@ -176,6 +176,18 @@ typedef struct {
     size_t capture_limit_bytes;  /* global default for the same cutover's size half; always
                                    * populated the same way (see
                                    * SHIMBACK_DEFAULT_CAPTURE_LIMIT_BYTES). */
+    char *backup_dir;            /* owned; NULL means the default (see default_backup_dir(),
+                                   * paths.h) -- top-level `backup_dir = "<path>"`. */
+    char *backup_name_pattern;   /* owned; NULL means the default
+                                   * ("shimback_backup_<hostname>_<timestamp>") -- top-level
+                                   * `backup_name = "<pattern>"`. "<hostname>"/"<timestamp>" are
+                                   * the two placeholders `export` substitutes; the ".sz"
+                                   * extension is never part of the pattern, always appended by
+                                   * `export` itself. */
+    bool backup_override;        /* top-level `backup_override = true/false` (default false):
+                                   * when true, `export` always overwrites a same-named backup
+                                   * in place, regardless of whether --override was passed on
+                                   * that invocation. */
 } Config;
 
 typedef enum {

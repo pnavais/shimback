@@ -97,6 +97,15 @@ char *plat_self_exe_path(void);
  * project ships (or couldn't be determined at all). */
 bool plat_process_arch(char *out, size_t out_size);
 
+/* This machine's hostname, for `export`'s backup-filename templating
+ * (see paths.h/config.h's backup_name_pattern). Writes into `out`
+ * (`out_size` bytes, NUL-terminated); returns false if it can't be
+ * determined. Unlike plat_home_dir()/plat_self_exe_path(), callers
+ * should degrade gracefully on failure (fall back to a fixed
+ * placeholder) rather than die() -- this is cosmetic, not load-bearing
+ * for shimback's actual operation. */
+bool plat_hostname(char *out, size_t out_size);
+
 /* Lists every entry name directly inside `dir` except "." and ".."
  * (NUL-terminated array of names, not full paths -- join with `dir`
  * yourself). NULL if `dir` doesn't exist or can't be opened, which every

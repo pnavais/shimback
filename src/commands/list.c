@@ -4,9 +4,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
 
 #include "../config.h"
 #include "../paths.h"
+#include "../platform/platform.h"
 #include "../util.h"
 
 static const char *USAGE = "usage: shimback list [--full]\n";
@@ -151,6 +154,90 @@ static void print_orphan_row(const char *name, size_t name_w, bool colorize) {
     printf("\n");
 }
 
+static int compare_strings(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+/* `list --full`'s BACKUPS table: every "*.sz" file directly inside the
+ * effective backup directory (see export.c's own resolution of
+ * Config.backup_dir vs default_backup_dir()) -- prints nothing at all if
+ * that directory doesn't exist or holds no ".sz" file, matching this
+ * command's existing "only show what's actually there" posture (e.g.
+ * print_full_details prints nothing for a policy with no configuration). */
+static void print_backups_section(const Config *cfg, bool colorize) {
+    char *backup_dir = cfg->backup_dir ? xstrdup(cfg->backup_dir) : default_backup_dir();
+
+    char **all_entries = plat_list_dir(backup_dir);
+    char **names = NULL;
+    size_t count = 0, cap = 0;
+    for (char **e = all_entries; e && *e; e++) {
+        size_t len = strlen(*e);
+        if (len > 3 && strcmp(*e + len - 3, ".sz") == 0) {
+            if (count == cap) {
+                cap = cap == 0 ? 8 : cap * 2;
+                names = xrealloc(names, cap * sizeof(char *));
+            }
+            names[count++] = xstrdup(*e);
+        }
+    }
+    plat_free_dir_entries(all_entries);
+
+    if (count == 0) {
+        free(backup_dir);
+        return;
+    }
+    qsort(names, count, sizeof(char *), compare_strings);
+
+    size_t name_w = strlen("NAME");
+    size_t size_w = strlen("SIZE");
+    /* Flat, not per-row char[32][32] VLAs -- this project avoids C99 VLAs
+     * entirely (clang-cl's MSVC-ABI mode doesn't support them the way
+     * GCC/Clang-native does), so a runtime-sized 2D array here would be
+     * the first one in the codebase. */
+    char (*sizes)[32] = xmalloc(count * sizeof(*sizes));
+    char (*dates)[32] = xmalloc(count * sizeof(*dates));
+    for (size_t i = 0; i < count; i++) {
+        size_t nl = strlen(names[i]);
+        if (nl > name_w) name_w = nl;
+
+        char *full_path = path_join(backup_dir, names[i]);
+        struct stat st;
+        if (stat(full_path, &st) == 0) {
+            snprintf(sizes[i], sizeof(sizes[i]), "%lld", (long long)st.st_size);
+            struct tm tmv = *localtime(&st.st_mtime);
+            strftime(dates[i], sizeof(dates[i]), "%Y%m%d-%H%M%S", &tmv);
+        } else {
+            snprintf(sizes[i], sizeof(sizes[i]), "?");
+            snprintf(dates[i], sizeof(dates[i]), "?");
+        }
+        free(full_path);
+        size_t sl = strlen(sizes[i]);
+        if (sl > size_w) size_w = sl;
+    }
+
+    printf("\nbackups (%s):\n", backup_dir);
+    const char *header_color = ANSI_BOLD ANSI_YELLOW;
+    print_cell("NAME", name_w, header_color, colorize);
+    printf("  ");
+    print_cell("SIZE", size_w, header_color, colorize);
+    printf("  ");
+    print_cell("DATE", 0, header_color, colorize);
+    printf("\n");
+    for (size_t i = 0; i < count; i++) {
+        print_cell(names[i], name_w, ANSI_CYAN, colorize);
+        printf("  ");
+        print_cell(sizes[i], size_w, ANSI_DIM, colorize);
+        printf("  ");
+        print_cell(dates[i], 0, ANSI_DIM, colorize);
+        printf("\n");
+        free(names[i]);
+    }
+    free(names);
+    free(sizes);
+    free(dates);
+    free(backup_dir);
+}
+
 int cmd_list(int argc, char **argv) {
     bool full = false;
 
@@ -185,6 +272,9 @@ int cmd_list(int argc, char **argv) {
 
     if (name_count == 0) {
         printf("No shims configured.\n");
+        if (full) {
+            print_backups_section(&cfg, stdout_is_color());
+        }
         return 0;
     }
 
@@ -285,6 +375,10 @@ int cmd_list(int argc, char **argv) {
             print_full_details(e, colorize);
         }
         free(symlink_path);
+    }
+
+    if (full) {
+        print_backups_section(&cfg, colorize);
     }
 
     free(shim_dir);

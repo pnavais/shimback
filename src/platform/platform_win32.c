@@ -534,6 +534,25 @@ bool plat_process_arch(char *out, size_t out_size) {
     return true;
 }
 
+bool plat_hostname(char *out, size_t out_size) {
+    /* ComputerNameDnsHostname (not ComputerNameNetBIOS) matches gethostname()'s
+     * own POSIX semantics most closely -- the DNS-style host name, not the
+     * legacy 15-char-limited NetBIOS one. The "W" form + wide_to_utf8(),
+     * not GetComputerNameExA(), per this file's own UTF-8 convention above. */
+    wchar_t wbuf[256];
+    DWORD wlen = sizeof(wbuf) / sizeof(wbuf[0]);
+    if (!GetComputerNameExW(ComputerNameDnsHostname, wbuf, &wlen)) {
+        return false;
+    }
+    char *utf8 = wide_to_utf8(wbuf);
+    if (!utf8) {
+        return false;
+    }
+    snprintf(out, out_size, "%s", utf8);
+    free(utf8);
+    return true;
+}
+
 char **plat_list_dir(const char *dir) {
     char pattern_utf8[4160];
     snprintf(pattern_utf8, sizeof(pattern_utf8), "%s\\*", dir);

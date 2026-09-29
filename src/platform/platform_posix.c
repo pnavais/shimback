@@ -321,6 +321,19 @@ bool plat_process_arch(char *out, size_t out_size) {
     return true;
 }
 
+bool plat_hostname(char *out, size_t out_size) {
+    /* gethostname() doesn't guarantee NUL-termination if the name is
+     * exactly out_size bytes -- write into a slightly larger local
+     * buffer and let a still-untruncated result mean success. */
+    char buf[256];
+    if (gethostname(buf, sizeof(buf)) != 0) {
+        return false;
+    }
+    buf[sizeof(buf) - 1] = '\0';
+    snprintf(out, out_size, "%s", buf);
+    return true;
+}
+
 char **plat_list_dir(const char *dir) {
     DIR *d = opendir(dir);
     if (!d) {

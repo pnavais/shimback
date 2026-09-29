@@ -845,6 +845,44 @@ plain "no shim configured" error (unlike `remove`/`edit`, `info` doesn't
 offer a typo suggestion), and a symlink with no configuration
 behind it (an orphan) is reported as such and exits `1`.
 
+### `export`
+
+```sh
+shimback export
+shimback export -o ~/backups/           # existing dir: default name goes inside it
+shimback export -o ~/backups/mine.sz    # exact filename
+shimback export -o ~/backups/new/ -y    # create the directory without prompting
+shimback export --override              # overwrite a same-named backup instead of numbering it
+```
+
+Backs up `config.toml` plus every shim's *effective* split config file (the
+same one [`list`](#list-alias-ls)/[`doctor`](#doctor) already resolve as
+winning, not every shadowed copy in the other two possible locations) into a
+single, standard zip file any off-the-shelf tool can open — not the shim
+symlinks/hard links themselves, since those are
+[`doctor fix`](#doctor)-recreatable and, on Windows, not portable across
+machines to begin with. If there's nothing to back up (no `config.toml`, no
+shims), it warns and does nothing rather than writing an empty archive.
+
+With no `-o`, the archive is written under the config directory's `backups`
+subfolder (or wherever [`backup_dir`](#configuration) points), named
+`shimback_backup_<hostname>_<timestamp>.sz` by default (or whatever
+[`backup_name`](#configuration) renders to). `-o <path>` sends it elsewhere
+instead: an existing directory, or a path ending in a path separator, gets
+that default name placed inside it; anything else is used as the exact
+filename. A directory that doesn't exist yet prompts to create it, same as
+[`doctor fix`](#doctor)'s orphan-removal prompt — `-y`/`--yes` skips it.
+
+A same-named backup is never silently overwritten: a sequence number
+(`_1`, `_2`, ...) is inserted before the extension instead. `--override`
+overwrites it in place for that one run; setting
+[`backup_override = true`](#configuration) in `config.toml` makes that the
+default for every export, whether or not `--override` is also passed.
+
+The archive also contains a small `manifest.toml` (shimback version, export
+timestamp, hostname, shim count) — [`list --full`](#list-alias-ls) shows
+every backup found in the effective `backup_dir`, alongside the shim table.
+
 ## Fallback policies
 
 - **`exit-code`** (the default): fall back whenever the source command
@@ -1048,6 +1086,17 @@ for the trial-run capture cutover (see
 `capture_limit` accepts the same unit suffixes there or here — always
 stored back as a plain byte count once resolved, same as `--capture-limit`
 freezes into a byte count at `add` time.
+
+Three top-level keys configure [`export`](#export)'s defaults, all optional:
+`backup_dir` (a quoted path; defaults to `$XDG_CONFIG_HOME/shimback/backups`),
+`backup_name` (a quoted naming template for the default filename, before the
+`.sz` extension `export` always appends; defaults to
+`"shimback_backup_<hostname>_<timestamp>"`) with `<hostname>`/`<timestamp>`
+as the two recognized placeholders — a pattern using neither is legal too,
+`export`'s own sequence-numbering keeps repeated exports from colliding
+either way — and `backup_override` (`true`/`false`; defaults to `false`,
+forcing every export to overwrite a same-named backup in place, the same as
+passing `--override` on each one).
 
 ```toml
 version = 1

@@ -44,6 +44,10 @@ char *config_file_path(void);
  * and what gets prepended to PATH. */
 char *shim_bin_dir(void);
 
+/* <config dir>/shimback/backups -- the default backup directory `export`
+ * uses when Config.backup_dir isn't set. */
+char *default_backup_dir(void);
+
 /* "<name>-config.toml" -- the filename (not a path) a shim's split config
  * file must have, at whichever of the three split_config_all_paths
  * locations it lives in. Newly allocated. */

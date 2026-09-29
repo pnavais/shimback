@@ -105,6 +105,7 @@ add_executable(shimback
   src/shell.c
   src/installation.c
   src/sha256.c
+  src/zip.c
   src/paths.c
   src/suggest.c
   src/tui.c
@@ -119,6 +120,7 @@ add_executable(shimback
   src/commands/uninstall.c
   src/commands/info.c
   src/commands/update.c
+  src/commands/export.c
 )
 
 if(SHIMBACK_TARGET_WINDOWS)
@@ -226,3 +228,5 @@ add_test(NAME test_update
 set_tests_properties(test_update PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME test_help
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_help.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_export
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_export.sh $<TARGET_FILE:shimback>)

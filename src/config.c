@@ -41,6 +41,9 @@ void config_init(Config *cfg) {
     cfg->verbose = false;
     cfg->capture_timeout_ms = SHIMBACK_DEFAULT_CAPTURE_TIMEOUT_MS;
     cfg->capture_limit_bytes = SHIMBACK_DEFAULT_CAPTURE_LIMIT_BYTES;
+    cfg->backup_dir = NULL;
+    cfg->backup_name_pattern = NULL;
+    cfg->backup_override = false;
 }
 
 const char *policy_to_string(Policy p) {
@@ -206,6 +209,10 @@ void config_free(Config *cfg) {
     cfg->shims = NULL;
     cfg->count = 0;
     cfg->cap = 0;
+    free(cfg->backup_dir);
+    cfg->backup_dir = NULL;
+    free(cfg->backup_name_pattern);
+    cfg->backup_name_pattern = NULL;
 }
 
 /* ---- Parsing ---- */
@@ -1022,6 +1029,40 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                     cfg->capture_limit_bytes = bytes;
                 }
                 free(v);
+            } else if (strcmp(key, "backup_dir") == 0) {
+                const char *cursor = value_str;
+                char *v = parse_quoted_string(&cursor);
+                if (!v || !no_trailing_garbage(cursor)) {
+                    snprintf(errbuf, errbuf_size, "line %d: 'backup_dir' must be a quoted path",
+                             line_no);
+                    status = CONFIG_ERR_PARSE;
+                    free(v);
+                } else {
+                    free(cfg->backup_dir);
+                    cfg->backup_dir = v;
+                }
+            } else if (strcmp(key, "backup_name") == 0) {
+                const char *cursor = value_str;
+                char *v = parse_quoted_string(&cursor);
+                if (!v || !no_trailing_garbage(cursor)) {
+                    snprintf(errbuf, errbuf_size,
+                             "line %d: 'backup_name' must be a quoted pattern", line_no);
+                    status = CONFIG_ERR_PARSE;
+                    free(v);
+                } else {
+                    free(cfg->backup_name_pattern);
+                    cfg->backup_name_pattern = v;
+                }
+            } else if (strcmp(key, "backup_override") == 0) {
+                if (strcmp(value_str, "true") == 0) {
+                    cfg->backup_override = true;
+                } else if (strcmp(value_str, "false") == 0) {
+                    cfg->backup_override = false;
+                } else {
+                    snprintf(errbuf, errbuf_size,
+                             "line %d: 'backup_override' must be true or false", line_no);
+                    status = CONFIG_ERR_PARSE;
+                }
             } else {
                 warn("config: line %d: unknown top-level key '%s', ignoring", line_no, key);
             }
@@ -1362,6 +1403,19 @@ static void render_config(const Config *cfg, DynBuf *out) {
     if (cfg->capture_limit_bytes != SHIMBACK_DEFAULT_CAPTURE_LIMIT_BYTES) {
         snprintf(line, sizeof(line), "capture_limit = \"%zu\"\n", cfg->capture_limit_bytes);
         dynbuf_append_str(out, line);
+    }
+    if (cfg->backup_dir) {
+        dynbuf_append_str(out, "backup_dir = ");
+        append_escaped_string(out, cfg->backup_dir);
+        dynbuf_append_char(out, '\n');
+    }
+    if (cfg->backup_name_pattern) {
+        dynbuf_append_str(out, "backup_name = ");
+        append_escaped_string(out, cfg->backup_name_pattern);
+        dynbuf_append_char(out, '\n');
+    }
+    if (cfg->backup_override) {
+        dynbuf_append_str(out, "backup_override = true\n");
     }
 
     for (size_t i = 0; i < cfg->count; i++) {

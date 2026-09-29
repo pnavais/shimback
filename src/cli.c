@@ -10,7 +10,8 @@
 #include "version.h"
 
 static const char *const KNOWN_COMMANDS[] = {
-    "add", "remove", "rm", "init", "list", "ls", "doctor", "install", "uninstall", "edit", "info", "update",
+    "add", "remove", "rm", "init", "list", "ls", "doctor", "install", "uninstall",
+    "edit", "info", "update", "export",
 };
 
 /* Renders `markup`: a span opened and closed with octal '\001' is a literal
@@ -260,6 +261,35 @@ static const CommandHelp COMMAND_HELP[] = {
         "              \004e.g. shimback info sed\004\n"
         "\n",
     },
+    {
+        "export",
+        "  \001shimback export\001 [\001-o\001|\001--output\001 \002<path>\002] [\001-y\001|\001--yes\001] [\001--override\001]\n",
+
+        "  \001export\001    Back up config.toml plus every shim's effective split config file\n"
+        "            (not the shim symlinks/hard links themselves -- those are\n"
+        "            \001doctor fix\001-recreatable, and not portable across machines anyway)\n"
+        "            into a single, standard zip file, by default named\n"
+        "            \002shimback_backup_<hostname>_<timestamp>.sz\002 under the config\n"
+        "            directory's \002backups\002 subfolder. Warns and does nothing if there's\n"
+        "            nothing to export.\n"
+        "\n"
+        "              \001-o\001/\001--output\001 \002<path>\002 sends it elsewhere instead: an existing\n"
+        "              directory (or one ending in a path separator) gets the default\n"
+        "              name inside it; anything else is used as the exact filename. A\n"
+        "              directory that doesn't exist yet prompts to create it, unless\n"
+        "              \001-y\001/\001--yes\001 is given.\n"
+        "\n"
+        "              A same-named backup is never overwritten by default -- a sequence\n"
+        "              number (\002_1\002, \002_2\002, ...) is added instead. \001--override\001 overwrites\n"
+        "              it in place; \002backup_override = true\002 in config.toml makes that the\n"
+        "              default for every export.\n"
+        "\n"
+        "              \002backup_dir\002 and \002backup_name\002 (with \002<hostname>\002/\002<timestamp>\002\n"
+        "              placeholders) in config.toml override the default location/naming.\n"
+        "              \004e.g. shimback export\004\n"
+        "              \004e.g. shimback export -o ~/backups/ -y\004\n"
+        "\n",
+    },
 };
 
 #define COMMAND_HELP_COUNT (sizeof(COMMAND_HELP) / sizeof(COMMAND_HELP[0]))
@@ -388,6 +418,9 @@ int cli_run(int argc, char **argv) {
     }
     if (strcmp(argv[1], "update") == 0) {
         return cmd_update(argc - 1, argv + 1);
+    }
+    if (strcmp(argv[1], "export") == 0) {
+        return cmd_export(argc - 1, argv + 1);
     }
 
     fprintf(stderr, "shimback: unknown command '%s'\n", argv[1]);
