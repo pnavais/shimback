@@ -120,6 +120,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Temporary, part of investigating the windows-arm64-only failure
+      # documented on the "Diagnose" step below: an unsigned, freshly
+      # cross-compiled binary that creates a hard link to itself (exactly
+      # what `doctor fix` recreating a missing shim does) is a classic
+      # self-replication pattern Windows Defender's heuristics/Attack
+      # Surface Reduction rules are designed to flag, and a real
+      # candidate cause, not just a guess -- best-effort (needs admin;
+      # warn and continue rather than fail the job if it can't).
+      - name: Exclude the workspace and temp dir from Windows Defender (temporary)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}"
+          Add-MpPreference -ExclusionPath "$env:RUNNER_TEMP"
+          Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+
       - name: Install Ninja
         run: choco install ninja --no-progress -y
 
@@ -249,6 +265,15 @@ jobs:
           Get-MpThreatDetection | Format-List *
           Write-Host "=== Windows Defender exclusions ==="
           Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+          # Threat detections (Get-MpThreatDetection above) only cover
+          # signature-based AV hits -- Attack Surface Reduction rule
+          # blocks/audits (which don't require a known malware signature,
+          # just a flagged *behavior* pattern) log separately, as event
+          # IDs 1121 (block) / 1122 (audit) / 5007 (setting change) in this
+          # operational log instead.
+          Write-Host "=== Windows Defender operational event log (ASR/detections, last 20) ==="
+          Get-WinEvent -LogName "Microsoft-Windows-Windows Defender/Operational" -MaxEvents 20 -ErrorAction SilentlyContinue |
+            Select-Object TimeCreated, Id, LevelDisplayName, Message | Format-List
 
       - name: Package
         shell: pwsh
