@@ -64,9 +64,17 @@ Describe "hard links" {
     }
 
     It "falls back to a copy across drives, with the restart-your-shell reminder" {
+        # TEMPORARY diagnostics -- remove once the windows-arm64 CI behavior here is understood.
+        Write-Host "DIAG exe path: $(Get-ShimbackExe)"
+        Write-Host "DIAG exe drive name: $((Get-Item (Get-ShimbackExe)).PSDrive.Name)"
+        Get-PSDrive -PSProvider FileSystem | ForEach-Object {
+            Write-Host "DIAG PSDrive: Name=$($_.Name) Root=$($_.Root) Free=$($_.Free) Used=$($_.Used)"
+        }
+
         $otherDrive = (Get-PSDrive -PSProvider FileSystem | Where-Object {
                 $_.Name -ne (Get-Item (Get-ShimbackExe)).PSDrive.Name -and $_.Free -gt 10MB
             } | Select-Object -First 1).Name
+        Write-Host "DIAG selected otherDrive: '$otherDrive'"
         if (-not $otherDrive) {
             Set-ItResult -Skipped -Because "no second writable drive available on this machine to force a cross-drive copy"
             return
@@ -84,8 +92,12 @@ Describe "hard links" {
         $probeDst = Join-Path "${otherDrive}:\" ("shimback-hardlink-probe-" + [Guid]::NewGuid().ToString("N") + ".tmp")
         Set-Content -Path $probeSrc -Value "probe"
         try {
-            & fsutil hardlink create $probeDst $probeSrc | Out-Null
+            $probeOut = & fsutil hardlink create $probeDst $probeSrc 2>&1 | Out-String
             $sameVolume = ($LASTEXITCODE -eq 0)
+            Write-Host "DIAG probeSrc: $probeSrc"
+            Write-Host "DIAG probeDst: $probeDst"
+            Write-Host "DIAG fsutil exit: $LASTEXITCODE output: $probeOut"
+            Write-Host "DIAG sameVolume: $sameVolume"
         }
         finally {
             Remove-Item -Force $probeSrc -ErrorAction SilentlyContinue
