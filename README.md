@@ -70,6 +70,7 @@ Or download a prebuilt binary directly from the
 | Linux (x86_64) | [shimback-linux-x86_64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-linux-x86_64.tar.gz) |
 | Linux (arm64) | [shimback-linux-arm64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-linux-arm64.tar.gz) |
 | Windows (x86_64) | [shimback-windows-x86_64.zip](https://github.com/pnavais/shimback/releases/latest/download/shimback-windows-x86_64.zip) |
+| Windows (arm64) | [shimback-windows-arm64.zip](https://github.com/pnavais/shimback/releases/latest/download/shimback-windows-arm64.zip) |
 
 Each archive contains the `shimback` binary, the license files, and this
 README (macOS/Linux also get the man page; Windows doesn't ship one, see
@@ -1175,7 +1176,7 @@ also installs [`man/shimback.1`](man/shimback.1) to `<prefix>/share/man/man1`).
 
 ## Platform support
 
-macOS and Linux (x86_64 and arm64), and Windows (x86_64) for v0.1.0.
+macOS, Linux, and Windows, each on x86_64 and arm64, for v0.1.0.
 Windows shims are hard links rather than symlinks (falling back to a
 plain copy when that's not possible, e.g. across drives — see
 [`add`](#add)), PATH integration covers PowerShell and cmd.exe, the
@@ -1183,8 +1184,8 @@ interactive add wizard uses the native console API, and no man page ships
 there (`shimback --help`/`doctor` output is the fallback, same as
 everywhere else this project treats `--help` as authoritative). A native
 Pester test suite ([`tests/windows/`](tests/windows)) covers this platform
-alongside the POSIX shell suite in [`tests/`](tests). Windows ARM64 isn't
-built yet.
+alongside the POSIX shell suite in [`tests/`](tests), and CI runs it on
+both Windows architectures.
 
 ## License
 
