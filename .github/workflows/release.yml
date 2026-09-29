@@ -152,7 +152,7 @@ jobs:
       # needing to make.
       - name: Splat MSVC/Windows SDK sysroot
         shell: pwsh
-        run: xwin --accept-license --arch ${{ matrix.xwin_arch }} splat --output "$env:RUNNER_TEMP\msvc-sysroot"
+        run: xwin --accept-license --http-retry 3 --arch ${{ matrix.xwin_arch }} splat --output "$env:RUNNER_TEMP\msvc-sysroot"
 
       # clang-cl/lld-link ship as part of the LLVM install already present
       # on GitHub's windows runner images, at this same path -- confirmed
