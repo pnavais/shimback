@@ -210,6 +210,46 @@ jobs:
             throw "$($result.FailedCount) Pester test(s) failed"
           }
 
+      # Temporary: investigating a windows-arm64-only failure where
+      # build\shimback.exe becomes permanently unable to launch partway
+      # through the Pester suite ("not a valid application for this OS
+      # platform"), right after the first test that has shimback create a
+      # hard link to itself (doctor fix recreating a missing shim) --
+      # every test after that point fails identically for the rest of the
+      # job, on the exact same file. Leading theory: Windows Defender's
+      # heuristics flagging an unsigned, freshly cross-compiled-from-macOS
+      # binary that creates hard links to itself, and quarantining it.
+      # This step gathers direct evidence instead of guessing further.
+      - name: Diagnose the post-Pester-failure exe state (temporary)
+        if: failure()
+        shell: pwsh
+        run: |
+          $exe = "build\shimback.exe"
+          Write-Host "=== Test-Path ==="
+          Test-Path $exe
+          Write-Host "=== Get-Item ==="
+          Get-Item $exe -ErrorAction SilentlyContinue | Format-List *
+          Write-Host "=== Get-FileHash ==="
+          Get-FileHash $exe -Algorithm SHA256 -ErrorAction SilentlyContinue | Format-List
+          Write-Host "=== fsutil hardlink list ==="
+          fsutil hardlink list $exe
+          Write-Host "=== direct invocation retries (transient vs. permanent?) ==="
+          for ($i = 1; $i -le 5; $i++) {
+            try {
+              $out = & $exe --version 2>&1
+              Write-Host "attempt $i : exit=$LASTEXITCODE output=$out"
+            } catch {
+              Write-Host "attempt $i : threw: $_"
+            }
+            Start-Sleep -Seconds 2
+          }
+          Write-Host "=== Windows Defender status ==="
+          Get-MpComputerStatus | Format-List RealTimeProtectionEnabled, AMServiceEnabled, AntivirusEnabled
+          Write-Host "=== Windows Defender threat detections ==="
+          Get-MpThreatDetection | Format-List *
+          Write-Host "=== Windows Defender exclusions ==="
+          Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+
       - name: Package
         shell: pwsh
         run: |
