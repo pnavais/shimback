@@ -72,6 +72,30 @@ Describe "hard links" {
             return
         }
 
+        # A different drive LETTER doesn't guarantee a different NTFS volume --
+        # confirmed the hard way on a windows-11-arm hosted runner, which offers
+        # a second FileSystem PSDrive that isn't actually a separate volume from
+        # the exe's own drive, so CreateHardLinkW succeeds for real across them
+        # and this whole test's premise (forcing the copy-fallback path) never
+        # fires. shimback's own fallback is driven by whether CreateHardLinkW
+        # itself succeeds, not by drive letter, so probe with that exact
+        # mechanism (fsutil hardlink create) before trusting the letter.
+        $probeSrc = Join-Path $env:TEMP ("shimback-hardlink-probe-" + [Guid]::NewGuid().ToString("N") + ".tmp")
+        $probeDst = Join-Path "${otherDrive}:\" ("shimback-hardlink-probe-" + [Guid]::NewGuid().ToString("N") + ".tmp")
+        Set-Content -Path $probeSrc -Value "probe"
+        try {
+            & fsutil hardlink create $probeDst $probeSrc | Out-Null
+            $sameVolume = ($LASTEXITCODE -eq 0)
+        }
+        finally {
+            Remove-Item -Force $probeSrc -ErrorAction SilentlyContinue
+            Remove-Item -Force $probeDst -ErrorAction SilentlyContinue
+        }
+        if ($sameVolume) {
+            Set-ItResult -Skipped -Because "'$otherDrive' isn't actually a separate volume from the exe's own drive on this machine, so a real cross-volume drive isn't available to force the copy fallback"
+            return
+        }
+
         $crossDriveSandbox = Join-Path "${otherDrive}:\" ("shimback-pester-xdrive-" + [Guid]::NewGuid().ToString("N"))
         New-Item -ItemType Directory -Force -Path $crossDriveSandbox | Out-Null
         try {
