@@ -1,4 +1,4 @@
-.TH SHIMBACK 1 "2026-09-26" "shimback 0.1.0" "User Commands"
+.TH SHIMBACK 1 "2026-09-29" "shimback 0.2.0" "User Commands"
 .SH NAME
 shimback \- run a primary command, transparently fall back to another
 .SH SYNOPSIS
@@ -46,6 +46,9 @@ shimback \- run a primary command, transparently fall back to another
 .br
 .B shimback info
 .I name
+.br
+.B shimback export
+[\fB\-o\fR|\fB\-\-output\fR \fIpath\fR] [\fB\-y\fR|\fB\-\-yes\fR] [\fB\-\-override\fR]
 .br
 .B shimback \-\-help
 |
@@ -726,6 +729,69 @@ shimback info java
 .fi
 .RE
 .RE
+.TP
+.BI "export [\-o " path "] [\-y] [\-\-override]"
+Back up
+.I config.toml
+plus every shim's effective split config file \(em not the shim
+symlinks/hard links themselves, since those are
+.B doctor fix
+\-recreatable, and a Windows hard link isn't portable across machines to
+begin with \(em into a single, standard zip file any off\-the\-shelf tool
+can open. Warns and does nothing, writing no file, if there is genuinely
+nothing to export (no
+.IR config.toml ,
+no shims configured).
+.IP
+With no
+.BR \-o ,
+the archive is written under the effective backup directory (see
+.B FILES
+below), named
+.I shimback_backup_<hostname>_<timestamp>.sz
+by default (or whatever
+.I backup_name
+renders to, see
+.BR FILES ).
+.B \-o
+.I path
+sends it elsewhere instead: an existing directory, or a path ending in a
+path separator, gets that default name placed inside it; anything else is
+used as the exact filename. A directory that doesn't exist yet prompts to
+create it, the same
+.RI [ y / N ]
+way
+.B doctor fix
+prompts to remove an orphan \(em
+.B \-y
+/
+.B \-\-yes
+skips it.
+.IP
+A same\-named backup is never silently overwritten: a sequence number
+(\fI_1\fR, \fI_2\fR, ...) is inserted before the extension instead.
+.B \-\-override
+overwrites it in place for that one run; a top\-level
+.I "backup_override = true"
+in the config makes that the default for every export, whether or not
+.B \-\-override
+is also passed (see
+.B FILES
+below). The archive also contains a small
+.I manifest.toml
+(shimback version, export timestamp, hostname, shim count).
+.B list \-\-full
+shows every backup found in the effective backup directory.
+.RS
+.PP
+Examples:
+.RS
+.nf
+shimback export
+shimback export \-o ~/backups/ \-y
+.fi
+.RE
+.RE
 .SH POLICIES
 .TP
 .B exit\-code
@@ -967,10 +1033,48 @@ A shim can override either with its own
 (see
 .BR add ,
 above).
+.IP
+Three further top\-level keys configure
+.BR export 's
+defaults, all optional:
+.I backup_dir
+(a quoted path; defaults to
+.IR $XDG_CONFIG_HOME/shimback/backups ),
+.I backup_name
+(a quoted naming template for the default filename, before the
+.I .sz
+extension
+.B export
+always appends; defaults to
+.IR "\(dqshimback_backup_<hostname>_<timestamp>\(dq" ,
+with
+.I <hostname>
+and
+.I <timestamp>
+as the two recognized placeholders \(em a pattern using neither is legal
+too,
+.BR export 's
+own sequence\-numbering still keeps repeated exports from colliding), and
+.I backup_override
+(\fItrue\fR/\fIfalse\fR; defaults to
+.IR false ,
+forcing every export to overwrite a same\-named backup in place, the same
+as passing
+.B \-\-override
+on each one).
 .TP
 .I $XDG_DATA_HOME/shimback/bin
 The shim directory: every shim's symlink lives here (falls back to
 .IR $HOME/.local/share/shimback/bin ).
+.TP
+.I $XDG_CONFIG_HOME/shimback/backups
+The default directory
+.B export
+writes to (falls back to
+.IR $HOME/.config/shimback/backups ),
+unless overridden by
+.I backup_dir
+above.
 .SH EXIT STATUS
 .TP
 .B 127
