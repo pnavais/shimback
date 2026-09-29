@@ -69,8 +69,38 @@ Describe "doctor" {
         $r = Invoke-Shimback @("doctor", "fix") -StdIn ""
         $r.StdOut | Should -Match "\[fixed\] recreated missing (symlink|shim)"
         Test-Path $link | Should -BeTrue
+        # --- temporary diagnostics: pinpointing which exact sub-step here
+        # corrupts build\shimback.exe on windows-arm64 (see release.yml's
+        # own temporary diagnostic step for the wider investigation). Each
+        # checkpoint is wrapped so one probe throwing (the exe already
+        # broken) doesn't cut off the later checkpoints. ---
+        $exeProbe = Get-ShimbackExe
+        function Write-DiagCheckpoint([string]$Label) {
+            try {
+                $item = Get-Item $exeProbe -ErrorAction Stop
+                Write-Host "DIAG $Label : exists=True size=$($item.Length) hash=$((Get-FileHash $exeProbe -Algorithm SHA256).Hash)"
+            } catch {
+                Write-Host "DIAG $Label : Get-Item threw: $_"
+            }
+            try {
+                Write-Host "DIAG $Label : hardlink list:"
+                fsutil hardlink list $exeProbe
+            } catch {
+                Write-Host "DIAG $Label : fsutil threw: $_"
+            }
+            try {
+                $probe = Invoke-Exe -Path $exeProbe -ExeArgs @("--version")
+                Write-Host "DIAG $Label : direct probe exit=$($probe.ExitCode) out=$($probe.StdOut) err=$($probe.StdErr)"
+            } catch {
+                Write-Host "DIAG $Label : direct probe threw: $_"
+            }
+        }
+        Write-DiagCheckpoint "after-recreate"
+        # ---
         (Invoke-Shimback @("doctor")).ExitCode | Should -Be 0
+        Write-DiagCheckpoint "after-healthcheck-doctor"
         Invoke-Shimback @("remove", "-y", "misstool") | Out-Null
+        Write-DiagCheckpoint "after-remove"
     }
 
     It "fails when a shim's file doesn't look like a shimback binary" {
