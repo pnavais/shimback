@@ -1439,16 +1439,38 @@ void shell_read_block_dirs(ShellKind kind, const char *tag, StrVec *out) {
         }
 #ifdef _WIN32
         case SHELL_POWERSHELL: {
+            /* Also reads the old profile.ps1 location, not just the
+             * current one -- this is a read-only listing (used by e.g.
+             * plain `doctor`, not just `doctor fix`/add/init/install), so
+             * it can't rely on migrate_old_allhosts_profile's write-time
+             * migration to have already run. Without this, a real
+             * installation whose directory is still only recorded in the
+             * pre-v0.2.1 old file is invisible to `doctor` (reported
+             * "not installed" and every shim "no shim at ...") until some
+             * *other* command happens to write to a profile first and
+             * trigger the migration -- confirmed for real, the exact
+             * source of the "installation: not installed" false negative
+             * this comment is here to prevent regressing back to. */
             char *winps_profile = powershell_profile_path("WindowsPowerShell");
             char *pwsh_profile = powershell_profile_path("PowerShell");
+            char *winps_old = old_allhosts_profile_path("WindowsPowerShell");
+            char *pwsh_old = old_allhosts_profile_path("PowerShell");
             if (winps_profile) {
                 read_ps_block_dirs_from_profile(winps_profile, tag, out);
             }
             if (pwsh_profile) {
                 read_ps_block_dirs_from_profile(pwsh_profile, tag, out);
             }
+            if (winps_old) {
+                read_ps_block_dirs_from_profile(winps_old, tag, out);
+            }
+            if (pwsh_old) {
+                read_ps_block_dirs_from_profile(pwsh_old, tag, out);
+            }
             free(winps_profile);
             free(pwsh_profile);
+            free(winps_old);
+            free(pwsh_old);
             break;
         }
         case SHELL_CMD:
