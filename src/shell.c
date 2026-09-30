@@ -405,23 +405,29 @@ static char *read_ps_squoted(const char **p) {
     return s;
 }
 
-/* `foreach ($__shimback_dir in @('<dir1>', '<dir2>')) { if (($env:Path
- * -split ';') -notcontains $__shimback_dir) { $env:Path = $__shimback_dir +
- * ';' + $env:Path } }` -- each directory individually single-quoted
- * (append_ps_squoted), comma-joined inside the @(...) array literal.
+/* `foreach ($__shimback_dir in @('<dir1>', '<dir2>')) { $env:Path = (($env:Path
+ * -split ';') | Where-Object { $_ -ne $__shimback_dir }) -join ';';
+ * $env:Path = $__shimback_dir + ';' + $env:Path }` -- each directory
+ * individually single-quoted (append_ps_squoted), comma-joined inside the
+ * @(...) array literal.
  *
- * Guarded, not an unconditional prepend (the form used through v0.1.0's own
- * first re-release): confirmed for real that an unconditional prepend
- * double- or triple-counts a shim directory that's *already* on PATH --
- * which it always is, for anyone who opens a plain new terminal, since
- * that's inherited from HKCU\Environment\Path (or from the environment of
- * whatever process launched it, e.g. a shell launched from inside another
- * shell that already ran this same profile) before this profile line ever
- * runs. Harmless in that the shim directory still wins the front of PATH
- * either way, but real, visible PATH-list pollution that compounds with
- * every nested shell launch -- this closes it at the source instead of
- * just tolerating it. -notcontains is PowerShell's case-insensitive array
- * membership test, matching Windows' own path case-insensitivity. */
+ * Strips any existing occurrence of the directory first, then
+ * unconditionally prepends -- not a skip-if-already-present guard (the form
+ * used through v0.1.0's own second re-release). That guarded form fixed a
+ * real duplication bug (an unconditional prepend double/triple-counts a
+ * shim directory that's already on PATH, which it always is on a plain new
+ * terminal, inherited from HKCU\Environment\Path before this profile line
+ * ever runs) but introduced a worse regression, also confirmed for real:
+ * skipping the prepend whenever the directory is already present anywhere
+ * on PATH means it just stays wherever that inherited copy already was --
+ * which loses the front-of-PATH race to anything else in the profile that
+ * prepends unconditionally (e.g. mise's own activation, earlier in the same
+ * file) every time, since the shim directory is *always* already present by
+ * the time this block runs. Removing old occurrences before prepending
+ * keeps both properties: no duplicates, and this directory still ends up at
+ * the very front regardless of where it started. -ne is PowerShell's
+ * case-insensitive string comparison, matching Windows' own path case-
+ * insensitivity. */
 static void build_ps_body(DynBuf *body, const StrVec *dirs) {
     dynbuf_append_str(body, "foreach ($__shimback_dir in @(");
     for (size_t i = 0; i < dirs->count; i++) {
@@ -431,9 +437,9 @@ static void build_ps_body(DynBuf *body, const StrVec *dirs) {
         append_ps_squoted(body, dirs->items[i]);
     }
     dynbuf_append_str(body,
-                       ")) { if (($env:Path -split ';') -notcontains "
-                       "$__shimback_dir) { $env:Path = $__shimback_dir + ';' + "
-                       "$env:Path } }\n");
+                       ")) { $env:Path = (($env:Path -split ';') | Where-Object { $_ -ne "
+                       "$__shimback_dir }) -join ';'; $env:Path = $__shimback_dir + ';' + "
+                       "$env:Path }\n");
 }
 
 #define PS_BODY_JOINER ", "
