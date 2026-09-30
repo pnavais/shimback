@@ -941,14 +941,35 @@ static void read_block_dirs_from_rc(const char *rc_path, const char *tag, StrVec
 
 #ifdef _WIN32
 
-/* PowerShell's own $PROFILE.CurrentUserAllHosts, computed directly (via
- * plat_documents_dir()) rather than by asking a spawned powershell/pwsh
- * process -- both editions define it as "<Documents special
- * folder>\<edition subfolder>\profile.ps1", and computing it this way
- * avoids a subprocess spawn on every ensure_path call (e.g. every
- * `shimback add`), while still tracking OneDrive-redirected/relocated
- * Documents folders the same way PowerShell's own lookup would. Returns
- * NULL if the Documents folder itself can't be determined. */
+/* PowerShell's own $PROFILE (i.e. $PROFILE.CurrentUserCurrentHost, the
+ * ConsoleHost one -- what `$PROFILE` itself prints in an ordinary
+ * terminal), computed directly (via plat_documents_dir()) rather than by
+ * asking a spawned powershell/pwsh process -- both editions define it as
+ * "<Documents special folder>\<edition subfolder>\
+ * Microsoft.PowerShell_profile.ps1", and computing it this way avoids a
+ * subprocess spawn on every ensure_path call (e.g. every `shimback add`),
+ * while still tracking OneDrive-redirected/relocated Documents folders the
+ * same way PowerShell's own lookup would. Returns NULL if the Documents
+ * folder itself can't be determined.
+ *
+ * Deliberately CurrentUserCurrentHost, not CurrentUserAllHosts
+ * ("profile.ps1", used here through v0.2.0): confirmed for real that using
+ * AllHosts was a genuine bug, not just a cosmetic mismatch with what
+ * `$PROFILE` shows -- PowerShell loads AllHosts *before* CurrentHost on
+ * every startup, so anything another tool prepends onto $env:Path from
+ * CurrentHost (where most tools, e.g. mise's own `mise activate pwsh`
+ * line, actually live, since CurrentHost is what "$PROFILE" conventionally
+ * means) always ends up ahead of shimback's own entry regardless of block
+ * order -- shimback's shim directory could never win the front of PATH.
+ * Matching CurrentHost fixes that (ensure_dir_in_block appends a new block
+ * at end of file, so shimback's prepend now runs after anything already
+ * there, same as any other tool relying on that convention) and matches
+ * what `$PROFILE` itself shows, which is what a user checking why PATH
+ * looks wrong will actually look at. The tradeoff: a host whose profile
+ * name isn't "Microsoft.PowerShell_profile.ps1" (the VS Code PowerShell
+ * extension's own pane, the ISE, ...) won't get this PATH entry from its
+ * own profile load -- accepted, since the HKCU\Environment\Path fallback
+ * layer (see ensure_powershell's own comment) still covers those. */
 static char *powershell_profile_path(const char *edition_subdir) {
     char *docs = plat_documents_dir();
     if (!docs) {
@@ -956,7 +977,7 @@ static char *powershell_profile_path(const char *edition_subdir) {
     }
     char *edition_dir = path_join(docs, edition_subdir);
     free(docs);
-    char *profile = path_join(edition_dir, "profile.ps1");
+    char *profile = path_join(edition_dir, "Microsoft.PowerShell_profile.ps1");
     free(edition_dir);
     return profile;
 }
@@ -973,6 +994,55 @@ static void read_ps_block_dirs_from_profile(const char *profile_path, const char
         parse_existing_ps_dirs(body_start, (size_t)(body_end - body_start), out);
     }
     free(content);
+}
+
+/* One-time, silent, self-healing migration for anyone who ran a shimback
+ * version through v0.2.0 (which managed $PROFILE.CurrentUserAllHosts,
+ * "profile.ps1" -- see powershell_profile_path's own comment for why that
+ * was wrong): if that old file still has a tagged block, every directory
+ * it lists gets merged into the new CurrentUserCurrentHost profile (the
+ * same union ensure_dir_in_block always does, so nothing already managed
+ * there is lost), and the old block is removed outright -- same shape as
+ * the "shimback-bin" one-time migration in install.c's ensure_shell_path,
+ * not the warn-then-`doctor fix` shape zsh's .zshrc/.zshrc.local migration
+ * uses, since this one is a straightforward bugfix with no reason to make
+ * the user opt into it. */
+static char *old_allhosts_profile_path(const char *edition_subdir) {
+    char *docs = plat_documents_dir();
+    if (!docs) {
+        return NULL;
+    }
+    char *edition_dir = path_join(docs, edition_subdir);
+    free(docs);
+    char *profile = path_join(edition_dir, "profile.ps1");
+    free(edition_dir);
+    return profile;
+}
+
+static void migrate_old_allhosts_profile(const char *edition_subdir, const char *new_profile,
+                                          const char *tag) {
+    char *old_profile = old_allhosts_profile_path(edition_subdir);
+    if (!old_profile) {
+        return;
+    }
+
+    char *content = read_file_or_empty(old_profile);
+    const char *block_start, *block_end, *body_start, *body_end;
+    bool found =
+        find_block(content, tag, old_profile, "#", &block_start, &block_end, &body_start,
+                   &body_end);
+    if (found) {
+        StrVec dirs;
+        strvec_init(&dirs);
+        parse_existing_ps_dirs(body_start, (size_t)(body_end - body_start), &dirs);
+        for (size_t i = 0; i < dirs.count; i++) {
+            ensure_dir_in_block(new_profile, tag, dirs.items[i], BODY_POWERSHELL);
+        }
+        strvec_free(&dirs);
+        remove_block(old_profile, tag);
+    }
+    free(content);
+    free(old_profile);
 }
 
 /* Ensures `dir` is on PATH for every installed PowerShell edition: Windows
@@ -997,6 +1067,7 @@ static bool ensure_powershell(const char *dir, const char *tag, bool verbose) {
             char *profile_dir = dir_of(profile);
             mkdir_p(profile_dir);
             free(profile_dir);
+            migrate_old_allhosts_profile("WindowsPowerShell", profile, tag);
             bool ok = ensure_dir_in_block(profile, tag, dir, BODY_POWERSHELL);
             all_ok = ok && all_ok;
             touched_any = true;
@@ -1016,6 +1087,7 @@ static bool ensure_powershell(const char *dir, const char *tag, bool verbose) {
             char *profile_dir = dir_of(profile);
             mkdir_p(profile_dir);
             free(profile_dir);
+            migrate_old_allhosts_profile("PowerShell", profile, tag);
             bool ok = ensure_dir_in_block(profile, tag, dir, BODY_POWERSHELL);
             all_ok = ok && all_ok;
             touched_any = true;
@@ -1048,11 +1120,19 @@ static bool remove_powershell(const char *tag) {
 
     char *winps_profile = powershell_profile_path("WindowsPowerShell");
     char *pwsh_profile = powershell_profile_path("PowerShell");
+    char *winps_old = old_allhosts_profile_path("WindowsPowerShell");
+    char *pwsh_old = old_allhosts_profile_path("PowerShell");
     if (winps_profile) {
         read_ps_block_dirs_from_profile(winps_profile, tag, &dirs);
     }
     if (pwsh_profile) {
         read_ps_block_dirs_from_profile(pwsh_profile, tag, &dirs);
+    }
+    if (winps_old) {
+        read_ps_block_dirs_from_profile(winps_old, tag, &dirs);
+    }
+    if (pwsh_old) {
+        read_ps_block_dirs_from_profile(pwsh_old, tag, &dirs);
     }
 
     bool ok = true;
@@ -1062,6 +1142,12 @@ static bool remove_powershell(const char *tag) {
     if (pwsh_profile) {
         ok = remove_block(pwsh_profile, tag) && ok;
     }
+    if (winps_old) {
+        remove_block(winps_old, tag);
+    }
+    if (pwsh_old) {
+        remove_block(pwsh_old, tag);
+    }
 
     for (size_t i = 0; i < dirs.count; i++) {
         plat_win_userenv_path_remove(dirs.items[i]);
@@ -1069,6 +1155,8 @@ static bool remove_powershell(const char *tag) {
     strvec_free(&dirs);
     free(winps_profile);
     free(pwsh_profile);
+    free(winps_old);
+    free(pwsh_old);
     return ok;
 }
 

@@ -177,44 +177,57 @@ function Test-RealShellIntegrationAllowed {
     return $env:SHIMBACK_TEST_REAL_SHELL -eq "1"
 }
 
+# Every real PowerShell profile file shimback's shell integration could
+# possibly touch, current *and* past -- both the live target
+# (Microsoft.PowerShell_profile.ps1, $PROFILE.CurrentUserCurrentHost) and
+# the old, pre-v0.2.1 one (profile.ps1, CurrentUserAllHosts -- still
+# touched by the migration code path, see shell.c's
+# migrate_old_allhosts_profile). A snapshot list, not two hardcoded named
+# properties: found the hard way that hardcoding meant a real target-file
+# change here silently stopped covering the new file, and a test run went
+# on to write real, permanent garbage into the live $PROFILE.
+function Get-RealPowerShellProfilePaths {
+    $docs = [Environment]::GetFolderPath('MyDocuments')
+    foreach ($edition in @('WindowsPowerShell', 'PowerShell')) {
+        foreach ($name in @('Microsoft.PowerShell_profile.ps1', 'profile.ps1')) {
+            Join-Path $docs "$edition\$name"
+        }
+    }
+}
+
 # Snapshots every piece of real, non-sandboxable state shimback's shell
 # integration can touch, so a test that opts into mutating it for real can
 # restore exactly what was there before -- regardless of CI's ephemeral-
 # runner safety, so a local opt-in run (or a CI runner image that changes
 # to persist user profiles some day) never leaves real state behind.
 function Backup-RealShellState {
-    $winPsProfile = "$([Environment]::GetFolderPath('MyDocuments'))\WindowsPowerShell\profile.ps1"
-    $psProfile = "$([Environment]::GetFolderPath('MyDocuments'))\PowerShell\profile.ps1"
+    $profiles = @(Get-RealPowerShellProfilePaths | ForEach-Object {
+            [pscustomobject]@{
+                Path    = $_
+                Existed = Test-Path $_
+                Content = if (Test-Path $_) { Get-Content -Raw $_ } else { $null }
+            }
+        })
     $autoRun = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Command Processor' `
             -Name AutoRun -ErrorAction SilentlyContinue).AutoRun
     $userPath = (Get-ItemProperty -Path 'HKCU:\Environment' -Name Path -ErrorAction SilentlyContinue).Path
     [pscustomobject]@{
-        WinPsProfilePath    = $winPsProfile
-        WinPsProfileExisted = Test-Path $winPsProfile
-        WinPsProfileContent = if (Test-Path $winPsProfile) { Get-Content -Raw $winPsProfile } else { $null }
-        PsProfilePath       = $psProfile
-        PsProfileExisted    = Test-Path $psProfile
-        PsProfileContent    = if (Test-Path $psProfile) { Get-Content -Raw $psProfile } else { $null }
-        AutoRun             = $autoRun
-        UserPath            = $userPath
+        Profiles = $profiles
+        AutoRun  = $autoRun
+        UserPath = $userPath
     }
 }
 
 function Restore-RealShellState {
     param([Parameter(Mandatory)]$Snapshot)
-    if ($Snapshot.WinPsProfileExisted) {
-        New-Item -ItemType Directory -Force -Path (Split-Path $Snapshot.WinPsProfilePath) | Out-Null
-        Set-Content -NoNewline -Path $Snapshot.WinPsProfilePath -Value $Snapshot.WinPsProfileContent
-    }
-    elseif (Test-Path $Snapshot.WinPsProfilePath) {
-        Remove-Item -Force $Snapshot.WinPsProfilePath
-    }
-    if ($Snapshot.PsProfileExisted) {
-        New-Item -ItemType Directory -Force -Path (Split-Path $Snapshot.PsProfilePath) | Out-Null
-        Set-Content -NoNewline -Path $Snapshot.PsProfilePath -Value $Snapshot.PsProfileContent
-    }
-    elseif (Test-Path $Snapshot.PsProfilePath) {
-        Remove-Item -Force $Snapshot.PsProfilePath
+    foreach ($p in $Snapshot.Profiles) {
+        if ($p.Existed) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $p.Path) | Out-Null
+            Set-Content -NoNewline -Path $p.Path -Value $p.Content
+        }
+        elseif (Test-Path $p.Path) {
+            Remove-Item -Force $p.Path
+        }
     }
     if ($null -ne $Snapshot.AutoRun) {
         Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Command Processor' -Name AutoRun -Value $Snapshot.AutoRun
