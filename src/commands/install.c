@@ -23,6 +23,14 @@
 static const char *USAGE =
     "usage: shimback install [--prefix <dir>] [--force] [--shell <shell>[,<shell>]... | --all]\n";
 
+/* download_via_curl/install_man_page (and MAN_PAGE_NAME above) are only
+ * ever used from their one call site below, itself compiled out on
+ * Windows -- no man page ships there at all (see that call site's own
+ * comment). Guarding the definitions too, not just the call, avoids
+ * compiling genuinely dead code and the unused-function warning that
+ * would otherwise come with it. */
+#ifndef _WIN32
+
 /* Downloads `url` to `dest` via `curl` (its resolved absolute path), atomically
  * via a temp-file-plus-rename in `dest`'s own directory. Returns false on any
  * failure (curl missing/erroring, network down, non-2xx response with -f). */
@@ -124,14 +132,24 @@ static void install_man_page(const char *prefix, const char *self_exe) {
     free(man_dir);
 }
 
+#endif /* _WIN32 */
+
 /* Merges both the shim dir and this binary's own dir into the single
  * "shimback"-tagged PATH block for `kind` (shell_ensure_path unions its
  * directory into whatever's already there, so calling it twice combines
  * both without either clobbering the other). Also removes the old separate
  * "shimback-bin" block, a one-time migration for anyone who ran an earlier
- * version of `install` that kept the two directories in separate blocks. */
+ * version of `install` that kept the two directories in separate blocks.
+ *
+ * Only the second call is verbose: both calls touch the exact same
+ * profile/AutoRun/registry target per shell, so printing a "PATH updated"
+ * notice from each one would show two identical-looking lines per shell
+ * for what's really a single, combined update -- confirmed confusing for
+ * real (four "PATH updated" lines, two shells, from one `install` run).
+ * By the time the second call runs, the block already contains both
+ * directories, so its notice already reflects the final, complete state. */
 static void ensure_shell_path(ShellKind kind, const char *shim_dir, const char *bin_dir) {
-    shell_ensure_path(kind, shim_dir, true);
+    shell_ensure_path(kind, shim_dir, false);
     shell_ensure_path(kind, bin_dir, true);
     shell_remove_path_tagged(kind, "shimback-bin");
 }
@@ -290,7 +308,18 @@ int cmd_install(int argc, char **argv) {
         printf("shimback: installed to %s\n", dest);
     }
 
+#ifndef _WIN32
+    /* No man page ships on Windows at all (see README's Platform support
+     * section) -- without this guard, install_man_page()'s local-copy
+     * check correctly finds nothing next to the binary, but then falls
+     * through to a pointless curl download attempt: nowhere to view a man
+     * page on Windows anyway (`--help`/`doctor` are the documented
+     * fallback there), and the download can't ever succeed for a
+     * not-yet-released version, so it only ever produced a confusing
+     * "curl: (22) The requested URL returned error: 404" -- confirmed for
+     * real. */
     install_man_page(prefix, self_exe);
+#endif
 
     /* Ensures both PATH entries are set up even on a totally fresh install,
      * before any `add` has ever run: this binary's own location, and the

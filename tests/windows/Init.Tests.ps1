@@ -37,7 +37,10 @@ Describe "shell integration" {
             $r1.ExitCode | Should -Be 0
             $r1.StdOut | Should -Match "Detected powershell"
 
-            $winPsProfile = "$([Environment]::GetFolderPath('MyDocuments'))\WindowsPowerShell\profile.ps1"
+            # Microsoft.PowerShell_profile.ps1 ($PROFILE.CurrentUserCurrentHost),
+            # not the old profile.ps1 (CurrentUserAllHosts) -- see
+            # shell.c's powershell_profile_path for why.
+            $winPsProfile = "$([Environment]::GetFolderPath('MyDocuments'))\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
             $content = Get-Content -Raw $winPsProfile
             $content | Should -Match ([regex]::Escape($Sandbox.DataHome))
             $markerCount = ([regex]::Matches($content, [regex]::Escape("# >>> shimback >>>"))).Count
@@ -57,7 +60,7 @@ Describe "shell integration" {
         }
     }
 
-    It "install adds and uninstall removes its own HKCU\Environment\Path entry" {
+    It "install adds its own HKCU\Environment\Path entry; uninstall removes the binary" {
         # NOT a byte-for-byte "PATH restored to exactly $before" check: the
         # PowerShell-profile PATH block (and the HKCU\Environment\Path
         # entries mirrored from it) is a single machine-wide, shared,
@@ -65,19 +68,27 @@ Describe "shell integration" {
         # shimback has ever added on this machine, not one scoped to a
         # particular install (see shell.c's remove_powershell, which reads
         # *every* directory currently listed in the tagged block and
-        # removes each one). `uninstall` therefore, correctly and by
-        # design, clears the *entire* tagged section, including entries
-        # this test never added itself -- confirmed directly the hard way
-        # while writing this spec (see windows-port.md). Backup/Restore-
-        # RealShellState around this test is what actually guarantees real,
-        # pre-existing entries come back, not `uninstall` itself.
+        # removes each one). Backup/Restore-RealShellState around this test
+        # is what actually guarantees real, pre-existing entries come back,
+        # not `uninstall` itself.
+        #
+        # Also, uninstall deliberately does NOT always strip the shared
+        # block on removal: if another real installation on this machine
+        # still uses it (uninstall.c checks the PATH-recorded installation
+        # list), it leaves the block in place rather than breaking that
+        # other install -- confirmed for real on a dev machine that has its
+        # own separate real install at ~/.local/bin. So this only asserts
+        # what's actually guaranteed regardless of that: the binary itself
+        # is gone, and the PATH entry is gone *unless* uninstall explicitly
+        # said it kept the block for that reason.
         $snapshot = Backup-RealShellState
         try {
             $prefix = Join-Path $Sandbox.Root "install-prefix"
 
             $r1 = Invoke-Shimback @("install", "--prefix", $prefix)
             $r1.ExitCode | Should -Be 0
-            Test-Path (Join-Path $prefix "bin\shimback.exe") | Should -BeTrue
+            $binPath = Join-Path $prefix "bin\shimback.exe"
+            Test-Path $binPath | Should -BeTrue
             # "$prefix/bin", not Join-Path's "$prefix\bin" -- install.c's
             # own path_join always uses '/' for the join point it adds,
             # same convention as shim_bin_dir() (see Common.ps1's own note
@@ -87,8 +98,13 @@ Describe "shell integration" {
 
             $r2 = Invoke-Shimback @("uninstall", "--prefix", $prefix)
             $r2.ExitCode | Should -Be 0
+            Test-Path $binPath | Should -BeFalse
+
             $afterUninstall = (Get-ItemProperty -Path 'HKCU:\Environment' -Name Path -ErrorAction SilentlyContinue).Path
-            $afterUninstall.Contains("$prefix/bin") | Should -BeFalse
+            $keptBlock = $r2.StdErr -match "left the PATH block in place"
+            if (-not $keptBlock) {
+                $afterUninstall.Contains("$prefix/bin") | Should -BeFalse
+            }
         }
         finally {
             Restore-RealShellState $snapshot
