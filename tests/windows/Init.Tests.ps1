@@ -180,8 +180,8 @@ Describe "PowerShell PATH idempotency" {
         Remove-ShimbackSandbox $Sandbox
     }
 
-    It "generates a guarded prepend that doesn't duplicate an already-present directory" {
-        # Real bug, found by the user asking a clarifying question about
+    It "generates a prepend that dedupes an already-present directory without losing the front of PATH" {
+        # Real bug #1, found by the user asking a clarifying question about
         # how PowerShell actually gets its PATH: a brand-new shell already
         # inherits the shim directory from HKCU\Environment\Path (or from
         # whatever process launched it) *before* $PROFILE ever runs, so an
@@ -191,9 +191,22 @@ Describe "PowerShell PATH idempotency" {
         # second PowerShell edition also touched, more with every nested
         # shell-launching-shell). Harmless -- the shim directory still won
         # the front of PATH either way -- but real, verified PATH-list
-        # pollution. This exercises the fix directly against the real
-        # generated PowerShell code, not just shimback's own file-content
-        # bookkeeping.
+        # pollution.
+        #
+        # Real bug #2, reported by the user for real (mise winning the front
+        # of PATH over shimback): the first fix for bug #1 (guard the
+        # prepend on `-notcontains`, shipped through v0.1.0's own second
+        # re-release) traded that pollution for a worse regression -- since
+        # the shim directory is *always* already present by the time this
+        # block runs (same inheritance as above), the guard always skipped
+        # the prepend, so the directory just stayed wherever it was already
+        # inherited to, losing the front-of-PATH race to anything else in
+        # the profile (e.g. mise's own activation) that prepends
+        # unconditionally. Confirmed for real against the user's own profile.
+        # The actual fix (build_ps_body in shell.c) strips any existing
+        # occurrence first, then prepends unconditionally -- both bugs'
+        # assertions below exercise that directly against the real generated
+        # PowerShell code, not just shimback's own file-content bookkeeping.
         $a = @("add", "idemtool", "-s", $PS, "-f", $PS)
         foreach ($x in $PrimaryArgs) { $a += @("--source-arg", $x) }
         foreach ($x in $FallbackArgs) { $a += @("--fallback-arg", $x) }
@@ -202,20 +215,27 @@ Describe "PowerShell PATH idempotency" {
         $docs = [Environment]::GetFolderPath('MyDocuments')
         $profilePath = "$docs\PowerShell\Microsoft.PowerShell_profile.ps1"
         $content = Get-Content -Raw $profilePath
-        $content | Should -Match "-notcontains"
+        $content | Should -Match "Where-Object"
 
         $blockStart = $content.IndexOf("# >>> shimback >>>")
         $blockEnd = $content.IndexOf("# <<< shimback <<<") + "# <<< shimback <<<".Length
         $blockCode = $content.Substring($blockStart, $blockEnd - $blockStart)
         $shimDir = "$($Sandbox.DataHome)/shimback/bin"
 
-        # Directory already present before the block runs -> must not be duplicated.
-        $already = & $PS -NoProfile -Command "`$env:Path = '$shimDir;C:\Windows'`n$blockCode`n(`$env:Path -split ';' | Where-Object { `$_ -eq '$shimDir' }).Count"
-        $already | Should -Be 1
+        # Directory already present before the block runs -> must not be
+        # duplicated (bug #1), and must still end up at the very front
+        # (bug #2) even though something else (simulating mise) already
+        # unconditionally prepended itself after the directory was inherited.
+        $already = & $PS -NoProfile -Command "`$env:Path = '$shimDir;C:\Windows'`n`$env:Path = 'C:\FakeMiseShims' + ';' + `$env:Path`n$blockCode`n`$env:Path"
+        $alreadyParts = $already -split ';'
+        ($alreadyParts | Where-Object { $_ -eq $shimDir }).Count | Should -Be 1
+        $alreadyParts[0] | Should -Be $shimDir
 
-        # Directory not present yet -> still gets added (exactly once).
-        $missing = & $PS -NoProfile -Command "`$env:Path = 'C:\Windows'`n$blockCode`n(`$env:Path -split ';' | Where-Object { `$_ -eq '$shimDir' }).Count"
-        $missing | Should -Be 1
+        # Directory not present yet -> still gets added (exactly once), at the front.
+        $missing = & $PS -NoProfile -Command "`$env:Path = 'C:\Windows'`n$blockCode`n`$env:Path"
+        $missingParts = $missing -split ';'
+        ($missingParts | Where-Object { $_ -eq $shimDir }).Count | Should -Be 1
+        $missingParts[0] | Should -Be $shimDir
     }
 
     It "upgrades an old-format block (unconditional prepend) on the next add, preserving its directories" {
@@ -231,7 +251,7 @@ Describe "PowerShell PATH idempotency" {
         $r.ExitCode | Should -Be 0
 
         $content = Get-Content -Raw $profilePath
-        $content | Should -Match "-notcontains"
+        $content | Should -Match "Where-Object"
         $content.Contains("C:\OldFormatDir\bin") | Should -BeTrue
         ([regex]::Matches($content, [regex]::Escape("# >>> shimback >>>"))).Count | Should -Be 1
     }
