@@ -405,39 +405,69 @@ static char *read_ps_squoted(const char **p) {
     return s;
 }
 
-/* `$env:Path = '<dir1>' + ';' + '<dir2>' + ';' + $env:Path` -- each
- * directory individually single-quoted (append_ps_squoted) and
- * concatenated with PowerShell's `+` operator, mirroring build_bash_body's
- * per-directory quoting rather than building one quoted/joined list, so
- * parse_existing_ps_dirs can read it back the same simple way
- * parse_existing_dirs does. */
+/* `foreach ($__shimback_dir in @('<dir1>', '<dir2>')) { if (($env:Path
+ * -split ';') -notcontains $__shimback_dir) { $env:Path = $__shimback_dir +
+ * ';' + $env:Path } }` -- each directory individually single-quoted
+ * (append_ps_squoted), comma-joined inside the @(...) array literal.
+ *
+ * Guarded, not an unconditional prepend (the form used through v0.1.0's own
+ * first re-release): confirmed for real that an unconditional prepend
+ * double- or triple-counts a shim directory that's *already* on PATH --
+ * which it always is, for anyone who opens a plain new terminal, since
+ * that's inherited from HKCU\Environment\Path (or from the environment of
+ * whatever process launched it, e.g. a shell launched from inside another
+ * shell that already ran this same profile) before this profile line ever
+ * runs. Harmless in that the shim directory still wins the front of PATH
+ * either way, but real, visible PATH-list pollution that compounds with
+ * every nested shell launch -- this closes it at the source instead of
+ * just tolerating it. -notcontains is PowerShell's case-insensitive array
+ * membership test, matching Windows' own path case-insensitivity. */
 static void build_ps_body(DynBuf *body, const StrVec *dirs) {
-    dynbuf_append_str(body, "$env:Path = ");
+    dynbuf_append_str(body, "foreach ($__shimback_dir in @(");
     for (size_t i = 0; i < dirs->count; i++) {
+        if (i > 0) {
+            dynbuf_append_str(body, ", ");
+        }
         append_ps_squoted(body, dirs->items[i]);
-        dynbuf_append_str(body, " + ';' + ");
     }
-    dynbuf_append_str(body, "$env:Path\n");
+    dynbuf_append_str(body,
+                       ")) { if (($env:Path -split ';') -notcontains "
+                       "$__shimback_dir) { $env:Path = $__shimback_dir + ';' + "
+                       "$env:Path } }\n");
 }
 
-#define PS_BODY_JOINER " + ';' + "
+#define PS_BODY_JOINER ", "
 
 /* Extracts the directory list from a block body shaped like build_ps_body's
  * output, mirroring parse_existing_dirs. Best-effort: a body with no such
- * line just yields no directories. */
+ * line just yields no directories. Also recognizes the unconditional-
+ * prepend form build_ps_body wrote through v0.1.0's own first re-release
+ * ("$env:Path = 'dir' + ';' + ..."), so a block written by that older
+ * shimback still parses correctly until the next add/init/install rewrites
+ * it in the new, guarded form. */
 static void parse_existing_ps_dirs(const char *body, size_t body_len, StrVec *out) {
     char *copy = xmalloc(body_len + 1);
     memcpy(copy, body, body_len);
     copy[body_len] = '\0';
 
-    const char *marker = "$env:Path = ";
+    const char *marker = "foreach ($__shimback_dir in @(";
+    const char *old_marker = "$env:Path = ";
+    const char *joiner = PS_BODY_JOINER;
     const char *p = strstr(copy, marker);
     if (p) {
         p += strlen(marker);
+    } else {
+        p = strstr(copy, old_marker);
+        if (p) {
+            p += strlen(old_marker);
+            joiner = " + ';' + ";
+        }
+    }
+    if (p) {
         while (*p == '\'') {
             strvec_push(out, read_ps_squoted(&p));
-            if (strncmp(p, PS_BODY_JOINER, strlen(PS_BODY_JOINER)) == 0) {
-                p += strlen(PS_BODY_JOINER);
+            if (strncmp(p, joiner, strlen(joiner)) == 0) {
+                p += strlen(joiner);
             } else {
                 break;
             }
