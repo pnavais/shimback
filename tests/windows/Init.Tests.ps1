@@ -110,6 +110,52 @@ Describe "shell integration" {
             Restore-RealShellState $snapshot
         }
     }
+
+    It "uninstall can remove itself even though Windows won't let a running process delete its own image" {
+        # Real bug, reported by the user running `shimback uninstall` for
+        # real on their own machine: `shimback uninstall` is normally
+        # invoked as the exact binary it's trying to delete (e.g.
+        # ~/.local/bin/shimback.exe uninstall), and Windows refuses to
+        # delete a running process's own image file (DeleteFileW/unlink()
+        # -> ERROR_ACCESS_DENIED) -- verified for real via a standalone
+        # compiled test program. uninstall.c's orphan_running_binary works
+        # around this with a rename (which Windows *does* allow on a
+        # running file), freeing the original path. Invoke-Shimback always
+        # runs the *test harness's* shimback.exe (see Get-ShimbackExe), not
+        # whatever's installed at --prefix, so this specifically invokes
+        # the *installed* copy against itself via Invoke-Exe to actually
+        # exercise the failure -- the earlier "uninstall removes the
+        # binary" test above never does, since it always deletes a file
+        # that isn't the running process's own.
+        $snapshot = Backup-RealShellState
+        try {
+            $prefix = Join-Path $Sandbox.Root "install-prefix-selfdelete"
+            $r1 = Invoke-Shimback @("install", "--prefix", $prefix)
+            $r1.ExitCode | Should -Be 0
+            $binPath = Join-Path $prefix "bin\shimback.exe"
+            Test-Path $binPath | Should -BeTrue
+
+            $r2 = Invoke-Exe -Path $binPath -ExeArgs @("uninstall", "--prefix", $prefix)
+            $r2.ExitCode | Should -Be 0
+            Test-Path $binPath | Should -BeFalse
+            Test-Path "$binPath.old" | Should -BeTrue
+            $r2.StdOut | Should -Match "renamed it to"
+
+            # The rename frees the original path, so the "any other
+            # installation left?" scan further down correctly sees none --
+            # unless a genuinely separate installation exists elsewhere on
+            # this machine (e.g. a dev box's own real ~/.local/bin install,
+            # same caveat as the test above), in which case the message is
+            # fine as long as it isn't the original bug: misattributing
+            # *this* just-freed path as if it were that other installation.
+            if ($r2.StdErr -match "left the PATH block in place") {
+                $r2.StdErr | Should -Not -Match ([regex]::Escape($binPath))
+            }
+        }
+        finally {
+            Restore-RealShellState $snapshot
+        }
+    }
 }
 
 # A separate, ungated Describe: unlike the real-mutation specs above, this

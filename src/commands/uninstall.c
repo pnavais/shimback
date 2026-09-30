@@ -173,6 +173,34 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
 
 typedef bool (*FileVerifier)(const char *path);
 
+#ifdef _WIN32
+/* Windows won't let a running process delete its own image file --
+ * DeleteFileW/unlink() fails with ERROR_ACCESS_DENIED/EACCES, verified for
+ * real: a compiled test program renaming/deleting itself while running
+ * confirmed DeleteFileW fails but MoveFileExW (rename) succeeds, because
+ * the lock follows the open file object, not the directory entry. This
+ * isn't an edge case here -- `shimback uninstall` is normally invoked as
+ * the very binary being removed (e.g. `~/.local/bin/shimback.exe
+ * uninstall`), so a plain unlink() of the installed binary fails on
+ * Windows essentially every time. Renaming it out of the way frees the
+ * original path for a future `install`, and lets the "any other
+ * installation left?" scan further down correctly see none, at the cost
+ * of leaving the orphaned bytes behind under a ".old" name -- harmless:
+ * not on PATH, not matched by looks_like_shimback_binary's own directory
+ * scans, and overwritten (MOVEFILE_REPLACE_EXISTING, via
+ * plat_rename_replace) rather than piling up across repeated
+ * uninstall/install cycles. */
+static bool orphan_running_binary(const char *path) {
+    DynBuf orphan;
+    dynbuf_init(&orphan);
+    dynbuf_append_str(&orphan, path);
+    dynbuf_append_str(&orphan, ".old");
+    bool ok = plat_rename_replace(path, dynbuf_cstr(&orphan));
+    dynbuf_free(&orphan);
+    return ok;
+}
+#endif
+
 /* Removes `path` if present -- and, when `verify` is given, only if it
  * actually looks like something shimback itself would have put there.
  * `--prefix` is user-controlled and can point anywhere, so `path` being
@@ -180,8 +208,18 @@ typedef bool (*FileVerifier)(const char *path);
  * by itself proof that's what's actually there (a typo'd --prefix, or one
  * shared with another project that happens to use the same file name,
  * would otherwise make this delete an unrelated file). `verify` is NULL
- * for config.toml, whose path is never --prefix-derived. */
-static void remove_file_if_present(const char *path, const char *label, FileVerifier verify) {
+ * for config.toml, whose path is never --prefix-derived.
+ *
+ * `is_binary` marks the one caller (the installed binary itself) where a
+ * Windows unlink() failure gets the orphan-rename fallback above instead
+ * of just a warning -- config.toml and the man page are never the running
+ * process's own image, so a locked-for-that-reason failure can't happen
+ * for them. */
+static void remove_file_if_present(const char *path, const char *label, FileVerifier verify,
+                                    bool is_binary) {
+#ifndef _WIN32
+    (void)is_binary;
+#endif
     if (access(path, F_OK) != 0) {
         return;
     }
@@ -193,14 +231,23 @@ static void remove_file_if_present(const char *path, const char *label, FileVeri
     }
     if (unlink(path) == 0) {
         printf("shimback: removed %s (%s)\n", path, label);
-    } else {
-        warn("uninstall: failed to remove %s: %s", path, strerror(errno));
+        return;
     }
+#ifdef _WIN32
+    if (is_binary && errno == EACCES && orphan_running_binary(path)) {
+        printf("shimback: %s is still running -- likely this very process -- so Windows won't "
+               "let it delete its own binary; renamed it to %s.old instead, freeing the path "
+               "for a future install\n",
+               path, path);
+        return;
+    }
+#endif
+    warn("uninstall: failed to remove %s: %s", path, strerror(errno));
 }
 
 static void remove_config(void) {
     char *cfg_path = config_file_path();
-    remove_file_if_present(cfg_path, "config", NULL);
+    remove_file_if_present(cfg_path, "config", NULL, false);
     char *cfg_dir = dir_of(cfg_path);
     rmdir(cfg_dir); /* best-effort */
     free(cfg_dir);
@@ -342,11 +389,11 @@ int cmd_uninstall(int argc, char **argv) {
         char *dest_filename = shimback_exe_name();
         char *bin_dest = path_join(path_join(prefixes.items[i], "bin"), dest_filename);
         free(dest_filename);
-        remove_file_if_present(bin_dest, "installed binary", looks_like_shimback_binary);
+        remove_file_if_present(bin_dest, "installed binary", looks_like_shimback_binary, true);
         free(bin_dest);
 
         char *man_dest = path_join(path_join(prefixes.items[i], "share/man/man1"), "shimback.1");
-        remove_file_if_present(man_dest, "man page", looks_like_shimback_man_page);
+        remove_file_if_present(man_dest, "man page", looks_like_shimback_man_page, false);
         free(man_dest);
     }
 
