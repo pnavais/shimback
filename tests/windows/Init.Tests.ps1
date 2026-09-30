@@ -111,3 +111,82 @@ Describe "shell integration" {
         }
     }
 }
+
+# A separate, ungated Describe: unlike the real-mutation specs above, this
+# doesn't need SHIMBACK_TEST_REAL_SHELL -- generating the block still
+# touches the real profile file (Enter-ShimbackSandbox can't redirect that,
+# same reason as above), but Enter/Exit-ShimbackSandbox's own automatic
+# Backup/Restore-RealShellState already protects it, the same way every
+# other Describe in this suite that happens to call add/install is already
+# protected, so there's no need to skip it locally too.
+Describe "PowerShell PATH idempotency" {
+    BeforeAll {
+        . "$PSScriptRoot\Common.ps1"
+        $script:Sandbox = New-ShimbackSandbox
+        Enter-ShimbackSandbox $Sandbox
+        $script:PS = Get-PowerShellExe
+        $script:PrimaryArgs = Get-FixtureArgs "FakePrimary.ps1"
+        $script:FallbackArgs = Get-FixtureArgs "FakeFallback.ps1"
+    }
+
+    AfterAll {
+        Exit-ShimbackSandbox $Sandbox
+        Remove-ShimbackSandbox $Sandbox
+    }
+
+    It "generates a guarded prepend that doesn't duplicate an already-present directory" {
+        # Real bug, found by the user asking a clarifying question about
+        # how PowerShell actually gets its PATH: a brand-new shell already
+        # inherits the shim directory from HKCU\Environment\Path (or from
+        # whatever process launched it) *before* $PROFILE ever runs, so an
+        # unconditional `$env:Path = '<dir>' + ';' + $env:Path` -- the form
+        # used through v0.1.0's own first re-release -- always added a
+        # second, redundant copy every single session (a third with a
+        # second PowerShell edition also touched, more with every nested
+        # shell-launching-shell). Harmless -- the shim directory still won
+        # the front of PATH either way -- but real, verified PATH-list
+        # pollution. This exercises the fix directly against the real
+        # generated PowerShell code, not just shimback's own file-content
+        # bookkeeping.
+        $a = @("add", "idemtool", "-s", $PS, "-f", $PS)
+        foreach ($x in $PrimaryArgs) { $a += @("--source-arg", $x) }
+        foreach ($x in $FallbackArgs) { $a += @("--fallback-arg", $x) }
+        Invoke-Shimback $a | Out-Null
+
+        $docs = [Environment]::GetFolderPath('MyDocuments')
+        $profilePath = "$docs\PowerShell\Microsoft.PowerShell_profile.ps1"
+        $content = Get-Content -Raw $profilePath
+        $content | Should -Match "-notcontains"
+
+        $blockStart = $content.IndexOf("# >>> shimback >>>")
+        $blockEnd = $content.IndexOf("# <<< shimback <<<") + "# <<< shimback <<<".Length
+        $blockCode = $content.Substring($blockStart, $blockEnd - $blockStart)
+        $shimDir = "$($Sandbox.DataHome)/shimback/bin"
+
+        # Directory already present before the block runs -> must not be duplicated.
+        $already = & $PS -NoProfile -Command "`$env:Path = '$shimDir;C:\Windows'`n$blockCode`n(`$env:Path -split ';' | Where-Object { `$_ -eq '$shimDir' }).Count"
+        $already | Should -Be 1
+
+        # Directory not present yet -> still gets added (exactly once).
+        $missing = & $PS -NoProfile -Command "`$env:Path = 'C:\Windows'`n$blockCode`n(`$env:Path -split ';' | Where-Object { `$_ -eq '$shimDir' }).Count"
+        $missing | Should -Be 1
+    }
+
+    It "upgrades an old-format block (unconditional prepend) on the next add, preserving its directories" {
+        $docs = [Environment]::GetFolderPath('MyDocuments')
+        $profilePath = "$docs\PowerShell\Microsoft.PowerShell_profile.ps1"
+        New-Item -ItemType Directory -Force -Path (Split-Path $profilePath) | Out-Null
+        Set-Content -Path $profilePath -Value "# >>> shimback >>>`n`$env:Path = 'C:\OldFormatDir\bin' + ';' + `$env:Path`n# <<< shimback <<<`n"
+
+        $a = @("add", "migtool", "-s", $PS, "-f", $PS)
+        foreach ($x in $PrimaryArgs) { $a += @("--source-arg", $x) }
+        foreach ($x in $FallbackArgs) { $a += @("--fallback-arg", $x) }
+        $r = Invoke-Shimback $a
+        $r.ExitCode | Should -Be 0
+
+        $content = Get-Content -Raw $profilePath
+        $content | Should -Match "-notcontains"
+        $content.Contains("C:\OldFormatDir\bin") | Should -BeTrue
+        ([regex]::Matches($content, [regex]::Escape("# >>> shimback >>>"))).Count | Should -Be 1
+    }
+}
