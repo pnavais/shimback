@@ -1,6 +1,7 @@
 #include "shell.h"
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,23 @@
 #include "util.h"
 
 #define DEFAULT_TAG "shimback"
+
+/* Prints "<shell_name>: <msg>" to stdout, with the shell-name prefix
+ * colored ANSI_SHELL (distinct from util.c's info(), whose "shimback:"
+ * prefix is ANSI_PREFIX) when stdout is a color terminal -- shell.c's own
+ * equivalent of info(), for the per-shell "PATH updated"/"AutoRun
+ * updated" status lines (zsh/bash/fish/powershell/pwsh/cmd), so each
+ * shell's own name-prefix stays visually distinguishable from shimback's
+ * own brand prefix elsewhere in the same output. */
+static void shell_status(const char *shell_name, const char *fmt, ...) {
+    bool colorize = stdout_is_color();
+    va_list ap;
+    printf("%s%s:%s ", colorize ? ANSI_SHELL : "", shell_name, colorize ? ANSI_RESET : "");
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("\n");
+}
 
 ShellKind detect_current_shell(void) {
 #ifdef _WIN32
@@ -1030,7 +1048,9 @@ static bool ensure_fish(const char *dir, const char *tag, bool verbose,
 
     if (ok) {
         if (verbose) {
-            printf("fish: PATH updated in %s\n", path);
+            bool colorize = stdout_is_color();
+            shell_status("fish", "PATH updated in " COLOR_PATH_FMT,
+                         COLOR_PATH_ARGS(path, colorize));
         }
     } else {
         warn("failed to update %s", path);
@@ -1063,7 +1083,8 @@ static bool ensure_zsh(const char *dir, const char *tag, bool verbose,
     bool ok = ensure_dir_in_block(rc, tag, dir, BODY_ZSH, resolve_mise_integration(mise_mode));
     if (ok) {
         if (verbose) {
-            printf("zsh: PATH updated in %s\n", rc);
+            bool colorize = stdout_is_color();
+            shell_status("zsh", "PATH updated in " COLOR_PATH_FMT, COLOR_PATH_ARGS(rc, colorize));
         }
     } else {
         warn("failed to update %s", rc);
@@ -1088,7 +1109,9 @@ static bool ensure_bash(const char *dir, const char *tag, bool verbose,
             bool ok = ensure_dir_in_block(path, tag, dir, BODY_BASH, mise_integration);
             if (ok) {
                 if (verbose) {
-                    printf("bash: PATH updated in %s\n", path);
+                    bool colorize = stdout_is_color();
+                    shell_status("bash", "PATH updated in " COLOR_PATH_FMT,
+                                 COLOR_PATH_ARGS(path, colorize));
                 }
             } else {
                 warn("failed to update %s", path);
@@ -1103,7 +1126,9 @@ static bool ensure_bash(const char *dir, const char *tag, bool verbose,
         bool ok = ensure_dir_in_block(path, tag, dir, BODY_BASH, mise_integration);
         if (ok) {
             if (verbose) {
-                printf("bash: created %s with PATH update\n", path);
+                bool colorize = stdout_is_color();
+                shell_status("bash", "created " COLOR_PATH_FMT " with PATH update",
+                             COLOR_PATH_ARGS(path, colorize));
             }
         } else {
             warn("failed to create %s", path);
@@ -1307,7 +1332,9 @@ static bool ensure_powershell(const char *dir, const char *tag, bool verbose,
             touched_any = true;
             if (ok) {
                 if (verbose) {
-                    printf("powershell: PATH updated in %s\n", profile);
+                    bool colorize = stdout_is_color();
+                    shell_status("powershell", "PATH updated in " COLOR_PATH_FMT,
+                                 COLOR_PATH_ARGS(profile, colorize));
                 }
             } else {
                 warn("failed to update %s", profile);
@@ -1327,7 +1354,9 @@ static bool ensure_powershell(const char *dir, const char *tag, bool verbose,
             touched_any = true;
             if (ok) {
                 if (verbose) {
-                    printf("pwsh: PATH updated in %s\n", profile);
+                    bool colorize = stdout_is_color();
+                    shell_status("pwsh", "PATH updated in " COLOR_PATH_FMT,
+                                 COLOR_PATH_ARGS(profile, colorize));
                 }
             } else {
                 warn("failed to update %s", profile);
@@ -1573,8 +1602,10 @@ static bool ensure_dir_in_autorun(const char *tag, const char *dir, bool verbose
 
     if (ok) {
         if (verbose) {
-            printf("cmd: AutoRun updated (HKCU\\Software\\Microsoft\\Command "
-                   "Processor\\AutoRun)\n");
+            bool colorize = stdout_is_color();
+            shell_status("cmd", "AutoRun updated (" COLOR_PATH_FMT ")",
+                         COLOR_PATH_ARGS("HKCU\\Software\\Microsoft\\Command Processor\\AutoRun",
+                                          colorize));
         }
     } else {
         warn("failed to update the cmd.exe AutoRun registry value");

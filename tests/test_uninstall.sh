@@ -96,7 +96,7 @@ fi
 assert_not_contains "uninstall (no --prefix): PATH block removed" "$(cat "$ZSHRC")" \
     "# >>> shimback >>>"
 assert_contains "uninstall (no --prefix): reports the removed binary" "$out4" \
-    "removed $DEST"
+    "removed \"$DEST\""
 
 # --- a leftover second installation (only possible from an older version,
 # before install enforced a single one) keeps the PATH block alive when the

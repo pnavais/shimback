@@ -337,8 +337,9 @@ int cmd_update(int argc, char **argv) {
         die("update: failed to create a temporary directory: %s", strerror(errno));
     }
 
+    bool colorize = stdout_is_color();
     char *installed_version = binary_version(inst->binary);
-    info("installed %s (version %s)", inst->binary,
+    info("installed " COLOR_PATH_FMT " (version %s)", COLOR_PATH_ARGS(inst->binary, colorize),
          installed_version ? installed_version : "unknown");
 
     char *asset_path = path_join(tmpdir, asset);
@@ -452,7 +453,7 @@ int cmd_update(int argc, char **argv) {
         char *man_dir = path_join(inst->prefix, "share/man/man1");
         char *man_dest = path_join(man_dir, "shimback.1");
         if (mkdir_p(man_dir) && copy_file(man_src, man_dest)) {
-            info("man page refreshed at %s", man_dest);
+            info("man page refreshed at " COLOR_PATH_FMT, COLOR_PATH_ARGS(man_dest, colorize));
         } else {
             warn("update: failed to refresh the man page at %s", man_dest);
             man_failed = true;

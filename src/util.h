@@ -14,6 +14,27 @@
 #define ANSI_MAGENTA "\033[35m"
 #define ANSI_CYAN "\033[36m"
 
+/* A filesystem/registry path displayed in an output message: double-quoted
+ * (so a path containing spaces, or that otherwise runs into trailing
+ * punctuation, stays visually unambiguous) and colored green -- the color
+ * already established elsewhere (add's symlink path, export's archive
+ * path) for "this is a location", distinct from ANSI_PREFIX's brand blue
+ * and ANSI_SHELL's shell-name magenta. COLOR_PATH_FMT is the format
+ * specifier to splice into a printf-family format string in place of a
+ * bare `%s`; COLOR_PATH_ARGS(path, colorize) expands to the three
+ * matching arguments. Not an allocating helper, by design -- matches this
+ * codebase's existing inline-ternary-coloring style (see add.c/export.c)
+ * rather than introducing a string callers would need to free. */
+#define COLOR_PATH_FMT "%s\"%s\"%s"
+#define COLOR_PATH_ARGS(path, colorize) \
+    ((colorize) ? ANSI_GREEN : ""), (path), ((colorize) ? ANSI_RESET : "")
+
+/* The color for a shell-kind prefix (e.g. "zsh:", "powershell:") in
+ * shell.c's own status lines -- distinct from ANSI_PREFIX, the
+ * "shimback:" brand color every other first-party line uses, so the two
+ * kinds of prefix stay visually distinguishable from each other. */
+#define ANSI_SHELL ANSI_MAGENTA
+
 /* Whether to color stdout output: a real terminal, unless NO_COLOR
  * (https://no-color.org/) is set. */
 bool stdout_is_color(void);
@@ -36,6 +57,13 @@ bool stderr_is_color(void);
  * for ordinary success/info messages (e.g. "removed ..."), not just
  * errors/warnings. */
 void info(const char *fmt, ...);
+
+/* Prints <msg> to stdout, colored ANSI_YELLOW (warn color) when stdout is
+ * a color terminal, with no "shimback:" prefix -- for a standalone
+ * recommended next step (e.g. "Restart your shell ... for the PATH
+ * change to take effect."), set apart on its own line from whatever
+ * info()/warn() lines led up to it. */
+void recommend(const char *fmt, ...);
 
 /* Prints "shimback: <msg>" to stderr and exits with status 1. Never returns.
  * Reserved for unrecoverable CLI/validation errors -- never call this from

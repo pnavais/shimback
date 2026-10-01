@@ -101,10 +101,11 @@ static void install_man_page(const char *prefix, const char *self_exe) {
     char *self_dir = dir_of(self_exe);
     char *local_man = path_join(self_dir, MAN_PAGE_NAME);
 
+    bool colorize = stdout_is_color();
     struct stat st;
     if (stat(local_man, &st) == 0 && S_ISREG(st.st_mode)) {
         if (copy_file(local_man, man_dest)) {
-            info("man page installed to %s", man_dest);
+            info("man page installed to " COLOR_PATH_FMT, COLOR_PATH_ARGS(man_dest, colorize));
         } else {
             warn("install: failed to copy man page from %s to %s: %s", local_man, man_dest,
                  strerror(errno));
@@ -120,7 +121,8 @@ static void install_man_page(const char *prefix, const char *self_exe) {
                      "https://github.com/pnavais/shimback/releases/download/v%s/%s",
                      SHIMBACK_VERSION, MAN_PAGE_NAME);
             if (download_via_curl(curl, url, man_dest)) {
-                info("man page downloaded and installed to %s", man_dest);
+                info("man page downloaded and installed to " COLOR_PATH_FMT,
+                     COLOR_PATH_ARGS(man_dest, colorize));
             } else {
                 warn("install: failed to download man page from %s -- skipping", url);
             }
@@ -293,6 +295,7 @@ int cmd_install(int argc, char **argv) {
      * someone else's "*.old" file on the strength of its name alone. A
      * no-op everywhere else (POSIX never creates this file in the first
      * place), so no #ifdef needed. */
+    bool colorize = stdout_is_color();
     DynBuf dest_old_buf;
     dynbuf_init(&dest_old_buf);
     dynbuf_append_str(&dest_old_buf, dest);
@@ -300,7 +303,8 @@ int cmd_install(int argc, char **argv) {
     const char *dest_old = dynbuf_cstr(&dest_old_buf);
     if (access(dest_old, F_OK) == 0 && looks_like_shimback_binary(dest_old)) {
         if (unlink(dest_old) == 0) {
-            info("removed leftover %s from a previous uninstall", dest_old);
+            info("removed leftover " COLOR_PATH_FMT " from a previous uninstall",
+                 COLOR_PATH_ARGS(dest_old, colorize));
         } else {
             warn("install: failed to remove leftover %s: %s", dest_old, strerror(errno));
         }
@@ -330,12 +334,13 @@ int cmd_install(int argc, char **argv) {
     bool running_installed_copy = dest_canon && strcmp(dest_canon, self_exe) == 0;
     free(dest_canon);
     if (running_installed_copy) {
-        info("%s is already the running copy -- leaving it in place", dest);
+        info(COLOR_PATH_FMT " is already the running copy -- leaving it in place",
+             COLOR_PATH_ARGS(dest, colorize));
     } else {
         if (!copy_executable(self_exe, dest)) {
             die("install: failed to copy %s to %s: %s", self_exe, dest, strerror(errno));
         }
-        info("installed to %s", dest);
+        info("installed to " COLOR_PATH_FMT, COLOR_PATH_ARGS(dest, colorize));
     }
 
 #ifndef _WIN32
@@ -389,8 +394,8 @@ int cmd_install(int argc, char **argv) {
         ensure_shell_path(detect_current_shell(), shim_dir, bin_dir, mise_mode);
     }
     free(shim_dir);
-    printf("Restart your shell (or re-source its startup file) for the PATH change to take "
-           "effect.\n");
+    recommend("Restart your shell (or re-source its startup file) for the PATH change to take "
+              "effect.");
 
     return 0;
 }

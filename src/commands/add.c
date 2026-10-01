@@ -643,12 +643,15 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     const char *pc = policy_color(policy);
     const char *policy_color_str = (colorize && pc) ? pc : "";
 
-    info("'%s%s%s' -> %s%s%s (fallback: %s%s%s, policy: %s%s%s)", name_color, name, reset,
-         path_color, symlink_path, reset, fallback_color,
-         resolved_fallback ? resolved_fallback : "none", reset, policy_color_str,
+    /* "none" (no fallback configured) is a placeholder word, not a path --
+     * quoted only when there's an actual path to quote. */
+    const char *fb_quote = resolved_fallback ? "\"" : "";
+    info("'%s%s%s' -> %s\"%s\"%s (fallback: %s%s%s%s%s, policy: %s%s%s)", name_color, name, reset,
+         path_color, symlink_path, reset, fallback_color, fb_quote,
+         resolved_fallback ? resolved_fallback : "none", fb_quote, reset, policy_color_str,
          policy_to_string(policy), reset);
     if (split_config) {
-        info("config for '%s%s%s' saved to %s%s%s", name_color, name, reset, path_color,
+        info("config for '%s%s%s' saved to %s\"%s\"%s", name_color, name, reset, path_color,
              split_target_path, reset);
     }
 
@@ -657,8 +660,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         cfg.mise_integration_set ? (cfg.mise_integration ? MISE_ON : MISE_OFF) : MISE_AUTO;
     shell_ensure_path(shell, shim_dir, effective_verbose, mise_mode);
     if (effective_verbose) {
-        printf("Restart your shell (or re-source its startup file) for the PATH change to take "
-               "effect.\n");
+        recommend("Restart your shell (or re-source its startup file) for the PATH change to "
+                  "take effect.");
     }
     shim_dir_lock_release(shim_lock_fd);
 

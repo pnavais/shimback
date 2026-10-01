@@ -28,6 +28,16 @@ void info(const char *fmt, ...) {
     printf("\n");
 }
 
+void recommend(const char *fmt, ...) {
+    bool colorize = stdout_is_color();
+    va_list ap;
+    printf("%s", colorize ? ANSI_YELLOW : "");
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("%s\n", colorize ? ANSI_RESET : "");
+}
+
 void die(const char *fmt, ...) {
     bool colorize = stderr_is_color();
     va_list ap;

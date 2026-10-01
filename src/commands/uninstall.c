@@ -220,6 +220,7 @@ static void remove_file_if_present(const char *path, const char *label, FileVeri
 #ifndef _WIN32
     (void)is_binary;
 #endif
+    bool colorize = stdout_is_color();
     if (access(path, F_OK) != 0) {
         return;
     }
@@ -230,15 +231,17 @@ static void remove_file_if_present(const char *path, const char *label, FileVeri
         return;
     }
     if (unlink(path) == 0) {
-        info("removed %s (%s)", path, label);
+        info("removed " COLOR_PATH_FMT " (%s)", COLOR_PATH_ARGS(path, colorize), label);
         return;
     }
 #ifdef _WIN32
     if (is_binary && errno == EACCES && orphan_running_binary(path)) {
-        info("%s is still running -- likely this very process -- so Windows won't "
-             "let it delete its own binary; renamed it to %s.old instead, freeing the path "
-             "for a future install",
-             path, path);
+        info(COLOR_PATH_FMT
+             " is still running -- likely this very process -- so Windows won't "
+             "let it delete its own binary; renamed it to %s\"%s.old\"%s instead, freeing the "
+             "path for a future install",
+             COLOR_PATH_ARGS(path, colorize), colorize ? ANSI_GREEN : "", path,
+             colorize ? ANSI_RESET : "");
         return;
     }
 #endif
@@ -332,13 +335,15 @@ int cmd_uninstall(int argc, char **argv) {
         free(home);
     }
     bool had_path_block = path_block_present();
+    bool colorize = stdout_is_color();
 
     char *shim_dir = shim_bin_dir();
     StrVec removed_shim_names;
     strvec_init(&removed_shim_names);
     int removed = remove_shim_symlinks(shim_dir, &removed_shim_names);
     if (removed > 0) {
-        info("removed %d shim symlink(s) from %s", removed, shim_dir);
+        info("removed %d shim symlink(s) from " COLOR_PATH_FMT, removed,
+             COLOR_PATH_ARGS(shim_dir, colorize));
     }
     free(shim_dir);
 

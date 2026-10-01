@@ -42,7 +42,7 @@ assert_eq "install: exits 0" "0" "$code"
 if [ ! -x "$DEST" ]; then
     fail "install: expected an executable at $DEST"
 fi
-assert_contains "install: reports installed" "$out" "installed to $DEST"
+assert_contains "install: reports installed" "$out" "installed to \"$DEST\""
 assert_contains "install: PATH block injected" "$(cat "$ZSHRC")" "# >>> shimback >>>"
 assert_contains "install: block includes its own bin dir" "$(cat "$ZSHRC")" "$BIN_DIR"
 assert_contains "install: block includes the shim dir too, before any add" "$(cat "$ZSHRC")" \
@@ -51,7 +51,7 @@ assert_contains "install: block includes the shim dir too, before any add" "$(ca
 if [ ! -f "$MAN_DEST" ]; then
     fail "install: expected a man page at $MAN_DEST"
 fi
-assert_contains "install: reports man page installed" "$out" "man page installed to $MAN_DEST"
+assert_contains "install: reports man page installed" "$out" "man page installed to \"$MAN_DEST\""
 assert_not_contains "install: man page came from the bundle, not a download" "$out" "downloaded"
 
 marker_count="$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
@@ -82,7 +82,7 @@ assert_eq "install: still exactly one marker block after the refused re-install"
 out2b="$("$BUNDLED_SHIMBACK" install --prefix "$PREFIX" --force 2>&1)"
 code2b=$?
 assert_eq "install --force: same-prefix overwrite exits 0" "0" "$code2b"
-assert_contains "install --force: reports installed" "$out2b" "installed to $DEST"
+assert_contains "install --force: reports installed" "$out2b" "installed to \"$DEST\""
 assert_not_contains "install --force: overwrote the installed copy" "$(cat "$DEST")" "sentinel"
 assert_eq "install --force: still exactly one marker block" "1" \
     "$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
