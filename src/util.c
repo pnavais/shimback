@@ -18,9 +18,20 @@ bool stderr_is_color(void) {
     return !getenv("NO_COLOR") && plat_isatty_stderr();
 }
 
-void die(const char *fmt, ...) {
+void info(const char *fmt, ...) {
+    bool colorize = stdout_is_color();
     va_list ap;
-    fprintf(stderr, "shimback: ");
+    printf("%sshimback:%s ", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "");
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("\n");
+}
+
+void die(const char *fmt, ...) {
+    bool colorize = stderr_is_color();
+    va_list ap;
+    fprintf(stderr, "%sshimback:%s ", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "");
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
@@ -31,7 +42,8 @@ void die(const char *fmt, ...) {
 void warn_colored(const char *color, const char *fmt, ...) {
     bool colorize = stderr_is_color();
     va_list ap;
-    fprintf(stderr, "shimback: %s", colorize ? color : "");
+    fprintf(stderr, "%sshimback:%s %s", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "",
+            colorize ? color : "");
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
@@ -39,8 +51,9 @@ void warn_colored(const char *color, const char *fmt, ...) {
 }
 
 void warn(const char *fmt, ...) {
+    bool colorize = stderr_is_color();
     va_list ap;
-    fprintf(stderr, "shimback: ");
+    fprintf(stderr, "%sshimback:%s ", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "");
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);

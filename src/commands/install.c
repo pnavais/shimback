@@ -104,7 +104,7 @@ static void install_man_page(const char *prefix, const char *self_exe) {
     struct stat st;
     if (stat(local_man, &st) == 0 && S_ISREG(st.st_mode)) {
         if (copy_file(local_man, man_dest)) {
-            printf("shimback: man page installed to %s\n", man_dest);
+            info("man page installed to %s", man_dest);
         } else {
             warn("install: failed to copy man page from %s to %s: %s", local_man, man_dest,
                  strerror(errno));
@@ -120,7 +120,7 @@ static void install_man_page(const char *prefix, const char *self_exe) {
                      "https://github.com/pnavais/shimback/releases/download/v%s/%s",
                      SHIMBACK_VERSION, MAN_PAGE_NAME);
             if (download_via_curl(curl, url, man_dest)) {
-                printf("shimback: man page downloaded and installed to %s\n", man_dest);
+                info("man page downloaded and installed to %s", man_dest);
             } else {
                 warn("install: failed to download man page from %s -- skipping", url);
             }
@@ -279,6 +279,34 @@ int cmd_install(int argc, char **argv) {
     char *dest = path_join(bin_dir, dest_filename);
     free(dest_filename);
 
+    /* Windows can't delete a running process's own image file, so
+     * `uninstall` falls back to renaming it to "<dest>.old" instead (see
+     * uninstall.c's orphan_running_binary) -- harmless, but it never
+     * cleans itself up on its own, since by the time it's created the
+     * process that would need to delete it is already the one that
+     * couldn't. By the time a fresh `install` runs at the same --prefix,
+     * that old process has necessarily exited (nothing else could still
+     * be holding the file open under the same path), so this is always
+     * safe to remove outright. Verified via looks_like_shimback_binary
+     * first anyway, same ownership caution as the dest check just below --
+     * a --prefix typo'd onto an unrelated directory shouldn't delete
+     * someone else's "*.old" file on the strength of its name alone. A
+     * no-op everywhere else (POSIX never creates this file in the first
+     * place), so no #ifdef needed. */
+    DynBuf dest_old_buf;
+    dynbuf_init(&dest_old_buf);
+    dynbuf_append_str(&dest_old_buf, dest);
+    dynbuf_append_str(&dest_old_buf, ".old");
+    const char *dest_old = dynbuf_cstr(&dest_old_buf);
+    if (access(dest_old, F_OK) == 0 && looks_like_shimback_binary(dest_old)) {
+        if (unlink(dest_old) == 0) {
+            info("removed leftover %s from a previous uninstall", dest_old);
+        } else {
+            warn("install: failed to remove leftover %s: %s", dest_old, strerror(errno));
+        }
+    }
+    dynbuf_free(&dest_old_buf);
+
     /* Unlike uninstall, which always verifies ownership before deleting
      * anything, install used to overwrite whatever was already at `dest`
      * unconditionally -- a typo'd or shared --prefix could silently
@@ -302,12 +330,12 @@ int cmd_install(int argc, char **argv) {
     bool running_installed_copy = dest_canon && strcmp(dest_canon, self_exe) == 0;
     free(dest_canon);
     if (running_installed_copy) {
-        printf("shimback: %s is already the running copy -- leaving it in place\n", dest);
+        info("%s is already the running copy -- leaving it in place", dest);
     } else {
         if (!copy_executable(self_exe, dest)) {
             die("install: failed to copy %s to %s: %s", self_exe, dest, strerror(errno));
         }
-        printf("shimback: installed to %s\n", dest);
+        info("installed to %s", dest);
     }
 
 #ifndef _WIN32

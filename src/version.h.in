@@ -3,6 +3,13 @@
 
 #define SHIMBACK_VERSION "@SHIMBACK_VERSION@"
 
+/* Where this exact binary was built, and from which commit -- so `--version`
+ * can tell a GitHub release build apart from a local one, and pin either to
+ * an exact commit regardless of whether VERSION itself has been bumped yet.
+ * See CMakeLists.txt for how these are computed. */
+#define SHIMBACK_BUILD_SOURCE "@SHIMBACK_BUILD_SOURCE@"
+#define SHIMBACK_GIT_SHA "@SHIMBACK_GIT_SHA@"
+
 /* A fixed byte sequence embedded in every shimback build (any version --
  * this string itself never changes), referenced from main.c so it's
  * guaranteed to end up in the compiled binary's data section regardless

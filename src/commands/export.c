@@ -113,7 +113,11 @@ static bool confirm_create_dir(const char *dir, bool auto_yes) {
     if (auto_yes) {
         return true;
     }
-    printf("shimback: export: directory %s does not exist. Create it? [y/N] ", dir);
+    /* Not info(): an interactive prompt waits for input on the same line,
+     * so it can't end with info()'s own unconditional trailing newline. */
+    bool colorize = stdout_is_color();
+    printf("%sshimback:%s export: directory %s does not exist. Create it? [y/N] ",
+           colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "", dir);
     fflush(stdout);
     char line[64];
     if (!fgets(line, sizeof(line), stdin)) {
@@ -409,10 +413,9 @@ int cmd_export(int argc, char **argv) {
     }
 
     bool colorize = stdout_is_color();
-    printf("shimback: %sexported to %s%s (%zu shim%s, %s)\n", colorize ? ANSI_GREEN : "",
-           final_path, colorize ? ANSI_RESET : "", exported_shim_count,
-           exported_shim_count == 1 ? "" : "s",
-           config_exists ? "config.toml included" : "no config.toml");
+    info("%sexported to %s%s (%zu shim%s, %s)", colorize ? ANSI_GREEN : "", final_path,
+         colorize ? ANSI_RESET : "", exported_shim_count, exported_shim_count == 1 ? "" : "s",
+         config_exists ? "config.toml included" : "no config.toml");
 
     zip_writer_free(&zw);
     free(final_path);

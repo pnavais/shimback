@@ -367,7 +367,8 @@ int cli_run(int argc, char **argv) {
         return 0;
     }
     if (strcmp(argv[1], "--version") == 0) {
-        printf("shimback %s\n", SHIMBACK_VERSION);
+        printf("shimback %s (%s build, %s)\n", SHIMBACK_VERSION, SHIMBACK_BUILD_SOURCE,
+               SHIMBACK_GIT_SHA);
         return 0;
     }
 

@@ -230,15 +230,15 @@ static void remove_file_if_present(const char *path, const char *label, FileVeri
         return;
     }
     if (unlink(path) == 0) {
-        printf("shimback: removed %s (%s)\n", path, label);
+        info("removed %s (%s)", path, label);
         return;
     }
 #ifdef _WIN32
     if (is_binary && errno == EACCES && orphan_running_binary(path)) {
-        printf("shimback: %s is still running -- likely this very process -- so Windows won't "
-               "let it delete its own binary; renamed it to %s.old instead, freeing the path "
-               "for a future install\n",
-               path, path);
+        info("%s is still running -- likely this very process -- so Windows won't "
+             "let it delete its own binary; renamed it to %s.old instead, freeing the path "
+             "for a future install",
+             path, path);
         return;
     }
 #endif
@@ -338,7 +338,7 @@ int cmd_uninstall(int argc, char **argv) {
     strvec_init(&removed_shim_names);
     int removed = remove_shim_symlinks(shim_dir, &removed_shim_names);
     if (removed > 0) {
-        printf("shimback: removed %d shim symlink(s) from %s\n", removed, shim_dir);
+        info("removed %d shim symlink(s) from %s", removed, shim_dir);
     }
     free(shim_dir);
 
@@ -381,8 +381,8 @@ int cmd_uninstall(int argc, char **argv) {
 
         remove_config();
         remove_path_blocks();
-        printf("shimback: --full also cleared the config file, any split <name>-config.toml "
-               "files, and PATH blocks in shell startup files\n");
+        info("--full also cleared the config file, any split <name>-config.toml "
+             "files, and PATH blocks in shell startup files");
     }
 
     for (size_t i = 0; i < prefixes.count; i++) {
@@ -408,7 +408,7 @@ int cmd_uninstall(int argc, char **argv) {
         size_t remaining_count = find_installations(&remaining);
         if (remaining_count == 0) {
             remove_path_blocks();
-            printf("shimback: removed the PATH block from shell startup files\n");
+            info("removed the PATH block from shell startup files");
         } else {
             warn("uninstall: left the PATH block in place -- another installation at %s still "
                  "uses it",

@@ -643,13 +643,13 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     const char *pc = policy_color(policy);
     const char *policy_color_str = (colorize && pc) ? pc : "";
 
-    printf("shimback: '%s%s%s' -> %s%s%s (fallback: %s%s%s, policy: %s%s%s)\n", name_color, name,
-           reset, path_color, symlink_path, reset, fallback_color,
-           resolved_fallback ? resolved_fallback : "none", reset, policy_color_str,
-           policy_to_string(policy), reset);
+    info("'%s%s%s' -> %s%s%s (fallback: %s%s%s, policy: %s%s%s)", name_color, name, reset,
+         path_color, symlink_path, reset, fallback_color,
+         resolved_fallback ? resolved_fallback : "none", reset, policy_color_str,
+         policy_to_string(policy), reset);
     if (split_config) {
-        printf("shimback: config for '%s%s%s' saved to %s%s%s\n", name_color, name, reset,
-               path_color, split_target_path, reset);
+        info("config for '%s%s%s' saved to %s%s%s", name_color, name, reset, path_color,
+             split_target_path, reset);
     }
 
     ShellKind shell = detect_current_shell();

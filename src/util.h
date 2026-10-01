@@ -21,10 +21,21 @@ bool stdout_is_color(void);
 /* Same, but for stderr -- checked separately since either stream can be
  * redirected independently of the other (e.g. `cmd >file.txt` still has a
  * terminal on stderr, and `cmd 2>file.txt` doesn't even though stdout
- * still does). Used for the handful of stderr messages (e.g. a "did you
- * mean" hint) that are colored at all -- die()/warn() themselves stay
- * plain. */
+ * still does). */
 bool stderr_is_color(void);
+
+/* The brand color for the "shimback:" prefix every first-party output line
+ * (info/warn/die, and any ad hoc printf) leads with -- a consistent visual
+ * marker that distinguishes shimback's own voice from whatever a wrapped
+ * source/fallback command prints, independent of a given message's own
+ * severity/emphasis coloring (e.g. warn_colored's `color` argument, which
+ * still colors the body text on top of this). */
+#define ANSI_PREFIX ANSI_BLUE
+
+/* Prints "shimback: <msg>" to stdout -- the stdout counterpart to warn(),
+ * for ordinary success/info messages (e.g. "removed ..."), not just
+ * errors/warnings. */
+void info(const char *fmt, ...);
 
 /* Prints "shimback: <msg>" to stderr and exits with status 1. Never returns.
  * Reserved for unrecoverable CLI/validation errors -- never call this from
@@ -34,9 +45,10 @@ void die(const char *fmt, ...);
 /* Prints "shimback: <msg>" to stderr. Does not exit. */
 void warn(const char *fmt, ...);
 
-/* Like warn(), but the message is wrapped in `color` (an ANSI_* string)
- * when stderr is a color terminal -- for the few user-facing conditions
- * (e.g. "already installed") worth standing out from ordinary warnings. */
+/* Like warn(), but the message body is also wrapped in `color` (an ANSI_*
+ * string) when stderr is a color terminal -- for the few user-facing
+ * conditions (e.g. "already installed") worth standing out further than
+ * the "shimback:" prefix every warn() already gets. */
 void warn_colored(const char *color, const char *fmt, ...);
 
 /* Allocation wrappers that die() on OOM, so call sites never need to check. */

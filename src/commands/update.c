@@ -187,7 +187,7 @@ static char *expected_digest(const char *sums_path, const char *asset) {
 
 static void print_status(const char *color, const char *text) {
     bool c = stdout_is_color();
-    printf("shimback: %s%s%s\n", c ? color : "", text, c ? ANSI_RESET : "");
+    info("%s%s%s", c ? color : "", text, c ? ANSI_RESET : "");
 }
 
 /* Interactively confirms refreshing shims left pointing at the previous
@@ -338,8 +338,8 @@ int cmd_update(int argc, char **argv) {
     }
 
     char *installed_version = binary_version(inst->binary);
-    printf("shimback: installed %s (version %s)\n", inst->binary,
-           installed_version ? installed_version : "unknown");
+    info("installed %s (version %s)", inst->binary,
+         installed_version ? installed_version : "unknown");
 
     char *asset_path = path_join(tmpdir, asset);
     char *sums_path = path_join(tmpdir, "SHA256SUMS");
@@ -452,7 +452,7 @@ int cmd_update(int argc, char **argv) {
         char *man_dir = path_join(inst->prefix, "share/man/man1");
         char *man_dest = path_join(man_dir, "shimback.1");
         if (mkdir_p(man_dir) && copy_file(man_src, man_dest)) {
-            printf("shimback: man page refreshed at %s\n", man_dest);
+            info("man page refreshed at %s", man_dest);
         } else {
             warn("update: failed to refresh the man page at %s", man_dest);
             man_failed = true;
@@ -499,7 +499,13 @@ int cmd_update(int argc, char **argv) {
     free(shim_names);
 
     if (stale_names.count > 0) {
-        printf("shimback: %zu shim(s) still point at the previous binary:", stale_names.count);
+        /* Not info(): this line is built across several printf calls (the
+         * shim names appended one at a time after it), so the "shimback:"
+         * prefix can't come from a single self-contained call that also
+         * forces its own trailing newline partway through. */
+        bool colorize = stdout_is_color();
+        printf("%sshimback:%s %zu shim(s) still point at the previous binary:",
+               colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "", stale_names.count);
         for (size_t i = 0; i < stale_names.count; i++) {
             printf(" %s", stale_names.items[i]);
         }
@@ -511,7 +517,7 @@ int cmd_update(int argc, char **argv) {
                 char *shim_path = path_join(shim_dir, filename);
                 free(filename);
                 if (refresh_shim_link(inst->binary, shim_path, "update")) {
-                    printf("shimback: refreshed shim '%s'\n", stale_names.items[i]);
+                    info("refreshed shim '%s'", stale_names.items[i]);
                 } else {
                     warn("update: failed to refresh shim '%s' at %s: %s", stale_names.items[i],
                          shim_path, strerror(errno));
@@ -520,8 +526,8 @@ int cmd_update(int argc, char **argv) {
             }
             shim_dir_lock_release(shim_lock_fd);
         } else {
-            printf("shimback: leaving them as-is -- run `shimback update -y` (or `shimback "
-                   "update` again) to refresh them later.\n");
+            info("leaving them as-is -- run `shimback update -y` (or `shimback "
+                 "update` again) to refresh them later.");
         }
     }
     strvec_free(&stale_names);

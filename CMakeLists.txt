@@ -91,6 +91,41 @@ if(SHIMBACK_TARGET_WINDOWS)
   add_compile_options("/FI${CMAKE_CURRENT_SOURCE_DIR}/src/platform/win32-compat/shimback_prelude.h")
 endif()
 
+# `--version`'s build-provenance fields (see version.h.in): GITHUB_ACTIONS is
+# set unconditionally by every GitHub Actions runner for every job, which is
+# exactly the distinction wanted here -- a release.yml build vs. `just
+# build`/any other local one -- regardless of who triggered the workflow or
+# which event fired it.
+if(DEFINED ENV{GITHUB_ACTIONS})
+  set(SHIMBACK_BUILD_SOURCE "github")
+else()
+  set(SHIMBACK_BUILD_SOURCE "local")
+endif()
+
+# `git describe --always --dirty` over a bare `rev-parse --short HEAD`:
+# the "-dirty" suffix it adds when the working tree has uncommitted changes
+# is exactly the extra signal a local build benefits from (a release build
+# is always from a clean, tagged checkout, so this never fires there).
+# Falls back to "unknown" for a source tree with no .git directory at all
+# (a source tarball/archive, as opposed to a clone) -- find_package(Git)
+# missing entirely is the same case Windows hits when git.exe isn't on
+# PATH in whatever shell ran cmake.
+set(SHIMBACK_GIT_SHA "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" describe --always --dirty --abbrev=7
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE SHIMBACK_GIT_SHA_OUT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE SHIMBACK_GIT_SHA_RESULT
+  )
+  if(SHIMBACK_GIT_SHA_RESULT EQUAL 0 AND NOT SHIMBACK_GIT_SHA_OUT STREQUAL "")
+    set(SHIMBACK_GIT_SHA "${SHIMBACK_GIT_SHA_OUT}")
+  endif()
+endif()
+
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/src/version.h.in"
   "${CMAKE_CURRENT_BINARY_DIR}/generated/version.h"

@@ -196,7 +196,6 @@ int cmd_remove(int argc, char **argv) {
         return 1;
     }
 
-    printf("shimback: %sremoved '%s'%s\n", colorize ? ANSI_GREEN : "", name,
-           colorize ? ANSI_RESET : "");
+    info("%sremoved '%s'%s", colorize ? ANSI_GREEN : "", name, colorize ? ANSI_RESET : "");
     return 0;
 }
