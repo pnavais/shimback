@@ -14,15 +14,22 @@ typedef enum {
     SHELL_UNKNOWN,
 } ShellKind;
 
-/* Only meaningful for SHELL_POWERSHELL (see build_ps_body in shell.c):
- * whether the generated profile block also wraps `prompt` to re-win the
- * front of PATH after mise's own per-directory-change PATH rewriting,
- * confirmed for real to otherwise permanently push the shim directory
- * behind mise's own tool directories for the rest of a session. Mirrors a
- * config.toml top-level `mise_integration = true/false`: MISE_AUTO (unset
- * in config.toml) resolves to ON if `mise` is found on PATH when the block
- * is (re)generated, OFF otherwise; MISE_ON/MISE_OFF are explicit
- * overrides. Every other ShellKind ignores this parameter entirely. */
+/* Meaningful for SHELL_ZSH/SHELL_BASH/SHELL_FISH/SHELL_POWERSHELL (see
+ * build_zsh_body/build_bash_body/build_fish_body/build_ps_body in
+ * shell.c): whether the generated block also registers a per-shell "run
+ * before every prompt" hook (precmd for zsh, PROMPT_COMMAND for bash, a
+ * fish_prompt event handler for fish, wrapping `prompt` itself for
+ * PowerShell) to re-win the front of PATH after mise's own per-directory-
+ * change PATH rewriting -- confirmed for real, on every one of those
+ * shells (by reading mise's own generated activation scripts), to
+ * otherwise permanently push the shim directory behind mise's own tool
+ * directories for the rest of a session. SHELL_CMD/SHELL_UNKNOWN ignore
+ * this parameter -- cmd.exe's AutoRun has no equivalent "before every
+ * prompt" hook to register into, and mise doesn't support cmd.exe at all.
+ * Mirrors a config.toml top-level `mise_integration = true/false`:
+ * MISE_AUTO (unset in config.toml) resolves to ON if `mise` is found on
+ * PATH when the block is (re)generated, OFF otherwise; MISE_ON/MISE_OFF
+ * are explicit overrides. */
 typedef enum {
     MISE_AUTO,
     MISE_ON,
@@ -86,8 +93,8 @@ bool shell_kind_from_name(const char *name, ShellKind *out);
  * printed on success for SHELL_ZSH/SHELL_BASH/SHELL_FISH/SHELL_POWERSHELL/
  * SHELL_CMD -- a failure still always warns, regardless of `verbose`.
  *
- * `mise_mode` is meaningful only for SHELL_POWERSHELL -- see
- * MiseIntegrationMode's own doc comment. Every other kind ignores it.
+ * `mise_mode` is meaningful for every kind except SHELL_CMD/SHELL_UNKNOWN
+ * -- see MiseIntegrationMode's own doc comment.
  *
  * Equivalent to shell_ensure_path_tagged(kind, dir, "shimback", verbose,
  * mise_mode). */

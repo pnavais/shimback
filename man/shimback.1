@@ -1063,7 +1063,7 @@ as passing
 .B \-\-override
 on each one).
 .IP
-Windows/PowerShell only: top\-level
+Top\-level
 .I mise_integration
 (\fItrue\fR/\fIfalse\fR; omitted defaults to auto\-detecting
 .B mise
@@ -1071,16 +1071,22 @@ on
 .I PATH
 whenever
 .BR add / init / install
-next (re)writes the PowerShell PATH block). mise re\-prepends its own tool
-directories on every directory change for the rest of a PowerShell
-session, which can push shimback's shim directory back behind them \(em
-setting this to
+next (re)writes the PATH block). mise re\-prepends its own tool
+directories on every directory change for the rest of a session, which
+can push shimback's shim directory back behind them \(em setting this to
 .I true
 (or leaving it unset with
 .B mise
-installed) makes the generated block also wrap PowerShell's
+installed) makes the generated block also register a "run before every
+prompt" hook (zsh:
+.IR precmd ;
+bash:
+.IR PROMPT_COMMAND ;
+fish: a
+.I fish_prompt
+event handler; PowerShell: wraps the
 .I prompt
-function to re\-assert shimback at the front of
+function) that re\-asserts shimback at the front of
 .I PATH
 after every prompt redraw, not just once at shell startup. Set it to
 .I false

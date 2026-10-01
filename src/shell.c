@@ -329,7 +329,22 @@ static void append_dq_escaped(DynBuf *out, const char *s) {
  * That string is eval'd, so each directory is escaped for double quotes
  * (append_dq_escaped) and the whole command is then single-quoted, keeping
  * a path with shell metacharacters inert at both levels. */
-static void build_zsh_body(DynBuf *body, const StrVec *dirs) {
+/* `mise_integration`, when true, appends a zsh precmd hook on top of the
+ * zsh-defer-or-plain export above: mise's own zsh activation (confirmed by
+ * reading its generated script) registers via `add-zsh-hook precmd` *and*
+ * `chpwd`, re-prepending its own tool directories on every directory
+ * change for the rest of the session -- zsh-defer only wins the *startup*
+ * ordering race (queuing our export to run after rc sourcing completes),
+ * not this ongoing one, since it only ever runs once. precmd fires before
+ * every prompt, after any chpwd-driven mutation has already happened
+ * (same reasoning as PowerShell's prompt-wrapping and bash's
+ * PROMPT_COMMAND below: catch whatever changed PATH, regardless of how or
+ * when, by being the last thing that runs before the next prompt), so
+ * registering our own reassertion there wins the front of PATH back every
+ * time. Uses zsh's special $path array (auto-synced with $PATH) rather
+ * than string-splitting, and add-zsh-hook -- the same mechanism mise
+ * itself uses -- rather than appending to precmd_functions by hand. */
+static void build_zsh_body(DynBuf *body, const StrVec *dirs, bool mise_integration) {
     DynBuf inner;
     dynbuf_init(&inner);
     dynbuf_append_str(&inner, "export PATH=\"");
@@ -353,15 +368,89 @@ static void build_zsh_body(DynBuf *body, const StrVec *dirs) {
     }
     dynbuf_append_str(body, "\"$PATH\"\n");
     dynbuf_append_str(body, "fi\n");
+
+    if (mise_integration) {
+        dynbuf_append_str(body, "if [[ -z \"${__shimback_prompt_wrapped:-}\" ]]; then\n");
+        dynbuf_append_str(body, "  __shimback_prompt_wrapped=1\n");
+        dynbuf_append_str(body, "  __shimback_reassert_path() {\n");
+        dynbuf_append_str(body, "    local __shimback_dir\n");
+        dynbuf_append_str(body, "    for __shimback_dir in");
+        for (size_t i = 0; i < dirs->count; i++) {
+            dynbuf_append_char(body, ' ');
+            append_sh_squoted(body, dirs->items[i]);
+        }
+        dynbuf_append_str(body, "; do\n");
+        dynbuf_append_str(body,
+                           "      path=(\"${path[@]:#$__shimback_dir}\")\n"
+                           "      path=(\"$__shimback_dir\" \"${path[@]}\")\n");
+        dynbuf_append_str(body, "    done\n");
+        dynbuf_append_str(body, "  }\n");
+        dynbuf_append_str(body, "  autoload -Uz add-zsh-hook\n");
+        dynbuf_append_str(body, "  add-zsh-hook precmd __shimback_reassert_path\n");
+        dynbuf_append_str(body, "fi\n");
+    }
 }
 
-static void build_bash_body(DynBuf *body, const StrVec *dirs) {
+/* `mise_integration`, when true, appends a PROMPT_COMMAND hook on top of
+ * the plain export above -- the bash equivalent of build_zsh_body's precmd
+ * hook (see its own comment for the full reasoning; mise's bash activation
+ * does the same thing via PROMPT_COMMAND, confirmed by reading its
+ * generated script). Guarded by a $BASH_VERSION check: candidates[] in
+ * ensure_bash includes .profile, which other POSIX shells (dash, plain sh)
+ * may also source at login, and PROMPT_COMMAND/bash arrays are bash-only
+ * -- harmless dead code there rather than a syntax error. Appended to the
+ * *end* of whatever PROMPT_COMMAND already contains (including mise's
+ * own, which prepends itself to run first) rather than the front, so this
+ * always runs last in the chain, after mise's own hook has already fired.
+ *
+ * Filters PATH into a bash array and rebuilds it (IFS=':' read -ra, then
+ * skip matching elements) rather than a single-pass `${PATH//:$dir:/:}`
+ * string substitution -- confirmed for real that the string-substitution
+ * form misses an *adjacent* duplicate (e.g. "...:$dir:$dir:..."): bash's
+ * global replace consumes the shared colon between the two copies as part
+ * of matching the first one, so the second copy's own leading colon is
+ * already gone by the time the scan reaches it, and it survives
+ * unmatched. Array filtering has no such edge case. */
+static void build_bash_body(DynBuf *body, const StrVec *dirs, bool mise_integration) {
     dynbuf_append_str(body, "export PATH=");
     for (size_t i = 0; i < dirs->count; i++) {
         append_sh_squoted(body, dirs->items[i]);
         dynbuf_append_char(body, ':');
     }
     dynbuf_append_str(body, "\"$PATH\"\n");
+
+    if (mise_integration) {
+        dynbuf_append_str(body,
+                           "if [ -n \"${BASH_VERSION:-}\" ] && "
+                           "[ -z \"${__shimback_prompt_wrapped:-}\" ]; then\n");
+        dynbuf_append_str(body, "  __shimback_prompt_wrapped=1\n");
+        dynbuf_append_str(body, "  __shimback_reassert_path() {\n");
+        dynbuf_append_str(body, "    local __shimback_dir __shimback_entry\n");
+        dynbuf_append_str(body, "    local -a __shimback_path_arr __shimback_kept\n");
+        dynbuf_append_str(body, "    for __shimback_dir in");
+        for (size_t i = 0; i < dirs->count; i++) {
+            dynbuf_append_char(body, ' ');
+            append_sh_squoted(body, dirs->items[i]);
+        }
+        dynbuf_append_str(body, "; do\n");
+        dynbuf_append_str(
+            body,
+            "      IFS=':' read -ra __shimback_path_arr <<< \"$PATH\"\n"
+            "      __shimback_kept=()\n"
+            "      for __shimback_entry in \"${__shimback_path_arr[@]}\"; do\n"
+            "        [ \"$__shimback_entry\" = \"$__shimback_dir\" ] || "
+            "__shimback_kept+=(\"$__shimback_entry\")\n"
+            "      done\n"
+            "      PATH=\"$__shimback_dir\"\n"
+            "      for __shimback_entry in \"${__shimback_kept[@]}\"; do\n"
+            "        PATH=\"$PATH:$__shimback_entry\"\n"
+            "      done\n");
+        dynbuf_append_str(body, "    done\n");
+        dynbuf_append_str(body, "  }\n");
+        dynbuf_append_str(
+            body, "  PROMPT_COMMAND=\"${PROMPT_COMMAND:+$PROMPT_COMMAND; }__shimback_reassert_path\"\n");
+        dynbuf_append_str(body, "fi\n");
+    }
 }
 
 typedef enum { BODY_BASH, BODY_ZSH, BODY_POWERSHELL } BodyStyle;
@@ -529,6 +618,22 @@ static bool ends_with(const char *s, const char *suffix) {
     return slen >= suflen && strcmp(s + slen - suflen, suffix) == 0;
 }
 
+/* Resolves MISE_AUTO by checking whether `mise` itself is reachable on
+ * PATH right now -- shared by every ensure_<shell> function (zsh, bash,
+ * fish, powershell), each of which calls this once per invocation. A
+ * point-in-time snapshot: installing mise *after* this runs won't
+ * retroactively turn the integration on until the next add/init/install
+ * re-generates the block. */
+static bool resolve_mise_integration(MiseIntegrationMode mode) {
+    if (mode != MISE_AUTO) {
+        return mode == MISE_ON;
+    }
+    char *mise = path_search("mise", NULL, NULL);
+    bool found = mise != NULL;
+    free(mise);
+    return found;
+}
+
 /* Merges `dir` into `dirs` in place: a plain union (skip if already
  * present) for most directories, except that shim_bin_dir() (see paths.c)
  * is always "<data dir>/shimback/bin" and can change between invocations if
@@ -565,10 +670,13 @@ static void merge_dir_into(StrVec *dirs, const char *dir) {
  * commands can run in any order, each contributing its own directory,
  * without any of them clobbering what another already wrote. `style` picks
  * the zsh-defer-aware body, the plain bash one, or the PowerShell one.
- * `ps_mise_integration` is meaningful only for BODY_POWERSHELL -- see
- * build_ps_body. */
+ * `mise_integration`, when true, also has the generated body register a
+ * per-shell "run before every prompt" hook that re-wins the front of PATH
+ * after mise's own per-directory-change PATH rewriting -- see each
+ * build_*_body's own comment for why a one-shot block alone can't do this
+ * and the specific hook mechanism used. */
 static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char *dir,
-                                 BodyStyle style, bool ps_mise_integration) {
+                                 BodyStyle style, bool mise_integration) {
     char *content = read_file_or_empty(rc_path);
 
     const char *block_start = NULL;
@@ -593,10 +701,10 @@ static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char
     DynBuf new_body;
     dynbuf_init(&new_body);
     switch (style) {
-        case BODY_ZSH: build_zsh_body(&new_body, &dirs); break;
-        case BODY_POWERSHELL: build_ps_body(&new_body, &dirs, ps_mise_integration); break;
+        case BODY_ZSH: build_zsh_body(&new_body, &dirs, mise_integration); break;
+        case BODY_POWERSHELL: build_ps_body(&new_body, &dirs, mise_integration); break;
         case BODY_BASH:
-        default: build_bash_body(&new_body, &dirs); break;
+        default: build_bash_body(&new_body, &dirs, mise_integration); break;
     }
     strvec_free(&dirs);
 
@@ -734,9 +842,13 @@ bool shell_zsh_migrate_block_to_local(const char *tag) {
     parse_existing_dirs(body_start, (size_t)(body_end - body_start), &dirs);
     free(rc_content);
 
+    /* A plain file move, not a config.toml-driven call site -- auto-detect
+     * fresh rather than threading a mode through from callers that have no
+     * other reason to know about mise at all (doctor fix). */
+    bool mise_integration = resolve_mise_integration(MISE_AUTO);
     bool ok = true;
     for (size_t i = 0; i < dirs.count && ok; i++) {
-        ok = ensure_dir_in_block(local, tag, dirs.items[i], BODY_ZSH, false);
+        ok = ensure_dir_in_block(local, tag, dirs.items[i], BODY_ZSH, mise_integration);
     }
     strvec_free(&dirs);
 
@@ -842,7 +954,20 @@ static void parse_existing_fish_dirs(const char *content, StrVec *out) {
     }
 }
 
-static void build_fish_body(DynBuf *body, const StrVec *dirs) {
+/* `mise_integration`, when true, appends a `fish_prompt` event handler on
+ * top of the plain `set -gx PATH` above -- the fish equivalent of
+ * build_zsh_body's precmd hook and build_bash_body's PROMPT_COMMAND one
+ * (see build_zsh_body's comment for the full reasoning; mise's fish
+ * activation binds its own env update to `--on-event fish_prompt` too,
+ * confirmed by reading its generated script). No sentinel-variable guard
+ * needed here unlike the other two: fish's event system binds by function
+ * *name*, so redefining `__shimback_reassert_path` on every re-source
+ * (ensure_fish always rewrites this file in full, never patches in place)
+ * simply replaces the existing binding instead of accumulating a second
+ * one. `string match -v` is fish's own idiom for "keep elements NOT
+ * matching this pattern", the equivalent of PowerShell's `Where-Object {
+ * $_ -ne ... }` / zsh's `${path[@]:#...}`. */
+static void build_fish_body(DynBuf *body, const StrVec *dirs, bool mise_integration) {
     dynbuf_append_str(body, "# Managed by shimback -- changes here will be overwritten.\n");
     dynbuf_append_str(body, "set -gx PATH");
     for (size_t i = 0; i < dirs->count; i++) {
@@ -850,6 +975,22 @@ static void build_fish_body(DynBuf *body, const StrVec *dirs) {
         append_fish_squoted(body, dirs->items[i]);
     }
     dynbuf_append_str(body, " $PATH\n");
+
+    if (mise_integration) {
+        dynbuf_append_str(body,
+                           "function __shimback_reassert_path --on-event fish_prompt\n");
+        dynbuf_append_str(body, "    for __shimback_dir in");
+        for (size_t i = 0; i < dirs->count; i++) {
+            dynbuf_append_char(body, ' ');
+            append_fish_squoted(body, dirs->items[i]);
+        }
+        dynbuf_append_str(body, "\n");
+        dynbuf_append_str(body,
+                           "        set -gx PATH (string match -v -- $__shimback_dir $PATH)\n"
+                           "        set -gx PATH $__shimback_dir $PATH\n");
+        dynbuf_append_str(body, "    end\n");
+        dynbuf_append_str(body, "end\n");
+    }
 }
 
 /* Idempotently ensures `dir` is included in `tag`'s fish snippet, unioning
@@ -859,7 +1000,8 @@ static void build_fish_body(DynBuf *body, const StrVec *dirs) {
  * snippet is entirely shimback's own file (unlike the zsh/bash marker
  * block, which shares a file with everything else in someone's rc), it's
  * simply rewritten in full each time rather than patched in place. */
-static bool ensure_fish(const char *dir, const char *tag, bool verbose) {
+static bool ensure_fish(const char *dir, const char *tag, bool verbose,
+                         MiseIntegrationMode mise_mode) {
     char *path = fish_snippet_path(tag);
     char *confd_dir = dir_of(path);
     if (!mkdir_p(confd_dir)) {
@@ -880,7 +1022,7 @@ static bool ensure_fish(const char *dir, const char *tag, bool verbose) {
 
     DynBuf desired;
     dynbuf_init(&desired);
-    build_fish_body(&desired, &dirs);
+    build_fish_body(&desired, &dirs, resolve_mise_integration(mise_mode));
     strvec_free(&dirs);
 
     bool ok = write_file_atomic(path, desired.data, desired.len, 0644);
@@ -914,10 +1056,11 @@ static bool remove_fish(const char *tag) {
     return ok;
 }
 
-static bool ensure_zsh(const char *dir, const char *tag, bool verbose) {
+static bool ensure_zsh(const char *dir, const char *tag, bool verbose,
+                        MiseIntegrationMode mise_mode) {
     char *home = home_dir();
     char *rc = zsh_rc_path(home);
-    bool ok = ensure_dir_in_block(rc, tag, dir, BODY_ZSH, false);
+    bool ok = ensure_dir_in_block(rc, tag, dir, BODY_ZSH, resolve_mise_integration(mise_mode));
     if (ok) {
         if (verbose) {
             printf("zsh: PATH updated in %s\n", rc);
@@ -930,17 +1073,19 @@ static bool ensure_zsh(const char *dir, const char *tag, bool verbose) {
     return ok;
 }
 
-static bool ensure_bash(const char *dir, const char *tag, bool verbose) {
+static bool ensure_bash(const char *dir, const char *tag, bool verbose,
+                         MiseIntegrationMode mise_mode) {
     static const char *candidates[] = {".bashrc", ".bash_profile", ".profile"};
     char *home = home_dir();
     bool any_exists = false;
     bool all_ok = true;
+    bool mise_integration = resolve_mise_integration(mise_mode);
 
     for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
         char *path = path_join(home, candidates[i]);
         if (access(path, F_OK) == 0) {
             any_exists = true;
-            bool ok = ensure_dir_in_block(path, tag, dir, BODY_BASH, false);
+            bool ok = ensure_dir_in_block(path, tag, dir, BODY_BASH, mise_integration);
             if (ok) {
                 if (verbose) {
                     printf("bash: PATH updated in %s\n", path);
@@ -955,7 +1100,7 @@ static bool ensure_bash(const char *dir, const char *tag, bool verbose) {
 
     if (!any_exists) {
         char *path = path_join(home, ".bashrc");
-        bool ok = ensure_dir_in_block(path, tag, dir, BODY_BASH, false);
+        bool ok = ensure_dir_in_block(path, tag, dir, BODY_BASH, mise_integration);
         if (ok) {
             if (verbose) {
                 printf("bash: created %s with PATH update\n", path);
@@ -1145,14 +1290,7 @@ static bool ensure_powershell(const char *dir, const char *tag, bool verbose,
     char *pwsh = path_search("pwsh", NULL, NULL);
     char *winps = path_search("powershell", NULL, NULL);
 
-    bool mise_integration;
-    if (mise_mode == MISE_AUTO) {
-        char *mise = path_search("mise", NULL, NULL);
-        mise_integration = mise != NULL;
-        free(mise);
-    } else {
-        mise_integration = mise_mode == MISE_ON;
-    }
+    bool mise_integration = resolve_mise_integration(mise_mode);
 
     bool all_ok = true;
     bool touched_any = false;
@@ -1585,16 +1723,13 @@ void shell_read_block_dirs(ShellKind kind, const char *tag, StrVec *out) {
 
 bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, bool verbose,
                                MiseIntegrationMode mise_mode) {
-#ifndef _WIN32
-    (void)mise_mode;
-#endif
     switch (kind) {
         case SHELL_ZSH:
-            return ensure_zsh(dir, tag, verbose);
+            return ensure_zsh(dir, tag, verbose, mise_mode);
         case SHELL_BASH:
-            return ensure_bash(dir, tag, verbose);
+            return ensure_bash(dir, tag, verbose, mise_mode);
         case SHELL_FISH:
-            return ensure_fish(dir, tag, verbose);
+            return ensure_fish(dir, tag, verbose, mise_mode);
 #ifdef _WIN32
         case SHELL_POWERSHELL:
             return ensure_powershell(dir, tag, verbose, mise_mode);

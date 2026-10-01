@@ -22,6 +22,17 @@ BUNDLED_SHIMBACK="$BUNDLE_DIR/shimback"
 SHIM_DIR="$XDG_DATA_HOME/shimback/bin"
 BIN_DIR="$PREFIX/bin"
 
+# Pin mise_integration off: an unset value auto-detects `mise` on PATH, and
+# this file's directory-count assertions below count raw occurrences of a
+# directory string in the generated output -- which legitimately appears
+# more than once when the mise hook is on (it repeats the directory literal
+# in its own generated code), independent of this file having any real
+# duplicate-directory bug. See test_init.sh's identical pin for the same
+# reasoning (environment leakage: whether this machine happens to have mise
+# installed shouldn't change this file's outcome).
+mkdir -p "$(dirname "$(config_file)")"
+printf 'version = 1\nmise_integration = false\n' >"$(config_file)"
+
 # --- install copies the binary, the bundled man page, and merges both its
 # own bin dir and the shim dir into a single PATH block ---
 out="$("$BUNDLED_SHIMBACK" install --prefix "$PREFIX")"
