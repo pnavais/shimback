@@ -367,8 +367,15 @@ int cli_run(int argc, char **argv) {
         return 0;
     }
     if (strcmp(argv[1], "--version") == 0) {
-        printf("shimback %s (%s build, %s)\n", SHIMBACK_VERSION, SHIMBACK_BUILD_SOURCE,
-               SHIMBACK_GIT_SHA);
+        /* A github build needs no label -- that's the expected, ordinary
+         * case (anyone running a release build downloaded it from there).
+         * A local build gets one specifically because it's the deviation
+         * worth calling out: this isn't the binary GitHub built. */
+        if (strcmp(SHIMBACK_BUILD_SOURCE, "github") == 0) {
+            printf("shimback %s (%s)\n", SHIMBACK_VERSION, SHIMBACK_GIT_SHA);
+        } else {
+            printf("shimback %s (local build, %s)\n", SHIMBACK_VERSION, SHIMBACK_GIT_SHA);
+        }
         return 0;
     }
 
