@@ -1062,6 +1062,31 @@ forcing every export to overwrite a same\-named backup in place, the same
 as passing
 .B \-\-override
 on each one).
+.IP
+Windows/PowerShell only: top\-level
+.I mise_integration
+(\fItrue\fR/\fIfalse\fR; omitted defaults to auto\-detecting
+.B mise
+on
+.I PATH
+whenever
+.BR add / init / install
+next (re)writes the PowerShell PATH block). mise re\-prepends its own tool
+directories on every directory change for the rest of a PowerShell
+session, which can push shimback's shim directory back behind them \(em
+setting this to
+.I true
+(or leaving it unset with
+.B mise
+installed) makes the generated block also wrap PowerShell's
+.I prompt
+function to re\-assert shimback at the front of
+.I PATH
+after every prompt redraw, not just once at shell startup. Set it to
+.I false
+to opt out regardless of whether
+.B mise
+is detected.
 .TP
 .I $XDG_DATA_HOME/shimback/bin
 The shim directory: every shim's symlink lives here (falls back to

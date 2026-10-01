@@ -1098,6 +1098,17 @@ either way — and `backup_override` (`true`/`false`; defaults to `false`,
 forcing every export to overwrite a same-named backup in place, the same as
 passing `--override` on each one).
 
+Windows/PowerShell only: top-level `mise_integration` (`true`/`false`;
+omitted defaults to auto-detecting [mise](https://mise.jdx.dev/) on `PATH`
+whenever `add`/`init`/`install` next (re)writes the PowerShell PATH block).
+mise re-prepends its own tool directories on every directory change for the
+rest of a PowerShell session, which can push shimback's shim directory back
+behind them — setting this to `true` (or leaving it unset with `mise`
+installed) makes the generated block also wrap PowerShell's `prompt`
+function to re-assert shimback at the front of `PATH` after every prompt
+redraw, not just once at shell startup. Set it to `false` to opt out
+regardless of whether `mise` is detected.
+
 ```toml
 version = 1
 capture_timeout_ms = 2000

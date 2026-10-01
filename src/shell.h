@@ -14,6 +14,21 @@ typedef enum {
     SHELL_UNKNOWN,
 } ShellKind;
 
+/* Only meaningful for SHELL_POWERSHELL (see build_ps_body in shell.c):
+ * whether the generated profile block also wraps `prompt` to re-win the
+ * front of PATH after mise's own per-directory-change PATH rewriting,
+ * confirmed for real to otherwise permanently push the shim directory
+ * behind mise's own tool directories for the rest of a session. Mirrors a
+ * config.toml top-level `mise_integration = true/false`: MISE_AUTO (unset
+ * in config.toml) resolves to ON if `mise` is found on PATH when the block
+ * is (re)generated, OFF otherwise; MISE_ON/MISE_OFF are explicit
+ * overrides. Every other ShellKind ignores this parameter entirely. */
+typedef enum {
+    MISE_AUTO,
+    MISE_ON,
+    MISE_OFF,
+} MiseIntegrationMode;
+
 /* Detects the current shell (POSIX: from $SHELL's basename; Windows: from
  * the immediate parent process's image name -- powershell.exe/pwsh.exe ->
  * SHELL_POWERSHELL, cmd.exe -> SHELL_CMD, anything else -> SHELL_UNKNOWN,
@@ -71,14 +86,19 @@ bool shell_kind_from_name(const char *name, ShellKind *out);
  * printed on success for SHELL_ZSH/SHELL_BASH/SHELL_FISH/SHELL_POWERSHELL/
  * SHELL_CMD -- a failure still always warns, regardless of `verbose`.
  *
- * Equivalent to shell_ensure_path_tagged(kind, dir, "shimback", verbose). */
-bool shell_ensure_path(ShellKind kind, const char *dir, bool verbose);
+ * `mise_mode` is meaningful only for SHELL_POWERSHELL -- see
+ * MiseIntegrationMode's own doc comment. Every other kind ignores it.
+ *
+ * Equivalent to shell_ensure_path_tagged(kind, dir, "shimback", verbose,
+ * mise_mode). */
+bool shell_ensure_path(ShellKind kind, const char *dir, bool verbose, MiseIntegrationMode mise_mode);
 
 /* Same as shell_ensure_path, but files its marker block (or, for
  * SHELL_FISH, its conf.d snippet) under `tag` instead of the fixed
  * "shimback" tag -- lets a second, independently-managed one (keyed on a
  * different directory set) coexist without colliding with the default. */
-bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, bool verbose);
+bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, bool verbose,
+                               MiseIntegrationMode mise_mode);
 
 /* Removes the marker block (or, for SHELL_FISH, the conf.d snippet file;
  * for SHELL_POWERSHELL, the block from every profile touched by

@@ -427,8 +427,28 @@ static char *read_ps_squoted(const char **p) {
  * keeps both properties: no duplicates, and this directory still ends up at
  * the very front regardless of where it started. -ne is PowerShell's
  * case-insensitive string comparison, matching Windows' own path case-
- * insensitivity. */
-static void build_ps_body(DynBuf *body, const StrVec *dirs) {
+ * insensitivity.
+ *
+ * `mise_integration`, when true, appends a second mechanism on top: mise
+ * doesn't just set PATH once at shell startup, it re-prepends its own tool
+ * directories on *every directory change* for the rest of the session
+ * (confirmed for real: mise's own generated PowerShell activation script
+ * wires a handler onto $ExecutionContext.SessionState.InvokeCommand.
+ * LocationChangedAction, and also wraps `function prompt` as a belt-and-
+ * braces fallback) -- so the one-shot prepend above, which only runs once
+ * when the profile itself loads, permanently loses the front of PATH to
+ * mise the moment the user so much as `cd`s into a directory with its own
+ * .mise.toml, for the rest of that session. The fix mirrors mise's own
+ * approach: also wrap `function prompt` (always invoked right before each
+ * new input line, after any LocationChangedAction/prompt-based hook has
+ * already run -- so this doesn't need to know *how* mise, or anything
+ * else, changes PATH, only that `prompt` fires after all of it) so
+ * shimback re-wins the front of PATH after every single prompt redraw, not
+ * just at profile load. Guarded by a global sentinel so re-sourcing the
+ * profile twice in one session (e.g. `. $PROFILE`) doesn't chain the
+ * wrapper repeatedly. See shell.h's MiseIntegrationMode for how this gets
+ * turned on. */
+static void build_ps_body(DynBuf *body, const StrVec *dirs, bool mise_integration) {
     dynbuf_append_str(body, "foreach ($__shimback_dir in @(");
     for (size_t i = 0; i < dirs->count; i++) {
         if (i > 0) {
@@ -440,6 +460,27 @@ static void build_ps_body(DynBuf *body, const StrVec *dirs) {
                        ")) { $env:Path = (($env:Path -split ';') | Where-Object { $_ -ne "
                        "$__shimback_dir }) -join ';'; $env:Path = $__shimback_dir + ';' + "
                        "$env:Path }\n");
+    if (mise_integration) {
+        dynbuf_append_str(body, "if (-not $Global:__shimback_prompt_wrapped) {\n");
+        dynbuf_append_str(body, "  $Global:__shimback_prompt_wrapped = $true\n");
+        dynbuf_append_str(body, "  $Global:__shimback_prev_prompt = $function:prompt\n");
+        dynbuf_append_str(body, "  function global:prompt {\n");
+        dynbuf_append_str(body, "    $__shimback_result = & $Global:__shimback_prev_prompt\n");
+        dynbuf_append_str(body, "    foreach ($__shimback_dir in @(");
+        for (size_t i = 0; i < dirs->count; i++) {
+            if (i > 0) {
+                dynbuf_append_str(body, ", ");
+            }
+            append_ps_squoted(body, dirs->items[i]);
+        }
+        dynbuf_append_str(body,
+                           ")) { $env:Path = (($env:Path -split ';') | Where-Object { $_ -ne "
+                           "$__shimback_dir }) -join ';'; $env:Path = $__shimback_dir + ';' + "
+                           "$env:Path }\n");
+        dynbuf_append_str(body, "    $__shimback_result\n");
+        dynbuf_append_str(body, "  }\n");
+        dynbuf_append_str(body, "}\n");
+    }
 }
 
 #define PS_BODY_JOINER ", "
@@ -523,9 +564,11 @@ static void merge_dir_into(StrVec *dirs, const char *dir) {
  * (from an earlier add/init/install) rather than overwriting them, so those
  * commands can run in any order, each contributing its own directory,
  * without any of them clobbering what another already wrote. `style` picks
- * the zsh-defer-aware body, the plain bash one, or the PowerShell one. */
+ * the zsh-defer-aware body, the plain bash one, or the PowerShell one.
+ * `ps_mise_integration` is meaningful only for BODY_POWERSHELL -- see
+ * build_ps_body. */
 static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char *dir,
-                                 BodyStyle style) {
+                                 BodyStyle style, bool ps_mise_integration) {
     char *content = read_file_or_empty(rc_path);
 
     const char *block_start = NULL;
@@ -551,7 +594,7 @@ static bool ensure_dir_in_block(const char *rc_path, const char *tag, const char
     dynbuf_init(&new_body);
     switch (style) {
         case BODY_ZSH: build_zsh_body(&new_body, &dirs); break;
-        case BODY_POWERSHELL: build_ps_body(&new_body, &dirs); break;
+        case BODY_POWERSHELL: build_ps_body(&new_body, &dirs, ps_mise_integration); break;
         case BODY_BASH:
         default: build_bash_body(&new_body, &dirs); break;
     }
@@ -693,7 +736,7 @@ bool shell_zsh_migrate_block_to_local(const char *tag) {
 
     bool ok = true;
     for (size_t i = 0; i < dirs.count && ok; i++) {
-        ok = ensure_dir_in_block(local, tag, dirs.items[i], BODY_ZSH);
+        ok = ensure_dir_in_block(local, tag, dirs.items[i], BODY_ZSH, false);
     }
     strvec_free(&dirs);
 
@@ -874,7 +917,7 @@ static bool remove_fish(const char *tag) {
 static bool ensure_zsh(const char *dir, const char *tag, bool verbose) {
     char *home = home_dir();
     char *rc = zsh_rc_path(home);
-    bool ok = ensure_dir_in_block(rc, tag, dir, BODY_ZSH);
+    bool ok = ensure_dir_in_block(rc, tag, dir, BODY_ZSH, false);
     if (ok) {
         if (verbose) {
             printf("zsh: PATH updated in %s\n", rc);
@@ -897,7 +940,7 @@ static bool ensure_bash(const char *dir, const char *tag, bool verbose) {
         char *path = path_join(home, candidates[i]);
         if (access(path, F_OK) == 0) {
             any_exists = true;
-            bool ok = ensure_dir_in_block(path, tag, dir, BODY_BASH);
+            bool ok = ensure_dir_in_block(path, tag, dir, BODY_BASH, false);
             if (ok) {
                 if (verbose) {
                     printf("bash: PATH updated in %s\n", path);
@@ -912,7 +955,7 @@ static bool ensure_bash(const char *dir, const char *tag, bool verbose) {
 
     if (!any_exists) {
         char *path = path_join(home, ".bashrc");
-        bool ok = ensure_dir_in_block(path, tag, dir, BODY_BASH);
+        bool ok = ensure_dir_in_block(path, tag, dir, BODY_BASH, false);
         if (ok) {
             if (verbose) {
                 printf("bash: created %s with PATH update\n", path);
@@ -1056,7 +1099,7 @@ static char *old_allhosts_profile_path(const char *edition_subdir) {
 }
 
 static void migrate_old_allhosts_profile(const char *edition_subdir, const char *new_profile,
-                                          const char *tag) {
+                                          const char *tag, bool mise_integration) {
     char *old_profile = old_allhosts_profile_path(edition_subdir);
     if (!old_profile) {
         return;
@@ -1072,7 +1115,8 @@ static void migrate_old_allhosts_profile(const char *edition_subdir, const char 
         strvec_init(&dirs);
         parse_existing_ps_dirs(body_start, (size_t)(body_end - body_start), &dirs);
         for (size_t i = 0; i < dirs.count; i++) {
-            ensure_dir_in_block(new_profile, tag, dirs.items[i], BODY_POWERSHELL);
+            ensure_dir_in_block(new_profile, tag, dirs.items[i], BODY_POWERSHELL,
+                                 mise_integration);
         }
         strvec_free(&dirs);
         remove_block(old_profile, tag);
@@ -1089,10 +1133,26 @@ static void migrate_old_allhosts_profile(const char *edition_subdir, const char 
  * known in advance from here, both get the same idempotent block if both
  * are installed, so it works regardless of which one the user launches.
  * Also persists `dir` into HKCU\Environment\Path as the reachability
- * fallback layer (see platform.h). */
-static bool ensure_powershell(const char *dir, const char *tag, bool verbose) {
+ * fallback layer (see platform.h).
+ *
+ * `mise_mode` resolves MISE_AUTO by checking whether `mise` itself is on
+ * PATH right now -- same detection technique as pwsh/winps just above,
+ * and necessarily a point-in-time snapshot: installing mise *after* this
+ * runs won't retroactively turn the integration on until the next
+ * add/init/install re-generates the block. */
+static bool ensure_powershell(const char *dir, const char *tag, bool verbose,
+                               MiseIntegrationMode mise_mode) {
     char *pwsh = path_search("pwsh", NULL, NULL);
     char *winps = path_search("powershell", NULL, NULL);
+
+    bool mise_integration;
+    if (mise_mode == MISE_AUTO) {
+        char *mise = path_search("mise", NULL, NULL);
+        mise_integration = mise != NULL;
+        free(mise);
+    } else {
+        mise_integration = mise_mode == MISE_ON;
+    }
 
     bool all_ok = true;
     bool touched_any = false;
@@ -1103,8 +1163,8 @@ static bool ensure_powershell(const char *dir, const char *tag, bool verbose) {
             char *profile_dir = dir_of(profile);
             mkdir_p(profile_dir);
             free(profile_dir);
-            migrate_old_allhosts_profile("WindowsPowerShell", profile, tag);
-            bool ok = ensure_dir_in_block(profile, tag, dir, BODY_POWERSHELL);
+            migrate_old_allhosts_profile("WindowsPowerShell", profile, tag, mise_integration);
+            bool ok = ensure_dir_in_block(profile, tag, dir, BODY_POWERSHELL, mise_integration);
             all_ok = ok && all_ok;
             touched_any = true;
             if (ok) {
@@ -1123,8 +1183,8 @@ static bool ensure_powershell(const char *dir, const char *tag, bool verbose) {
             char *profile_dir = dir_of(profile);
             mkdir_p(profile_dir);
             free(profile_dir);
-            migrate_old_allhosts_profile("PowerShell", profile, tag);
-            bool ok = ensure_dir_in_block(profile, tag, dir, BODY_POWERSHELL);
+            migrate_old_allhosts_profile("PowerShell", profile, tag, mise_integration);
+            bool ok = ensure_dir_in_block(profile, tag, dir, BODY_POWERSHELL, mise_integration);
             all_ok = ok && all_ok;
             touched_any = true;
             if (ok) {
@@ -1523,7 +1583,11 @@ void shell_read_block_dirs(ShellKind kind, const char *tag, StrVec *out) {
     free(home);
 }
 
-bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, bool verbose) {
+bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, bool verbose,
+                               MiseIntegrationMode mise_mode) {
+#ifndef _WIN32
+    (void)mise_mode;
+#endif
     switch (kind) {
         case SHELL_ZSH:
             return ensure_zsh(dir, tag, verbose);
@@ -1533,7 +1597,7 @@ bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, 
             return ensure_fish(dir, tag, verbose);
 #ifdef _WIN32
         case SHELL_POWERSHELL:
-            return ensure_powershell(dir, tag, verbose);
+            return ensure_powershell(dir, tag, verbose, mise_mode);
         case SHELL_CMD:
             return ensure_cmd(dir, tag, verbose);
 #else
@@ -1549,8 +1613,9 @@ bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, 
     }
 }
 
-bool shell_ensure_path(ShellKind kind, const char *dir, bool verbose) {
-    return shell_ensure_path_tagged(kind, dir, DEFAULT_TAG, verbose);
+bool shell_ensure_path(ShellKind kind, const char *dir, bool verbose,
+                        MiseIntegrationMode mise_mode) {
+    return shell_ensure_path_tagged(kind, dir, DEFAULT_TAG, verbose, mise_mode);
 }
 
 bool shell_remove_path_tagged(ShellKind kind, const char *tag) {

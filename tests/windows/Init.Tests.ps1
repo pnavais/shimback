@@ -255,4 +255,77 @@ Describe "PowerShell PATH idempotency" {
         $content.Contains("C:\OldFormatDir\bin") | Should -BeTrue
         ([regex]::Matches($content, [regex]::Escape("# >>> shimback >>>"))).Count | Should -Be 1
     }
+
+    It "with mise_integration = true, wraps prompt to re-win PATH after a later unconditional prepend" {
+        # Real bug, reported by the user with screenshots: mise re-prepends
+        # its own tool directories on *every directory change* for the rest
+        # of a PowerShell session (confirmed via mise's own generated
+        # activation script: it wires a handler onto
+        # $ExecutionContext.SessionState.InvokeCommand.LocationChangedAction,
+        # which fires on `cd`/Set-Location, independent of `prompt`). The
+        # one-shot prepend the block above exercises only runs once, when
+        # the profile loads -- it can never outrun a *later* cd into a
+        # mise-managed directory. config.toml's `mise_integration = true`
+        # (or unset + `mise` on PATH, i.e. MISE_AUTO) makes the generated
+        # block also wrap `function prompt` -- invoked right after every
+        # command, including every cd, regardless of *how* something else
+        # changed PATH in between -- to re-assert the shim directory at the
+        # front every single prompt redraw, not just at profile load.
+        $configFile = Get-ConfigFile $Sandbox
+        New-Item -ItemType Directory -Force -Path (Split-Path $configFile) | Out-Null
+        Set-Content -Path $configFile -Value "version = 1`nmise_integration = true`n"
+
+        $a = @("add", "misetool", "-s", $PS, "-f", $PS)
+        foreach ($x in $PrimaryArgs) { $a += @("--source-arg", $x) }
+        foreach ($x in $FallbackArgs) { $a += @("--fallback-arg", $x) }
+        $r = Invoke-Shimback $a
+        $r.ExitCode | Should -Be 0
+
+        $docs = [Environment]::GetFolderPath('MyDocuments')
+        $profilePath = "$docs\PowerShell\Microsoft.PowerShell_profile.ps1"
+        $content = Get-Content -Raw $profilePath
+        $content | Should -Match "__shimback_prompt_wrapped"
+        $content | Should -Match "function global:prompt"
+
+        $blockStart = $content.IndexOf("# >>> shimback >>>")
+        $blockEnd = $content.IndexOf("# <<< shimback <<<") + "# <<< shimback <<<".Length
+        $blockCode = $content.Substring($blockStart, $blockEnd - $blockStart)
+        $shimDir = "$($Sandbox.DataHome)/shimback/bin"
+
+        # Profile loads (block runs once) with the dir already on PATH, same
+        # as any ordinary new shell; then something else -- standing in for
+        # mise's own chpwd handler -- unconditionally re-prepends itself,
+        # exactly like a real `cd` into a mise-managed directory would.
+        # Calling `prompt` is what PowerShell itself does right before
+        # showing the next input line after that `cd` -- not a contrived
+        # call, the actual mechanism that fires on every real command.
+        $script = "`$env:Path = '$shimDir;C:\Windows'`n$blockCode`n" +
+                  "`$env:Path = 'C:\FakeMiseToolDir' + ';' + `$env:Path`n" +
+                  "prompt | Out-Null`n" +
+                  "`$env:Path"
+        $after = & $PS -NoProfile -Command $script
+        ($after -split ';')[0] | Should -Be $shimDir
+    }
+
+    It "with mise_integration = false, never wraps prompt even though mise is detected" {
+        # Distinguishes an explicit override from MISE_AUTO happening to
+        # land on the same answer -- this dev/CI machine has `mise` on
+        # PATH, so a test that only checked "true" could pass even if the
+        # false branch were silently ignored.
+        $configFile = Get-ConfigFile $Sandbox
+        New-Item -ItemType Directory -Force -Path (Split-Path $configFile) | Out-Null
+        Set-Content -Path $configFile -Value "version = 1`nmise_integration = false`n"
+
+        $a = @("add", "nomisetool", "-s", $PS, "-f", $PS)
+        foreach ($x in $PrimaryArgs) { $a += @("--source-arg", $x) }
+        foreach ($x in $FallbackArgs) { $a += @("--fallback-arg", $x) }
+        $r = Invoke-Shimback $a
+        $r.ExitCode | Should -Be 0
+
+        $docs = [Environment]::GetFolderPath('MyDocuments')
+        $profilePath = "$docs\PowerShell\Microsoft.PowerShell_profile.ps1"
+        $content = Get-Content -Raw $profilePath
+        $content | Should -Not -Match "__shimback_prompt_wrapped"
+        $content | Should -Match "Where-Object"
+    }
 }

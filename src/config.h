@@ -188,6 +188,18 @@ typedef struct {
                                    * when true, `export` always overwrites a same-named backup
                                    * in place, regardless of whether --override was passed on
                                    * that invocation. */
+    bool mise_integration_set;   /* true if config.toml has a top-level `mise_integration =
+                                   * true/false` -- unset (the common case) means "auto": the
+                                   * PowerShell integration enables itself if `mise` is found on
+                                   * PATH when the profile block is (re)generated, and stays off
+                                   * otherwise. Windows/PowerShell only -- see shell.c's
+                                   * MiseIntegrationMode and build_ps_body for why (mise
+                                   * re-prepends its own tool directories on every directory
+                                   * change, which a one-shot profile-load prepend can't outrun;
+                                   * the PowerShell block optionally wraps `prompt` itself to
+                                   * win back the front of PATH after mise does). */
+    bool mise_integration;       /* only meaningful when mise_integration_set; the explicit
+                                   * override value. */
 } Config;
 
 typedef enum {

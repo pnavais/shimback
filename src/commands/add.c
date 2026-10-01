@@ -653,7 +653,9 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     }
 
     ShellKind shell = detect_current_shell();
-    shell_ensure_path(shell, shim_dir, effective_verbose);
+    MiseIntegrationMode mise_mode =
+        cfg.mise_integration_set ? (cfg.mise_integration ? MISE_ON : MISE_OFF) : MISE_AUTO;
+    shell_ensure_path(shell, shim_dir, effective_verbose, mise_mode);
     if (effective_verbose) {
         printf("Restart your shell (or re-source its startup file) for the PATH change to take "
                "effect.\n");

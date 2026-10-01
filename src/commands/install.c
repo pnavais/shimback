@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "../config.h"
 #include "../installation.h"
 #include "../paths.h"
 #include "../platform/platform.h"
@@ -148,9 +149,10 @@ static void install_man_page(const char *prefix, const char *self_exe) {
  * real (four "PATH updated" lines, two shells, from one `install` run).
  * By the time the second call runs, the block already contains both
  * directories, so its notice already reflects the final, complete state. */
-static void ensure_shell_path(ShellKind kind, const char *shim_dir, const char *bin_dir) {
-    shell_ensure_path(kind, shim_dir, false);
-    shell_ensure_path(kind, bin_dir, true);
+static void ensure_shell_path(ShellKind kind, const char *shim_dir, const char *bin_dir,
+                               MiseIntegrationMode mise_mode) {
+    shell_ensure_path(kind, shim_dir, false, mise_mode);
+    shell_ensure_path(kind, bin_dir, true, mise_mode);
     shell_remove_path_tagged(kind, "shimback-bin");
 }
 
@@ -328,20 +330,35 @@ int cmd_install(int argc, char **argv) {
      * shell only; --shell/--all broaden that, matching `init`'s "every
      * installed shell" semantics for --all. */
     char *shim_dir = shim_bin_dir();
+    char *cfg_path_for_mise = config_file_path();
+    Config cfg_for_mise;
+    char mise_errbuf[256];
+    /* A malformed config.toml shouldn't block `install` from wiring up
+     * PATH at all -- it has nothing else to do with this unrelated
+     * setting, so a load failure just falls back to auto-detection rather
+     * than dying. */
+    MiseIntegrationMode mise_mode = MISE_AUTO;
+    if (config_load(cfg_path_for_mise, &cfg_for_mise, mise_errbuf, sizeof(mise_errbuf)) ==
+        CONFIG_OK) {
+        mise_mode = cfg_for_mise.mise_integration_set
+                        ? (cfg_for_mise.mise_integration ? MISE_ON : MISE_OFF)
+                        : MISE_AUTO;
+    }
+    free(cfg_path_for_mise);
     if (all_shells) {
         ShellKind kinds[3];
         size_t kind_count = shell_all_kinds(kinds);
         for (size_t i = 0; i < kind_count; i++) {
             if (shell_is_installed(kinds[i])) {
-                ensure_shell_path(kinds[i], shim_dir, bin_dir);
+                ensure_shell_path(kinds[i], shim_dir, bin_dir, mise_mode);
             }
         }
     } else if (selected_count > 0) {
         for (size_t i = 0; i < selected_count; i++) {
-            ensure_shell_path(selected_shells[i], shim_dir, bin_dir);
+            ensure_shell_path(selected_shells[i], shim_dir, bin_dir, mise_mode);
         }
     } else {
-        ensure_shell_path(detect_current_shell(), shim_dir, bin_dir);
+        ensure_shell_path(detect_current_shell(), shim_dir, bin_dir, mise_mode);
     }
     free(shim_dir);
     printf("Restart your shell (or re-source its startup file) for the PATH change to take "

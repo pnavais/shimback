@@ -44,6 +44,8 @@ void config_init(Config *cfg) {
     cfg->backup_dir = NULL;
     cfg->backup_name_pattern = NULL;
     cfg->backup_override = false;
+    cfg->mise_integration_set = false;
+    cfg->mise_integration = false;
 }
 
 const char *policy_to_string(Policy p) {
@@ -1063,6 +1065,18 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                              "line %d: 'backup_override' must be true or false", line_no);
                     status = CONFIG_ERR_PARSE;
                 }
+            } else if (strcmp(key, "mise_integration") == 0) {
+                if (strcmp(value_str, "true") == 0) {
+                    cfg->mise_integration_set = true;
+                    cfg->mise_integration = true;
+                } else if (strcmp(value_str, "false") == 0) {
+                    cfg->mise_integration_set = true;
+                    cfg->mise_integration = false;
+                } else {
+                    snprintf(errbuf, errbuf_size,
+                             "line %d: 'mise_integration' must be true or false", line_no);
+                    status = CONFIG_ERR_PARSE;
+                }
             } else {
                 warn("config: line %d: unknown top-level key '%s', ignoring", line_no, key);
             }
@@ -1416,6 +1430,10 @@ static void render_config(const Config *cfg, DynBuf *out) {
     }
     if (cfg->backup_override) {
         dynbuf_append_str(out, "backup_override = true\n");
+    }
+    if (cfg->mise_integration_set) {
+        dynbuf_append_str(out, cfg->mise_integration ? "mise_integration = true\n"
+                                                       : "mise_integration = false\n");
     }
 
     for (size_t i = 0; i < cfg->count; i++) {
