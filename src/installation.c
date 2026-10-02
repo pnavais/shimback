@@ -7,9 +7,6 @@
 #include "shell.h"
 #include "util.h"
 
-#define BLOCK_TAG "shimback"
-#define LEGACY_BLOCK_TAG "shimback-bin"
-
 bool same_dir_path(const char *a, const char *b) {
     if (strcmp(a, b) == 0) {
         return true;
@@ -36,7 +33,7 @@ static bool already_listed(const Installation *list, size_t count, const char *b
 static void collect_block_dirs(StrVec *dirs) {
     ShellKind kinds[3];
     size_t kind_count = shell_all_kinds(kinds);
-    const char *tags[] = {BLOCK_TAG, LEGACY_BLOCK_TAG};
+    const char *tags[] = {SHELL_BLOCK_TAG, SHELL_LEGACY_BLOCK_TAG};
     for (size_t k = 0; k < kind_count; k++) {
         for (size_t t = 0; t < sizeof(tags) / sizeof(tags[0]); t++) {
             shell_read_block_dirs(kinds[k], tags[t], dirs);

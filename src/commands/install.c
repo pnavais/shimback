@@ -155,7 +155,7 @@ static void ensure_shell_path(ShellKind kind, const char *shim_dir, const char *
                                MiseIntegrationMode mise_mode) {
     shell_ensure_path(kind, shim_dir, false, mise_mode);
     shell_ensure_path(kind, bin_dir, true, mise_mode);
-    shell_remove_path_tagged(kind, "shimback-bin");
+    shell_remove_path_tagged(kind, SHELL_LEGACY_BLOCK_TAG);
 }
 
 int cmd_install(int argc, char **argv) {

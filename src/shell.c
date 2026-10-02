@@ -11,7 +11,6 @@
 #include "platform/platform.h"
 #include "util.h"
 
-#define DEFAULT_TAG "shimback"
 
 /* Prints "<shell_name>: <msg>" to stdout, with the shell-name prefix
  * colored ANSI_SHELL (distinct from util.c's info(), whose "shimback:"
@@ -1785,7 +1784,7 @@ bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, 
 
 bool shell_ensure_path(ShellKind kind, const char *dir, bool verbose,
                         MiseIntegrationMode mise_mode) {
-    return shell_ensure_path_tagged(kind, dir, DEFAULT_TAG, verbose, mise_mode);
+    return shell_ensure_path_tagged(kind, dir, SHELL_BLOCK_TAG, verbose, mise_mode);
 }
 
 bool shell_remove_path_tagged(ShellKind kind, const char *tag) {

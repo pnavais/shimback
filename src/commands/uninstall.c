@@ -18,15 +18,6 @@
 #include "../shell.h"
 #include "../util.h"
 
-/* The single tag every command shares (add/init/install all merge their
- * directory into the same block -- see shell.c). "shimback-bin" was a
- * separate tag install used before that merge existed; removing it too is
- * a harmless no-op once install has migrated someone off it, and a real
- * cleanup for anyone who upgrades straight to `uninstall --full` without
- * ever re-running install first. */
-#define SHIM_DIR_TAG "shimback"
-#define LEGACY_INSTALL_TAG "shimback-bin"
-
 static const char *USAGE = "usage: shimback uninstall [--prefix <dir>] [--full]\n";
 
 /* Same idea as looks_like_shimback_binary (paths.c), but for the man page: no need
@@ -265,8 +256,8 @@ static bool path_block_present(void) {
     StrVec dirs;
     strvec_init(&dirs);
     for (size_t i = 0; i < kind_count; i++) {
-        shell_read_block_dirs(kinds[i], SHIM_DIR_TAG, &dirs);
-        shell_read_block_dirs(kinds[i], LEGACY_INSTALL_TAG, &dirs);
+        shell_read_block_dirs(kinds[i], SHELL_BLOCK_TAG, &dirs);
+        shell_read_block_dirs(kinds[i], SHELL_LEGACY_BLOCK_TAG, &dirs);
     }
     bool present = dirs.count > 0;
     strvec_free(&dirs);
@@ -284,8 +275,11 @@ static void remove_path_blocks(void) {
     ShellKind kinds[3];
     size_t kind_count = shell_all_kinds(kinds);
     for (size_t i = 0; i < kind_count; i++) {
-        shell_remove_path_tagged(kinds[i], SHIM_DIR_TAG);
-        shell_remove_path_tagged(kinds[i], LEGACY_INSTALL_TAG);
+        shell_remove_path_tagged(kinds[i], SHELL_BLOCK_TAG);
+        /* A no-op once install has migrated someone off the legacy block;
+         * a real cleanup for anyone who upgrades straight to `uninstall
+         * --full` without ever re-running install first. */
+        shell_remove_path_tagged(kinds[i], SHELL_LEGACY_BLOCK_TAG);
     }
 }
 
