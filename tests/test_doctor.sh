@@ -23,7 +23,7 @@ out="$("$SHIMBACK" doctor)"
 code=$?
 assert_eq "doctor: exit 0 for a healthy shim" "0" "$code"
 assert_contains "doctor: healthy shim reports ok symlink" "$out" \
-    "[ok]   symlink $(shim_path mytool) ->"
+    "[ok]   symlink \"$(shim_path mytool)\" ->"
 assert_contains "doctor: all checks passed" "$out" "all checks passed"
 
 # --- dead symlink: doctor fails and says so ---
@@ -219,9 +219,9 @@ assert_contains "add: nonexistent-source error unchanged without --force" \
 # --- doctor: a forced-but-still-missing source/fallback is reported ok, not fail ---
 out="$("$SHIMBACK" doctor)"
 assert_contains "doctor: forced-missing source reported ok" "$out" \
-    "[ok]   source: $GHOST_SRC (added with --force; not currently on disk, so not checked)"
+    "[ok]   source: \"$GHOST_SRC\" (added with --force; not currently on disk, so not checked)"
 assert_contains "doctor: forced-missing fallback reported ok" "$out" \
-    "[ok]   fallback: $GHOST_FB (added with --force; not currently on disk, so not checked)"
+    "[ok]   fallback: \"$GHOST_FB\" (added with --force; not currently on disk, so not checked)"
 
 # --- doctor: once the forced binary actually exists, the full normal check applies ---
 cp "$FAKE_PRIMARY" "$GHOST_SRC"
@@ -229,13 +229,13 @@ cp "$FAKE_FALLBACK" "$GHOST_FB"
 chmod +x "$GHOST_SRC" "$GHOST_FB"
 out="$("$SHIMBACK" doctor)"
 assert_contains "doctor: forced source now checked normally once it exists" "$out" \
-    "[ok]   source: $GHOST_SRC"
+    "[ok]   source: \"$GHOST_SRC\""
 assert_not_contains "doctor: no --force note once source actually exists" "$out" \
-    "source: $GHOST_SRC (added with --force"
+    "source: \"$GHOST_SRC\" (added with --force"
 assert_contains "doctor: forced fallback now checked normally once it exists" "$out" \
-    "[ok]   fallback: $GHOST_FB"
+    "[ok]   fallback: \"$GHOST_FB\""
 assert_not_contains "doctor: no --force note once fallback actually exists" "$out" \
-    "fallback: $GHOST_FB (added with --force"
+    "fallback: \"$GHOST_FB\" (added with --force"
 
 # --- clean slate before the scenarios below: the hand-edited config.toml
 # truncation earlier in this file (`>"$CFG"`, staging the "cyc" cycle
@@ -273,14 +273,14 @@ SPLIT_FILE="$(dirname "$CFG")/splitcyc-config.toml"
 out="$("$SHIMBACK" doctor)"
 assert_contains "doctor: sees a split-config shim at all" "$out" "splitcyc"
 assert_contains "doctor: shows the split shim's own file path" "$out" \
-    "config: split file at $SPLIT_FILE"
+    "config: split file at \"$SPLIT_FILE\""
 assert_contains "doctor: reports the split shim's cycle" "$out" \
     "resolves back to the shimback binary itself"
 
 out2="$(printf '%s\n' "$FAKE_FALLBACK" | "$SHIMBACK" doctor fix)"
 assert_contains "doctor fix: fixes the split shim's cycle" "$out2" "[fixed] fallback updated to"
 assert_contains "doctor fix: saves back to the split file, not config.toml" "$out2" \
-    "saved split config changes to $SPLIT_FILE"
+    "saved split config changes to \"$SPLIT_FILE\""
 assert_contains "doctor fix: split file actually updated" "$(cat "$SPLIT_FILE")" \
     "fallback = \"$FAKE_FALLBACK\""
 assert_not_contains "doctor fix: config.toml untouched by the split shim's fix" \
@@ -299,7 +299,7 @@ FILE_ONLY_SPLIT="$(dirname "$CFG")/fileonly-config.toml"
 out="$("$SHIMBACK" doctor)"
 assert_contains "doctor: discovers a split config without a symlink" "$out" "fileonly"
 assert_contains "doctor: reports the standalone split config path" "$out" \
-    "config: split file at $FILE_ONLY_SPLIT"
+    "config: split file at \"$FILE_ONLY_SPLIT\""
 assert_contains "doctor: reports the standalone split config's missing symlink" "$out" \
     "no symlink at"
 
@@ -383,11 +383,11 @@ assert_not_contains "doctor: missing shim dir no longer suggests init" "$out6" "
 
 out7="$("$SHIMBACK" doctor fix -y 2>&1 </dev/null)"
 assert_contains "doctor fix: creates a missing shim directory" "$out7" \
-    "[fixed] created shim directory $SHIM_DIR_PATH"
+    "[fixed] created shim directory \"$SHIM_DIR_PATH\""
 assert_not_contains "doctor fix: no shim directory lock failure" "$out7" \
     "failed to acquire the shim directory lock"
 assert_contains "doctor fix: recreates symlinks in the fresh directory" "$out7" \
-    "[fixed] recreated missing symlink $(shim_path dirtool)"
+    "[fixed] recreated missing symlink \"$(shim_path dirtool)\""
 if [ ! -L "$(shim_path dirtool)" ]; then
     fail "doctor fix: dirtool's symlink should exist after the directory was recreated"
 fi
@@ -426,16 +426,16 @@ assert_contains "doctor: reports when shimback isn't installed" "$out_none" "not
 "$DOCTOR_BUNDLE/shimback" install --prefix "$INST_PREFIX" >/dev/null 2>&1
 out_one="$("$SHIMBACK" doctor)"
 assert_contains "doctor: reports the installed binary" "$out_one" \
-    "installed at $INST_PREFIX/bin/shimback"
+    "installed at \"$INST_PREFIX/bin/shimback\""
 assert_eq "doctor: an installation doesn't change the issue count" "$baseline" \
     "$(issue_count "$out_one")"
 
 write_block "$DOCTOR_SHIM_DIR" "$INST_PREFIX/bin" "/nonexistent/stale/bin"
 out_stale="$("$SHIMBACK" doctor)"
 assert_contains "doctor: warns about a stale PATH entry" "$out_stale" \
-    "[warn] stale PATH entry /nonexistent/stale/bin"
+    "[warn] stale PATH entry \"/nonexistent/stale/bin\""
 assert_contains "doctor: still reports the real installation next to a stale entry" "$out_stale" \
-    "installed at $INST_PREFIX/bin/shimback"
+    "installed at \"$INST_PREFIX/bin/shimback\""
 assert_eq "doctor: a stale entry is a warning, not an issue" "$baseline" \
     "$(issue_count "$out_stale")"
 

@@ -283,7 +283,7 @@ static bool same_dir(const char *a, const char *b) {
 
 static void print_symlink(const char *link_path, const char *self_exe) {
     label("symlink");
-    pf(M_GREEN "%s" M_RESET, link_path);
+    pf(M_GREEN "\"%s\"" M_RESET, link_path);
 
 #ifdef _WIN32
     /* A Windows shim is a hard link, not a symlink -- there's no separate
@@ -333,8 +333,8 @@ static void print_symlink(const char *link_path, const char *self_exe) {
         char raw[PATH_MAX];
         ssize_t n = readlink(link_path, raw, sizeof(raw) - 1);
         raw[n > 0 ? n : 0] = '\0';
-        pf("  " TAG_FAIL " " M_RED "dead" M_RESET " " M_DIM "-> %s (target is gone) -- "
-           "`shimback doctor fix` recreates it" M_RESET "\n",
+        pf("  " TAG_FAIL " " M_RED "dead" M_RESET " " M_DIM "-> " M_RESET M_GREEN "\"%s\"" M_RESET
+           M_DIM " (target is gone) -- `shimback doctor fix` recreates it" M_RESET "\n",
            raw);
         issue();
         free(target);
@@ -343,15 +343,18 @@ static void print_symlink(const char *link_path, const char *self_exe) {
     if (strcmp(target, self_exe) == 0) {
         pf("  " TAG_OK "\n");
         label("");
-        pf(M_DIM "-> " M_RESET "%s" M_DIM "  (shimback binary)" M_RESET "\n", target);
+        pf(M_DIM "-> " M_RESET M_GREEN "\"%s\"" M_RESET M_DIM "  (shimback binary)" M_RESET "\n",
+           target);
     } else if (looks_like_shimback_binary(target)) {
         pf("  " TAG_OK "\n");
         label("");
-        pf(M_DIM "-> " M_RESET "%s" M_DIM "  (a different shimback binary than this one)" M_RESET
-                  "\n",
+        pf(M_DIM "-> " M_RESET M_GREEN "\"%s\"" M_RESET M_DIM
+                  "  (a different shimback binary than this one)" M_RESET "\n",
            target);
     } else {
-        pf("  " TAG_FAIL " " M_RED "points at %s, which isn't shimback" M_RESET "\n", target);
+        pf("  " TAG_FAIL " " M_RED "points at " M_RESET M_GREEN "\"%s\"" M_RESET M_RED
+           ", which isn't shimback" M_RESET "\n",
+           target);
         issue();
     }
     free(target);
@@ -513,7 +516,7 @@ static void print_locations(const View *v, ShimSource src, const char *split_pat
                 where = WHERE[i];
             }
         }
-        pf(M_GREEN "%s" M_RESET "\n", split_path);
+        pf(M_GREEN "\"%s\"" M_RESET "\n", split_path);
         indent();
         pf(M_DIM "a split config file, %s" M_RESET "\n", where);
         if (shadowed_entry) {
@@ -524,7 +527,7 @@ static void print_locations(const View *v, ShimSource src, const char *split_pat
             issue();
         }
     } else if (src == SHIM_SOURCE_CONFIG) {
-        pf(M_GREEN "%s" M_RESET "\n", cfg_path);
+        pf(M_GREEN "\"%s\"" M_RESET "\n", cfg_path);
         indent();
         pf(M_DIM "the [shims.%s] entry in config.toml" M_RESET "\n", v->name);
     } else {
@@ -541,11 +544,11 @@ static void print_commands(const View *v) {
 
     label("source");
     if (e->source) {
-        pf(M_GREEN "%s" M_RESET " " M_DIM "(explicit, frozen at add time)" M_RESET, e->source);
+        pf(M_GREEN "\"%s\"" M_RESET " " M_DIM "(explicit, frozen at add time)" M_RESET, e->source);
         print_cmd_tag(v->source_state);
         pf("\n");
     } else if (v->source_resolved) {
-        pf(M_DIM "auto" M_RESET " -> " M_GREEN "%s" M_RESET, v->source_resolved);
+        pf(M_DIM "auto" M_RESET " -> " M_GREEN "\"%s\"" M_RESET, v->source_resolved);
         print_cmd_tag(v->source_state);
         pf("\n");
         indent();
@@ -562,7 +565,7 @@ static void print_commands(const View *v) {
 
     label("fallback");
     if (e->fallback) {
-        pf(M_BLUE "%s" M_RESET, e->fallback);
+        pf(M_BLUE "\"%s\"" M_RESET, e->fallback);
         print_cmd_tag(v->fallback_state);
         if (!policy_uses_fallback(e->policy)) {
             pf(" " M_DIM "(unused by this policy)" M_RESET);
@@ -640,7 +643,7 @@ static void print_policy_settings(const View *v) {
                 const RouteEntry *r = &e->routes[i];
                 CmdState st = cmd_state(r->command, v->self_exe, e->force);
                 indent();
-                pf(M_DIM "%zu." M_RESET " " M_YELLOW "%-*s" M_RESET " -> " M_BLUE "%s" M_RESET,
+                pf(M_DIM "%zu." M_RESET " " M_YELLOW "%-*s" M_RESET " -> " M_BLUE "\"%s\"" M_RESET,
                    i + 1, (int)mw, r->match, r->command);
                 print_cmd_tag(st);
                 pf("\n");
@@ -739,11 +742,11 @@ static void flow_head(const View *v, const char *shim_dir, const char *policy) {
 #ifdef _WIN32
     pf(RAIL "  " M_DIM "the shell finds the shim's hard link first on $PATH" M_RESET "\n");
     pf("    " M_DIM "v" M_RESET "\n");
-    pf("  " M_GREEN "%s" M_RESET " " M_DIM "(hard link)" M_RESET "\n", link_path);
+    pf("  " M_GREEN "\"%s\"" M_RESET " " M_DIM "(hard link)" M_RESET "\n", link_path);
 #else
     pf(RAIL "  " M_DIM "the shell finds the shim's symlink first on $PATH" M_RESET "\n");
     pf("    " M_DIM "v" M_RESET "\n");
-    pf("  " M_GREEN "%s" M_RESET " " M_DIM "(symlink)" M_RESET "\n", link_path);
+    pf("  " M_GREEN "\"%s\"" M_RESET " " M_DIM "(symlink)" M_RESET "\n", link_path);
 #endif
     pf(RAIL "\n");
     pf(RAIL "  " M_DIM "which is just shimback, started under the name '%s'" M_RESET "\n",

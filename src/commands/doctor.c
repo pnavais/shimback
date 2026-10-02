@@ -147,8 +147,9 @@ static void fix_symlink_if_needed(const char *shim_dir, const char *name, const 
     }
 #endif
     if (create_shim_link(self_exe, link_path, "doctor fix")) {
-        report_fixed("recreated %s symlink %s -> %s", missing ? "missing" : "dangling", link_path,
-                     self_exe);
+        report_fixed("recreated %s symlink " COLOR_PATH_FMT " -> " COLOR_PATH_FMT,
+                     missing ? "missing" : "dangling", COLOR_PATH_ARGS(link_path, g_colorize),
+                     COLOR_PATH_ARGS(self_exe, g_colorize));
     } else {
         int link_errno = errno;
         char link_err_msg[1024];
@@ -243,7 +244,7 @@ static bool fix_cycle_if_needed(ShimEntry *entry, const char *self_exe) {
         if (cyclic) {
             char *fixed = prompt_fix_cycle(entry->name, "source", entry->source, self_exe);
             if (fixed) {
-                report_fixed("source updated to %s", fixed);
+                report_fixed("source updated to " COLOR_PATH_FMT, COLOR_PATH_ARGS(fixed, g_colorize));
                 free(entry->source);
                 entry->source = fixed;
                 changed = true;
@@ -257,7 +258,7 @@ static bool fix_cycle_if_needed(ShimEntry *entry, const char *self_exe) {
     if (fb_cyclic) {
         char *fixed = prompt_fix_cycle(entry->name, "fallback", entry->fallback, self_exe);
         if (fixed) {
-            report_fixed("fallback updated to %s", fixed);
+            report_fixed("fallback updated to " COLOR_PATH_FMT, COLOR_PATH_ARGS(fixed, g_colorize));
             free(entry->fallback);
             entry->fallback = fixed;
             changed = true;
@@ -306,22 +307,27 @@ static void check_symlink(int *issues, const char *shim_dir, const char *name, b
      * validity check in one, unlike the POSIX branch's three separate
      * steps below. */
     if (access(link_path, F_OK) != 0) {
-        report_fail(issues, "no shim at %s%s", link_path, fix_hint);
+        report_fail(issues, "no shim at " COLOR_PATH_FMT "%s",
+                     COLOR_PATH_ARGS(link_path, g_colorize), fix_hint);
     } else if (!looks_like_shimback_binary(link_path)) {
-        report_fail(issues, "%s exists but doesn't look like a shimback binary", link_path);
+        report_fail(issues, COLOR_PATH_FMT " exists but doesn't look like a shimback binary",
+                     COLOR_PATH_ARGS(link_path, g_colorize));
     } else {
-        report_ok("shim %s (hard link to the shimback binary)", link_path);
+        report_ok("shim " COLOR_PATH_FMT " (hard link to the shimback binary)",
+                   COLOR_PATH_ARGS(link_path, g_colorize));
     }
     free(link_path);
 #else
     struct stat lst;
     if (lstat(link_path, &lst) != 0) {
-        report_fail(issues, "no symlink at %s%s", link_path, fix_hint);
+        report_fail(issues, "no symlink at " COLOR_PATH_FMT "%s",
+                     COLOR_PATH_ARGS(link_path, g_colorize), fix_hint);
         free(link_path);
         return;
     }
     if (!S_ISLNK(lst.st_mode)) {
-        report_fail(issues, "%s exists but is not a symlink", link_path);
+        report_fail(issues, COLOR_PATH_FMT " exists but is not a symlink",
+                     COLOR_PATH_ARGS(link_path, g_colorize));
         free(link_path);
         return;
     }
@@ -329,7 +335,8 @@ static void check_symlink(int *issues, const char *shim_dir, const char *name, b
     struct stat st;
     if (stat(link_path, &st) != 0) {
         char *raw_target = canonicalize(link_path);
-        report_fail(issues, "symlink %s is dead (target does not exist)%s", link_path, fix_hint);
+        report_fail(issues, "symlink " COLOR_PATH_FMT " is dead (target does not exist)%s",
+                     COLOR_PATH_ARGS(link_path, g_colorize), fix_hint);
         free(raw_target);
         free(link_path);
         return;
@@ -337,10 +344,11 @@ static void check_symlink(int *issues, const char *shim_dir, const char *name, b
 
     char *target = canonicalize(link_path);
     if (!target || !is_executable_file(target)) {
-        report_fail(issues, "symlink %s -> %s, which is not executable", link_path,
-                     target ? target : "?");
+        report_fail(issues, "symlink " COLOR_PATH_FMT " -> %s, which is not executable",
+                     COLOR_PATH_ARGS(link_path, g_colorize), target ? target : "?");
     } else {
-        report_ok("symlink %s -> %s", link_path, target);
+        report_ok("symlink " COLOR_PATH_FMT " -> " COLOR_PATH_FMT,
+                   COLOR_PATH_ARGS(link_path, g_colorize), COLOR_PATH_ARGS(target, g_colorize));
     }
     free(target);
     free(link_path);
@@ -365,21 +373,24 @@ static char *check_fallback(int *issues, const char *fallback, const char *self_
     }
     if (!is_executable_file(fallback)) {
         if (force) {
-            report_ok("fallback: %s (added with --force; not currently on disk, so not checked)",
-                        fallback);
+            report_ok("fallback: " COLOR_PATH_FMT
+                       " (added with --force; not currently on disk, so not checked)",
+                       COLOR_PATH_ARGS(fallback, g_colorize));
             return xstrdup(fallback);
         }
-        report_fail(issues, "fallback '%s' does not exist or is not executable", fallback);
+        report_fail(issues, "fallback " COLOR_PATH_FMT " does not exist or is not executable",
+                     COLOR_PATH_ARGS(fallback, g_colorize));
         return NULL;
     }
     char *resolved = canonicalize(fallback);
     if (resolved && strcmp(resolved, self_exe) == 0) {
         report_fail(issues,
-                     "fallback '%s' resolves back to the shimback binary itself -- this shim "
-                     "would loop forever if invoked (run `shimback doctor fix` to repair)",
-                     fallback);
+                     "fallback " COLOR_PATH_FMT " resolves back to the shimback binary itself -- "
+                     "this shim would loop forever if invoked (run `shimback doctor fix` to "
+                     "repair)",
+                     COLOR_PATH_ARGS(fallback, g_colorize));
     } else {
-        report_ok("fallback: %s", fallback);
+        report_ok("fallback: " COLOR_PATH_FMT, COLOR_PATH_ARGS(fallback, g_colorize));
     }
     return resolved;
 }
@@ -396,22 +407,25 @@ static void check_source(int *issues, const ShimEntry *e, const char *name, cons
         if (!is_executable_file(e->source)) {
             if (force) {
                 report_ok(
-                    "source: %s (added with --force; not currently on disk, so not checked)",
-                    e->source);
+                    "source: " COLOR_PATH_FMT
+                    " (added with --force; not currently on disk, so not checked)",
+                    COLOR_PATH_ARGS(e->source, g_colorize));
                 resolved_source = xstrdup(e->source);
                 goto cross_check;
             }
-            report_fail(issues, "source '%s' does not exist or is not executable", e->source);
+            report_fail(issues, "source " COLOR_PATH_FMT " does not exist or is not executable",
+                         COLOR_PATH_ARGS(e->source, g_colorize));
             return;
         }
         resolved_source = canonicalize(e->source);
         if (resolved_source && strcmp(resolved_source, self_exe) == 0) {
             report_fail(issues,
-                         "source '%s' resolves back to the shimback binary itself -- this shim "
-                         "would loop forever if invoked (run `shimback doctor fix` to repair)",
-                         e->source);
+                         "source " COLOR_PATH_FMT " resolves back to the shimback binary itself "
+                         "-- this shim would loop forever if invoked (run `shimback doctor fix` "
+                         "to repair)",
+                         COLOR_PATH_ARGS(e->source, g_colorize));
         } else {
-            report_ok("source: %s", e->source);
+            report_ok("source: " COLOR_PATH_FMT, COLOR_PATH_ARGS(e->source, g_colorize));
         }
     } else {
         resolved_source = path_search(name, shim_dir, self_exe);
@@ -420,7 +434,7 @@ static void check_source(int *issues, const ShimEntry *e, const char *name, cons
                          name);
             return;
         }
-        report_ok("source: auto -> %s", resolved_source);
+        report_ok("source: auto -> " COLOR_PATH_FMT, COLOR_PATH_ARGS(resolved_source, g_colorize));
     }
 
 cross_check:
@@ -428,9 +442,9 @@ cross_check:
         str_array_eq(e->source_args, e->source_arg_count, e->fallback_args,
                      e->fallback_arg_count)) {
         report_fail(issues,
-                     "source and fallback currently resolve to the same binary (%s) with the "
-                     "same arguments -- this shim is a no-op right now",
-                     resolved_source);
+                     "source and fallback currently resolve to the same binary (" COLOR_PATH_FMT
+                     ") with the same arguments -- this shim is a no-op right now",
+                     COLOR_PATH_ARGS(resolved_source, g_colorize));
     }
     free(resolved_source);
 }
@@ -463,7 +477,7 @@ int cmd_doctor(int argc, char **argv) {
     Config cfg;
     char errbuf[256];
     ConfigStatus cst = config_load(cfg_path, &cfg, errbuf, sizeof(errbuf));
-    printf("%sconfig:%s %s\n", hdr, reset, cfg_path);
+    printf("%sconfig:%s " COLOR_PATH_FMT "\n", hdr, reset, COLOR_PATH_ARGS(cfg_path, g_colorize));
     if (cst != CONFIG_OK) {
         report_fail(&issues, "%s", errbuf);
         printf("\n%sshimback doctor: %d issue(s) found%s\n", g_colorize ? ANSI_BOLD ANSI_RED : "",
@@ -474,14 +488,16 @@ int cmd_doctor(int argc, char **argv) {
     printf("\n");
 
     char *shim_dir = shim_bin_dir();
-    printf("%sshim directory:%s %s\n", hdr, reset, shim_dir);
+    printf("%sshim directory:%s " COLOR_PATH_FMT "\n", hdr, reset,
+           COLOR_PATH_ARGS(shim_dir, g_colorize));
     bool shim_dir_missing = access(shim_dir, F_OK) != 0;
     /* Same thing `init` does; without it every per-shim symlink repair below
      * would fail on the shim directory lock. Only worth doing when shims are
      * actually configured -- otherwise there's nothing to put in it. */
     if (shim_dir_missing && cfg.count > 0 && fix_mode) {
         if (mkdir_p(shim_dir)) {
-            report_fixed("created shim directory %s", shim_dir);
+            report_fixed("created shim directory " COLOR_PATH_FMT,
+                         COLOR_PATH_ARGS(shim_dir, g_colorize));
             shim_dir_missing = false;
         } else {
             warn("doctor fix: failed to create shim directory %s: %s", shim_dir, strerror(errno));
@@ -518,7 +534,8 @@ int cmd_doctor(int argc, char **argv) {
         find_stale_block_dirs(&stale);
 
         if (install_count == 1) {
-            report_ok("installed at %s", installs[0].binary);
+            report_ok("installed at " COLOR_PATH_FMT,
+                      COLOR_PATH_ARGS(installs[0].binary, g_colorize));
         } else if (install_count == 0 && stale.count == 0) {
             report_ok("not installed (no `shimback install` recorded in the PATH block)");
         }
@@ -529,14 +546,16 @@ int cmd_doctor(int argc, char **argv) {
                         "`shimback install` once:",
                         install_count);
             for (size_t i = 0; i < install_count; i++) {
-                printf("           - %s\n", installs[i].binary);
+                printf("           - " COLOR_PATH_FMT "\n",
+                       COLOR_PATH_ARGS(installs[i].binary, g_colorize));
             }
         }
         for (size_t i = 0; i < stale.count; i++) {
-            report_warn("stale PATH entry %s -- no shimback binary there any more (harmless; "
-                        "delete it from the `# >>> shimback >>>` block in your shell startup "
-                        "file, or `shimback uninstall` then `shimback install` to rewrite it)",
-                        stale.items[i]);
+            report_warn("stale PATH entry " COLOR_PATH_FMT " -- no shimback binary there any "
+                        "more (harmless; delete it from the `# >>> shimback >>>` block in your "
+                        "shell startup file, or `shimback uninstall` then `shimback install` to "
+                        "rewrite it)",
+                        COLOR_PATH_ARGS(stale.items[i], g_colorize));
         }
         strvec_free(&stale);
         free_installations(installs, install_count);
@@ -629,7 +648,8 @@ int cmd_doctor(int argc, char **argv) {
         }
 
         if (source == SHIM_SOURCE_SPLIT) {
-            report_ok("config: split file at %s", split_path);
+            report_ok("config: split file at " COLOR_PATH_FMT,
+                      COLOR_PATH_ARGS(split_path, g_colorize));
         }
 
         if (fix_mode) {
@@ -644,7 +664,9 @@ int cmd_doctor(int argc, char **argv) {
                         warn("doctor fix: failed to save split config for '%s': %s", name,
                              split_errbuf);
                     } else {
-                        printf("shimback doctor: saved split config changes to %s\n", split_path);
+                        printf("shimback doctor: saved split config changes to " COLOR_PATH_FMT
+                               "\n",
+                               COLOR_PATH_ARGS(split_path, g_colorize));
                     }
                 } else {
                     config_dirty = true;
@@ -694,12 +716,13 @@ int cmd_doctor(int argc, char **argv) {
                 if (!is_executable_file(route->command)) {
                     if (e->force) {
                         report_ok(
-                            "route '%s': %s (added with --force; not currently on disk, so "
-                            "not checked)",
-                            route->match, route->command);
+                            "route '%s': " COLOR_PATH_FMT
+                            " (added with --force; not currently on disk, so not checked)",
+                            route->match, COLOR_PATH_ARGS(route->command, g_colorize));
                     } else {
-                        report_fail(&issues, "route '%s': %s not found or not executable",
-                                    route->match, route->command);
+                        report_fail(&issues,
+                                     "route '%s': " COLOR_PATH_FMT " not found or not executable",
+                                     route->match, COLOR_PATH_ARGS(route->command, g_colorize));
                     }
                     continue;
                 }
@@ -711,7 +734,8 @@ int cmd_doctor(int argc, char **argv) {
                                  "to repair)",
                                  route->match);
                 } else {
-                    report_ok("route '%s': %s", route->match, route->command);
+                    report_ok("route '%s': " COLOR_PATH_FMT, route->match,
+                              COLOR_PATH_ARGS(route->command, g_colorize));
                 }
                 free(resolved_route);
             }
@@ -765,7 +789,8 @@ int cmd_doctor(int argc, char **argv) {
         if (save_st != CONFIG_OK) {
             warn("doctor fix: failed to save config: %s", errbuf);
         } else {
-            printf("shimback doctor: saved config changes to %s\n\n", cfg_path);
+            printf("shimback doctor: saved config changes to " COLOR_PATH_FMT "\n\n",
+                   COLOR_PATH_ARGS(cfg_path, g_colorize));
         }
     }
 
