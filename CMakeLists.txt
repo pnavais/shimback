@@ -58,7 +58,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
 endif()
 
-option(SHIMBACK_DEV_WARNINGS "Build with -Wall -Wextra -Werror" ${CMAKE_BUILD_TYPE_IS_DEBUG})
+option(SHIMBACK_DEV_WARNINGS "Build with -Wall -Wextra -Werror (/W4 /WX under clang-cl)" OFF)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   set(SHIMBACK_DEV_WARNINGS ON)
 endif()
@@ -201,7 +201,13 @@ if(SHIMBACK_TARGET_WINDOWS)
 endif()
 
 if(SHIMBACK_DEV_WARNINGS)
-  target_compile_options(shimback PRIVATE -Wall -Wextra -Werror)
+  # clang-cl reads -Wall as MSVC's /Wall, i.e. clang's -Weverything; /W4 is
+  # its spelling of -Wall -Wextra.
+  if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    target_compile_options(shimback PRIVATE /W4 /WX)
+  else()
+    target_compile_options(shimback PRIVATE -Wall -Wextra -Werror)
+  endif()
 endif()
 
 install(TARGETS shimback RUNTIME DESTINATION bin)

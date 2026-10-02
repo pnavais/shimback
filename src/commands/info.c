@@ -312,6 +312,7 @@ static void print_symlink(const char *link_path, const char *self_exe) {
      * return any one of its several linked names, not necessarily
      * self_exe's own), and that's more machinery than this cosmetic
      * distinction is worth right now. */
+    (void)self_exe;
     pf("  " TAG_OK "\n");
     label("");
     pf(M_DIM "(hard link to a shimback binary)" M_RESET "\n");
