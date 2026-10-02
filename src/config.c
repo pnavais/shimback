@@ -246,6 +246,37 @@ static void strip_trailing_comment(char *line) {
     }
 }
 
+/* The next line of `*cursor` (see next_line) with its comment stripped and
+ * whitespace trimmed, skipping blank ones; counts every physical line read
+ * into *line_no. NULL once the buffer is exhausted. */
+static char *next_content_line(char **cursor, int *line_no) {
+    char *line;
+    while ((line = next_line(cursor)) != NULL) {
+        (*line_no)++;
+        strip_trailing_comment(line);
+        trim(&line);
+        if (*line != '\0') {
+            return line;
+        }
+    }
+    return NULL;
+}
+
+/* Splits a `key = value` line in place at its first '=', trimming both
+ * sides. False if there is no '='. */
+static bool split_key_value(char *line, char **key, char **value) {
+    char *eq = strchr(line, '=');
+    if (!eq) {
+        return false;
+    }
+    *eq = '\0';
+    *key = line;
+    *value = eq + 1;
+    trim(key);
+    trim(value);
+    return true;
+}
+
 /* Parses a quoted string starting at *cursor (which must point at the
  * opening '"'), advancing *cursor past the closing '"'. Returns a newly
  * allocated, unescaped string, or NULL on malformed input. */
@@ -754,17 +785,8 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
     ConfigStatus status = CONFIG_OK;
 
     char *cursor = contents;
-    char *line;
-    while (status == CONFIG_OK && (line = next_line(&cursor)) != NULL) {
-        line_no++;
-        strip_trailing_comment(line);
-        char *trimmed = line;
-        trim(&trimmed);
-
-        if (*trimmed == '\0') {
-            continue;
-        }
-
+    char *trimmed;
+    while (status == CONFIG_OK && (trimmed = next_content_line(&cursor, &line_no)) != NULL) {
         /* [[shims.<name>.routes]] -- an array-of-tables entry, one per
          * route of a POLICY_ROUTE_MAP shim. Checked before the plain
          * single-bracket branch below: that branch strips only one
@@ -860,17 +882,13 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             continue;
         }
 
-        char *eq = strchr(trimmed, '=');
-        if (!eq) {
+        char *key;
+        char *value_str;
+        if (!split_key_value(trimmed, &key, &value_str)) {
             snprintf(errbuf, errbuf_size, "line %d: expected 'key = value'", line_no);
             status = CONFIG_ERR_PARSE;
             break;
         }
-        *eq = '\0';
-        char *key = trimmed;
-        char *value_str = eq + 1;
-        trim(&key);
-        trim(&value_str);
 
         if (current_route_index >= 0) {
             RouteEntry *route = &cfg->shims[current_index].routes[current_route_index];
@@ -991,17 +1009,8 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
     ssize_t current_route_index = -1; /* -1 = not inside a [[routes]] block */
 
     char *cursor = contents;
-    char *line;
-    while (status == CONFIG_OK && (line = next_line(&cursor)) != NULL) {
-        line_no++;
-        strip_trailing_comment(line);
-        char *trimmed = line;
-        trim(&trimmed);
-
-        if (*trimmed == '\0') {
-            continue;
-        }
-
+    char *trimmed;
+    while (status == CONFIG_OK && (trimmed = next_content_line(&cursor, &line_no)) != NULL) {
         /* A split file has no [shims.<name>] section to qualify a route
          * block with (see config_save_split), so its own routes use bare
          * [[routes]] instead of [[shims.<name>.routes]]. */
@@ -1024,17 +1033,13 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
             break;
         }
 
-        char *eq = strchr(trimmed, '=');
-        if (!eq) {
+        char *key;
+        char *value_str;
+        if (!split_key_value(trimmed, &key, &value_str)) {
             snprintf(errbuf, errbuf_size, "line %d: expected 'key = value'", line_no);
             status = CONFIG_ERR_PARSE;
             break;
         }
-        *eq = '\0';
-        char *key = trimmed;
-        char *value_str = eq + 1;
-        trim(&key);
-        trim(&value_str);
 
         if (current_route_index >= 0) {
             RouteEntry *route = &entry->routes[current_route_index];
@@ -1223,67 +1228,48 @@ static void render_config(const Config *cfg, DynBuf *out) {
     }
 }
 
-/* Creates the directory `path` will be written into, if needed. */
-static ConfigStatus ensure_parent_dir(const char *path, char *errbuf, size_t errbuf_size) {
+/* Writes rendered config text to `path` (creating its directory first) and
+ * frees `out`. 0600: a config file -- config.toml or a split file --
+ * controls which executables a shim actually runs, so it's owner-only
+ * rather than the world-readable 0644 generated shell files get, enforced
+ * on every save (see write_file_atomic, paths.c), not just at first
+ * creation, so it's self-healing even if something else ever leaves the
+ * file at a weaker mode. */
+static ConfigStatus write_config_text(const char *path, DynBuf *out, char *errbuf,
+                                      size_t errbuf_size) {
     char *dir = dir_of(path);
-    ConfigStatus st = CONFIG_OK;
-    if (!mkdir_p(dir)) {
+    bool dir_ok = mkdir_p(dir);
+    if (!dir_ok) {
         snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, plat_strerror(errno));
-        st = CONFIG_ERR_IO;
     }
     free(dir);
-    return st;
-}
-
-ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size_t errbuf_size) {
-    ConfigStatus dir_st = ensure_parent_dir(path, errbuf, errbuf_size);
-    if (dir_st != CONFIG_OK) {
-        return dir_st;
+    if (!dir_ok) {
+        dynbuf_free(out);
+        return CONFIG_ERR_IO;
     }
 
-    DynBuf out;
-    dynbuf_init(&out);
-    render_config(cfg, &out);
-
-    /* 0600: config.toml controls which executables a shim actually runs,
-     * so it's owner-only rather than the world-readable 0644 generated
-     * shell files get -- enforced on every save (see write_file_atomic,
-     * paths.c), not just at first creation, so it's self-healing even if
-     * something else ever leaves the file at a weaker mode. */
-    bool ok = write_file_atomic(path, out.data, out.len, 0600);
-    dynbuf_free(&out);
-
+    bool ok = write_file_atomic(path, out->data, out->len, 0600);
+    dynbuf_free(out);
     if (!ok) {
         snprintf(errbuf, errbuf_size, "cannot write %s: %s", path, plat_strerror(errno));
         return CONFIG_ERR_IO;
     }
-
     return CONFIG_OK;
+}
+
+ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size_t errbuf_size) {
+    DynBuf out;
+    dynbuf_init(&out);
+    render_config(cfg, &out);
+    return write_config_text(path, &out, errbuf, errbuf_size);
 }
 
 ConfigStatus config_save_split(const ShimEntry *entry, const char *path, char *errbuf,
                                 size_t errbuf_size) {
-    ConfigStatus dir_st = ensure_parent_dir(path, errbuf, errbuf_size);
-    if (dir_st != CONFIG_OK) {
-        return dir_st;
-    }
-
     DynBuf out;
     dynbuf_init(&out);
     render_shim_entry_body(entry, &out, NULL);
-
-    /* 0600: same reasoning as config_save -- a split file is just as much
-     * "which executable does this shim actually run" as an entry inside
-     * config.toml itself. */
-    bool ok = write_file_atomic(path, out.data, out.len, 0600);
-    dynbuf_free(&out);
-
-    if (!ok) {
-        snprintf(errbuf, errbuf_size, "cannot write %s: %s", path, plat_strerror(errno));
-        return CONFIG_ERR_IO;
-    }
-
-    return CONFIG_OK;
+    return write_config_text(path, &out, errbuf, errbuf_size);
 }
 
 size_t remove_split_configs(const char *name) {
