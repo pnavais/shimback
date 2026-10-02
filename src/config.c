@@ -137,7 +137,6 @@ size_t config_upsert(Config *cfg, const char *name) {
     memset(entry, 0, sizeof(*entry));
     entry->name = xstrdup(name);
     entry->policy = POLICY_EXIT_CODE;
-    entry->diagnostic = false;
     return cfg->count++;
 }
 
@@ -220,16 +219,14 @@ void config_free(Config *cfg) {
 
 /* ---- Parsing ---- */
 
-static void trim(char **start, char *end_hint) {
-    /* end_hint points just past the last meaningful char (a NUL or similar);
-     * trims leading/trailing ASCII whitespace in place by adjusting *start
-     * and writing a new NUL. */
+/* Trims leading/trailing ASCII whitespace in place by adjusting *start
+ * and writing a new NUL. */
+static void trim(char **start) {
     char *s = *start;
     while (*s != '\0' && isspace((unsigned char)*s)) {
         s++;
     }
     char *e = s + strlen(s);
-    (void)end_hint;
     while (e > s && isspace((unsigned char)e[-1])) {
         e--;
     }
@@ -836,17 +833,8 @@ ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t er
         for (size_t j = i + 1; j < entry->route_count; j++) {
             const RouteEntry *a = &entry->routes[i];
             const RouteEntry *b = &entry->routes[j];
-            if (strcmp(a->command, b->command) != 0 || a->arg_count != b->arg_count) {
-                continue;
-            }
-            bool args_equal = true;
-            for (size_t k = 0; k < a->arg_count; k++) {
-                if (strcmp(a->args[k], b->args[k]) != 0) {
-                    args_equal = false;
-                    break;
-                }
-            }
-            if (args_equal) {
+            if (strcmp(a->command, b->command) == 0 &&
+                str_array_eq(a->args, a->arg_count, b->args, b->arg_count)) {
                 snprintf(errbuf, errbuf_size,
                          "shim '%s': route %zu and route %zu are identical (same command and "
                          "args) -- the second could never fire",
@@ -887,7 +875,7 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
         line_no++;
         strip_trailing_comment(line);
         char *trimmed = line;
-        trim(&trimmed, line + strlen(line));
+        trim(&trimmed);
 
         if (*trimmed == '\0') {
             continue;
@@ -997,12 +985,8 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
         *eq = '\0';
         char *key = trimmed;
         char *value_str = eq + 1;
-        trim(&key, key + strlen(key));
-        {
-            char *vs = value_str;
-            trim(&vs, vs + strlen(vs));
-            value_str = vs;
-        }
+        trim(&key);
+        trim(&value_str);
 
         if (current_route_index >= 0) {
             RouteEntry *route = &cfg->shims[current_index].routes[current_route_index];
@@ -1150,7 +1134,7 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
         line_no++;
         strip_trailing_comment(line);
         char *trimmed = line;
-        trim(&trimmed, line + strlen(line));
+        trim(&trimmed);
 
         if (*trimmed == '\0') {
             continue;
@@ -1187,12 +1171,8 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
         *eq = '\0';
         char *key = trimmed;
         char *value_str = eq + 1;
-        trim(&key, key + strlen(key));
-        {
-            char *vs = value_str;
-            trim(&vs, vs + strlen(vs));
-            value_str = vs;
-        }
+        trim(&key);
+        trim(&value_str);
 
         if (current_route_index >= 0) {
             RouteEntry *route = &entry->routes[current_route_index];
@@ -1592,6 +1572,16 @@ ShimSource resolve_shim_entry(Config *cfg, const char *name, ShimEntry **entry,
     return SHIM_SOURCE_ORPHAN;
 }
 
+/* Appends a copy of `name` to `names` unless it's already there. */
+static void push_unique_name(char **names, size_t *count, const char *name) {
+    for (size_t j = 0; j < *count; j++) {
+        if (strcmp(names[j], name) == 0) {
+            return;
+        }
+    }
+    names[(*count)++] = xstrdup(name);
+}
+
 char **collect_all_shim_names(const Config *cfg, size_t *out_count) {
     size_t symlink_count = 0;
     char **symlink_names = list_shim_symlink_names(&symlink_count);
@@ -1606,31 +1596,13 @@ char **collect_all_shim_names(const Config *cfg, size_t *out_count) {
         names[count++] = xstrdup(cfg->shims[i].name);
     }
     for (size_t i = 0; i < symlink_count; i++) {
-        bool dup = false;
-        for (size_t j = 0; j < count; j++) {
-            if (strcmp(names[j], symlink_names[i]) == 0) {
-                dup = true;
-                break;
-            }
-        }
-        if (!dup) {
-            names[count++] = xstrdup(symlink_names[i]);
-        }
+        push_unique_name(names, &count, symlink_names[i]);
         free(symlink_names[i]);
     }
     free(symlink_names);
 
     for (size_t i = 0; i < split_count; i++) {
-        bool dup = false;
-        for (size_t j = 0; j < count; j++) {
-            if (strcmp(names[j], split_names[i]) == 0) {
-                dup = true;
-                break;
-            }
-        }
-        if (!dup) {
-            names[count++] = xstrdup(split_names[i]);
-        }
+        push_unique_name(names, &count, split_names[i]);
         free(split_names[i]);
     }
     free(split_names);
