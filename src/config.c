@@ -433,36 +433,20 @@ static bool parse_int_array(const char **cursor, int **out, size_t *out_count) {
  * and ENOENT-handling before calling this. */
 static ConfigStatus read_file_into_buffer(FILE *f, const char *path, char **out, char *errbuf,
                                            size_t errbuf_size) {
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, plat_strerror(errno));
-        return CONFIG_ERR_IO;
+    size_t n = 0;
+    long size = 0;
+    switch (read_open_file(f, out, &n, &size)) {
+        case FILE_READ_OK:
+            return CONFIG_OK;
+        case FILE_READ_SEEK_FAILED:
+            snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, plat_strerror(errno));
+            return CONFIG_ERR_IO;
+        case FILE_READ_SHORT:
+        default:
+            snprintf(errbuf, errbuf_size, "cannot read %s: incomplete read (got %zu of %ld bytes)",
+                     path, n, size);
+            return CONFIG_ERR_IO;
     }
-    long size = ftell(f);
-    if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, plat_strerror(errno));
-        return CONFIG_ERR_IO;
-    }
-    char *contents = xmalloc((size_t)size + 1);
-    size_t n = fread(contents, 1, (size_t)size, f);
-    bool read_error = ferror(f) || n != (size_t)size;
-    fclose(f);
-    if (read_error) {
-        /* A short read here means either a genuine I/O error or the file
-         * changing size underneath us between the ftell() above and this
-         * fread() -- either way, treating whatever partial bytes came
-         * through as "the whole file" would let a subsequent save quietly
-         * rewrite the file down to just that truncated prefix, discarding
-         * every entry after it. Fail instead of guessing. */
-        free(contents);
-        snprintf(errbuf, errbuf_size, "cannot read %s: incomplete read (got %zu of %ld bytes)",
-                 path, n, size);
-        return CONFIG_ERR_IO;
-    }
-    contents[n] = '\0';
-    *out = contents;
-    return CONFIG_OK;
 }
 
 /* After a value's own syntax (a quoted string, an array, ...) has already

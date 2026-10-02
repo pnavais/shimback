@@ -26,35 +26,14 @@ static const char *USAGE = "usage: shimback export [-o|--output <path>] [-y|--ye
 
 /* Reads the whole file at `path` into a newly allocated, NUL-terminated
  * buffer; *out_len receives its length (not counting the NUL). Returns
- * false on any I/O failure, leaving *out and *out_len untouched -- own
- * small copy of this project's existing read-file-into-memory pattern
- * (config.c's read_file_into_buffer, shell.c's read_file_or_empty are
- * each private to their own file the same way). */
+ * false on any I/O failure, leaving *out untouched. */
 static bool read_whole_file(const char *path, char **out, size_t *out_len) {
     FILE *f = plat_fopen(path, "rb");
     if (!f) {
         return false;
     }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        return false;
-    }
-    long size = ftell(f);
-    if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return false;
-    }
-    char *buf = xmalloc((size_t)size + 1);
-    size_t n = fread(buf, 1, (size_t)size, f);
-    fclose(f);
-    if (n != (size_t)size) {
-        free(buf);
-        return false;
-    }
-    buf[size] = '\0';
-    *out = buf;
-    *out_len = (size_t)size;
-    return true;
+    long size;
+    return read_open_file(f, out, out_len, &size) == FILE_READ_OK;
 }
 
 /* True if `path` ends in a path separator -- the -o directory-vs-file

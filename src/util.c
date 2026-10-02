@@ -168,6 +168,29 @@ void strvec_push(StrVec *v, char *owned_str) {
     v->items[v->count++] = owned_str;
 }
 
+FileReadStatus read_open_file(FILE *f, char **out, size_t *out_len, long *expected_len) {
+    long size = -1;
+    if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0) {
+        int saved_errno = errno;
+        fclose(f);
+        errno = saved_errno;
+        return FILE_READ_SEEK_FAILED;
+    }
+    char *buf = xmalloc((size_t)size + 1);
+    size_t n = fread(buf, 1, (size_t)size, f);
+    bool read_error = ferror(f) || n != (size_t)size;
+    fclose(f);
+    *out_len = n;
+    *expected_len = size;
+    if (read_error) {
+        free(buf);
+        return FILE_READ_SHORT;
+    }
+    buf[n] = '\0';
+    *out = buf;
+    return FILE_READ_OK;
+}
+
 void str_array_free(char **a, size_t count) {
     for (size_t i = 0; i < count; i++) {
         free(a[i]);

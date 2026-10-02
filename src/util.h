@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 #define ANSI_RESET "\033[0m"
 #define ANSI_BOLD "\033[1m"
@@ -133,6 +134,21 @@ const char *str_casestr(const char *haystack, const char *needle);
  * variants of one command as source/fallback), both in `add`'s own
  * no-op-shim check and in dispatch's matching runtime shortcut. */
 bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count);
+
+typedef enum {
+    FILE_READ_OK,
+    FILE_READ_SEEK_FAILED, /* the size couldn't be determined; errno is set */
+    FILE_READ_SHORT,       /* an I/O error, or the file changed size mid-read */
+} FileReadStatus;
+
+/* Reads all of the already-open `f` into a newly allocated, NUL-terminated
+ * buffer and closes `f`. On FILE_READ_OK sets *out and *out_len (not
+ * counting the NUL). Otherwise *out is untouched; for FILE_READ_SHORT,
+ * *out_len and *expected_len hold the bytes read and the size expected.
+ * A short read is never passed off as the whole file: callers write
+ * modified versions of these files back, so a truncated read could
+ * truncate the real file. */
+FileReadStatus read_open_file(FILE *f, char **out, size_t *out_len, long *expected_len);
 
 /* Frees each of the `count` strings in `a`, then `a` itself. */
 void str_array_free(char **a, size_t count);

@@ -142,34 +142,22 @@ static char *read_file_or_empty(const char *path) {
     if (!f) {
         return xstrdup("");
     }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
+    char *buf;
+    size_t n = 0;
+    long size = 0;
+    FileReadStatus st = read_open_file(f, &buf, &n, &size);
+    if (st == FILE_READ_SEEK_FAILED) {
         return xstrdup("");
     }
-    long size = ftell(f);
-    if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return xstrdup("");
-    }
-    char *buf = xmalloc((size_t)size + 1);
-    size_t n = fread(buf, 1, (size_t)size, f);
-    bool read_error = ferror(f) || n != (size_t)size;
-    fclose(f);
-    if (read_error) {
-        /* A short read here (genuine I/O error, or the file changing size
-         * underneath us) must not be silently treated as "here's the
-         * whole file" -- every caller goes on to compute a modified
-         * version of this content and write it straight back over the
-         * user's actual shell startup file, so a truncated read here
-         * would risk truncating *that* file for real. Refusing to
-         * continue is the safe failure mode; nothing this project does is
-         * worth risking someone's .zshrc for. */
-        free(buf);
+    if (st == FILE_READ_SHORT) {
+        /* Every caller goes on to write a modified version of this content
+         * straight back over the user's actual shell startup file, so
+         * refusing to continue is the safe failure mode; nothing this
+         * project does is worth risking someone's .zshrc for. */
         die("failed to read %s completely (got %zu of %ld bytes) -- refusing to risk "
             "overwriting it with a truncated copy",
             path, n, size);
     }
-    buf[n] = '\0';
     return buf;
 }
 
