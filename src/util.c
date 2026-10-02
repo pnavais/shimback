@@ -11,11 +11,11 @@
 #include "platform/platform.h"
 
 bool stdout_is_color(void) {
-    return !getenv("NO_COLOR") && plat_isatty_stdout();
+    return !plat_getenv("NO_COLOR") && plat_isatty_stdout();
 }
 
 bool stderr_is_color(void) {
-    return !getenv("NO_COLOR") && plat_isatty_stderr();
+    return !plat_getenv("NO_COLOR") && plat_isatty_stderr();
 }
 
 void info(const char *fmt, ...) {

@@ -204,7 +204,7 @@ static void print_backups_section(const Config *cfg, bool colorize) {
         struct stat st;
         if (stat(full_path, &st) == 0) {
             snprintf(sizes[i], sizeof(sizes[i]), "%lld", (long long)st.st_size);
-            struct tm tmv = *localtime(&st.st_mtime);
+            struct tm tmv = *plat_localtime(&st.st_mtime);
             strftime(dates[i], sizeof(dates[i]), "%Y%m%d-%H%M%S", &tmv);
         } else {
             snprintf(sizes[i], sizeof(sizes[i]), "?");

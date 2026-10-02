@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <time.h>
 
 #include "../util.h" /* DynBuf */
 
@@ -305,5 +307,23 @@ bool plat_win_autorun_set(const char *value);
  * shell.c already writes); never called there. */
 bool plat_win_userenv_path_add(const char *dir);
 bool plat_win_userenv_path_remove(const char *dir);
+
+/* --- CRT-function seam -------------------------------------------------
+ * fopen/strerror/localtime/getenv are all plain ISO C/POSIX functions,
+ * portable and safe as used throughout this codebase -- but the UCRT
+ * headers deprecate them in favor of MSVC-only "_s"/"_dupenv_s"
+ * replacements with different signatures (an out-param plus errno_t
+ * return; a caller-supplied buffer instead of a pointer into static
+ * storage; a heap allocation the caller must free, instead of a pointer
+ * owned by the environment). Each plat_* function below preserves the
+ * original's exact call shape and return convention on every platform --
+ * a plain pass-through on POSIX, the "_s" variant reshaped back to that
+ * same shape on Windows -- so call sites stay identical to, and as simple
+ * as, the portable originals. Not reentrant/thread-safe, same as the
+ * functions they replace; fine for this single-threaded CLI. */
+FILE *plat_fopen(const char *path, const char *mode);
+const char *plat_strerror(int errnum);
+struct tm *plat_localtime(const time_t *t);
+const char *plat_getenv(const char *name);
 
 #endif /* SHIMBACK_PLATFORM_H */

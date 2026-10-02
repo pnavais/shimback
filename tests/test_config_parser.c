@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "platform/platform.h"
 #include "util.h"
 
 static int failures = 0;
@@ -297,7 +298,7 @@ static void test_literal_parse(void) {
         "policy = \"exit-code\"\n";
 
     char *path = make_temp_path("literal");
-    FILE *f = fopen(path, "wb");
+    FILE *f = plat_fopen(path, "wb");
     check(f != NULL, "literal: temp file created");
     if (f) {
         fwrite(literal, 1, strlen(literal), f);
@@ -367,7 +368,7 @@ static void test_validation_errors(void) {
     Config cfg;
     char errbuf[256];
 
-    FILE *f = fopen(path, "wb");
+    FILE *f = plat_fopen(path, "wb");
     fwrite(missing_fallback, 1, strlen(missing_fallback), f);
     fclose(f);
     ConfigStatus st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -376,7 +377,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(missing_patterns, 1, strlen(missing_patterns), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -385,7 +386,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(missing_exit_codes, 1, strlen(missing_exit_codes), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -394,7 +395,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(missing_route_args, 1, strlen(missing_route_args), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -403,7 +404,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(missing_split_args, 1, strlen(missing_split_args), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -413,7 +414,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(missing_rewrite_rules, 1, strlen(missing_rewrite_rules), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -422,7 +423,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(mismatched_rewrite_arrays, 1, strlen(mismatched_rewrite_arrays), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -432,7 +433,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(missing_routes, 1, strlen(missing_routes), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -441,7 +442,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(duplicate_routes, 1, strlen(duplicate_routes), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -457,7 +458,7 @@ static void test_validation_errors(void) {
         "a route missing 'command' is rejected", "a route missing 'match' is rejected",
         "a route with an empty 'command' is rejected", "a route with an empty 'match' is rejected"};
     for (size_t i = 0; i < 4; i++) {
-        f = fopen(path, "wb");
+        f = plat_fopen(path, "wb");
         fwrite(incomplete_route_cases[i], 1, strlen(incomplete_route_cases[i]), f);
         fclose(f);
         st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -467,7 +468,7 @@ static void test_validation_errors(void) {
         }
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(orphaned_route_block, 1, strlen(orphaned_route_block), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -477,7 +478,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(mismatched_route_section_name, 1, strlen(mismatched_route_section_name), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -498,7 +499,7 @@ static void test_validation_errors(void) {
     const char *negative_timeout = "version = 1\ncapture_timeout_ms = -5\n";
     const char *overflow_timeout = "version = 1\ncapture_timeout_ms = 99999999999999999999\n";
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(bad_global_timeout, 1, strlen(bad_global_timeout), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -507,7 +508,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(bad_shim_timeout, 1, strlen(bad_shim_timeout), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -516,7 +517,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(negative_timeout, 1, strlen(negative_timeout), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -525,7 +526,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(overflow_timeout, 1, strlen(overflow_timeout), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -545,7 +546,7 @@ static void test_validation_errors(void) {
     const char *overflow_capture_limit_global =
         "version = 1\ncapture_limit = \"18446744073709551616\"\n";
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(overflow_capture_limit_shim, 1, strlen(overflow_capture_limit_shim), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -554,7 +555,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(overflow_capture_limit_global, 1, strlen(overflow_capture_limit_global), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -571,7 +572,7 @@ static void test_validation_errors(void) {
     const char *traversal_name =
         "version = 1\n\n[shims.../../../victim]\nfallback = \"/bin/echo\"\n"
         "policy = \"exit-code\"\n";
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(traversal_name, 1, strlen(traversal_name), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -582,7 +583,7 @@ static void test_validation_errors(void) {
 
     const char *bad_char_name =
         "version = 1\n\n[shims.bad#name]\nfallback = \"/bin/echo\"\npolicy = \"exit-code\"\n";
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(bad_char_name, 1, strlen(bad_char_name), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -616,7 +617,7 @@ static void test_validation_errors(void) {
         "version = 1\ncapture_limit = \"8MiB\" garbage\n";
     const char *trailing_garbage_version = "version = 1 garbage\n";
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(trailing_garbage_fallback, 1, strlen(trailing_garbage_fallback), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -625,7 +626,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(trailing_garbage_policy, 1, strlen(trailing_garbage_policy), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -634,7 +635,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(trailing_garbage_array, 1, strlen(trailing_garbage_array), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -643,7 +644,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(trailing_garbage_capture_limit_shim, 1, strlen(trailing_garbage_capture_limit_shim), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));
@@ -652,7 +653,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(trailing_garbage_capture_limit_global, 1, strlen(trailing_garbage_capture_limit_global),
            f);
     fclose(f);
@@ -662,7 +663,7 @@ static void test_validation_errors(void) {
         config_free(&cfg);
     }
 
-    f = fopen(path, "wb");
+    f = plat_fopen(path, "wb");
     fwrite(trailing_garbage_version, 1, strlen(trailing_garbage_version), f);
     fclose(f);
     st = config_load(path, &cfg, errbuf, sizeof(errbuf));

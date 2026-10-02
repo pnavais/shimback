@@ -34,7 +34,7 @@ static const char *USAGE = "usage: shimback uninstall [--prefix <dir>] [--full]\
  * starts with a recognizable ".TH SHIMBACK" troff header (see
  * man/shimback.1), so a plain read is enough. */
 static bool looks_like_shimback_man_page(const char *path) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = plat_fopen(path, "rb");
     if (!f) {
         return false;
     }
@@ -91,7 +91,7 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
     if (shim_lock_fd < 0) {
         warn("uninstall: failed to acquire the shim directory lock on %s: %s -- proceeding "
              "without it",
-             shim_dir, strerror(errno));
+             shim_dir, plat_strerror(errno));
     }
 
     int count = 0;
@@ -117,7 +117,7 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
                     strvec_push(removed_names, xstrdup(*e));
                 }
             } else {
-                warn("uninstall: failed to remove %s: %s", entry_path, strerror(errno));
+                warn("uninstall: failed to remove %s: %s", entry_path, plat_strerror(errno));
             }
         }
 #else
@@ -133,7 +133,7 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
                         strvec_push(removed_names, xstrdup(*e));
                     }
                 } else {
-                    warn("uninstall: failed to remove %s: %s", entry_path, strerror(errno));
+                    warn("uninstall: failed to remove %s: %s", entry_path, plat_strerror(errno));
                 }
             } else {
                 warn("uninstall: leaving %s alone -- it doesn't resolve to the shimback binary",
@@ -245,7 +245,7 @@ static void remove_file_if_present(const char *path, const char *label, FileVeri
         return;
     }
 #endif
-    warn("uninstall: failed to remove %s: %s", path, strerror(errno));
+    warn("uninstall: failed to remove %s: %s", path, plat_strerror(errno));
 }
 
 static void remove_config(void) {

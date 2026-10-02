@@ -1257,3 +1257,47 @@ bool plat_win_userenv_path_add(const char *dir) {
 bool plat_win_userenv_path_remove(const char *dir) {
     return win_userenv_path_update(dir, false);
 }
+
+/* --- CRT-function seam -------------------------------------------------
+ * See platform.h. Each of these reshapes the UCRT's "_s" replacement back
+ * into the plain, portable function's own call convention. */
+
+FILE *plat_fopen(const char *path, const char *mode) {
+    FILE *f = NULL;
+    errno_t err = fopen_s(&f, path, mode);
+    if (err != 0) {
+        errno = err;
+        return NULL;
+    }
+    return f;
+}
+
+const char *plat_strerror(int errnum) {
+    static char buf[256];
+    strerror_s(buf, sizeof(buf), errnum);
+    return buf;
+}
+
+struct tm *plat_localtime(const time_t *t) {
+    static struct tm result;
+    if (localtime_s(&result, t) != 0) {
+        return NULL;
+    }
+    return &result;
+}
+
+/* _dupenv_s heap-allocates its result (unlike getenv's pointer into the
+ * environment block itself), so the allocation is tracked in a static and
+ * freed on the next call -- preserving getenv's own "valid until the next
+ * call" contract instead of pushing an ownership change onto every call
+ * site. */
+const char *plat_getenv(const char *name) {
+    static char *last = NULL;
+    free(last);
+    last = NULL;
+    size_t len = 0;
+    if (_dupenv_s(&last, &len, name) != 0) {
+        last = NULL;
+    }
+    return last;
+}

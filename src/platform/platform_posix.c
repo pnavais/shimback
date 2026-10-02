@@ -549,3 +549,23 @@ void plat_enable_vt_output(void) {
     /* No-op: a real POSIX terminal already interprets ANSI/VT escape
      * sequences natively, nothing to turn on. */
 }
+
+/* --- CRT-function seam -------------------------------------------------
+ * See platform.h. Plain pass-throughs here -- POSIX libc never deprecated
+ * any of these. */
+
+FILE *plat_fopen(const char *path, const char *mode) {
+    return fopen(path, mode);
+}
+
+const char *plat_strerror(int errnum) {
+    return strerror(errnum);
+}
+
+struct tm *plat_localtime(const time_t *t) {
+    return localtime(t);
+}
+
+const char *plat_getenv(const char *name) {
+    return getenv(name);
+}

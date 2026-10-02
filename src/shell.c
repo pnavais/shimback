@@ -51,7 +51,7 @@ ShellKind detect_current_shell(void) {
     free(parent);
     return kind;
 #else
-    const char *shell = getenv("SHELL");
+    const char *shell = plat_getenv("SHELL");
     if (!shell || shell[0] == '\0') {
         return SHELL_UNKNOWN;
     }
@@ -137,7 +137,7 @@ bool shell_kind_from_name(const char *name, ShellKind *out) {
 }
 
 static char *read_file_or_empty(const char *path) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = plat_fopen(path, "rb");
     if (!f) {
         return xstrdup("");
     }
@@ -1070,7 +1070,7 @@ static bool remove_fish(const char *tag) {
     }
     bool ok = unlink(path) == 0;
     if (!ok) {
-        warn("failed to remove %s: %s", path, strerror(errno));
+        warn("failed to remove %s: %s", path, plat_strerror(errno));
     }
     free(path);
     return ok;

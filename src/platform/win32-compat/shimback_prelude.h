@@ -34,6 +34,16 @@
 #define strtok_r strtok_s
 #endif
 
+/* fdopen is POSIX's name for this; the UCRT exposes the exact same
+ * signature and behavior under the ISO-conformant name _fdopen instead
+ * (fdopen itself is only present, deprecated, for source compatibility).
+ * Same single-identifier macro alias as strtok_r above -- not a wrapper,
+ * since there's no signature difference to paper over. */
+#include <stdio.h>
+#ifndef fdopen
+#define fdopen _fdopen
+#endif
+
 /* mode_t (normally from POSIX's <sys/types.h>, which doesn't exist on
  * Windows) shows up in a few portable function signatures (e.g.
  * paths.h's write_file_atomic) purely as an integer-sized permission-bits

@@ -366,7 +366,7 @@ static void print_symlink(const char *link_path, const char *self_exe) {
  * shimback binary, so resolving symlinks here would make every shim look
  * like "the shimback binary" instead of like the shim. */
 static char *first_on_path(const char *name) {
-    const char *path_env = getenv("PATH");
+    const char *path_env = plat_getenv("PATH");
     if (!path_env) {
         return NULL;
     }

@@ -31,7 +31,7 @@ static const char *USAGE = "usage: shimback export [-o|--output <path>] [-y|--ye
  * (config.c's read_file_into_buffer, shell.c's read_file_or_empty are
  * each private to their own file the same way). */
 static bool read_whole_file(const char *path, char **out, size_t *out_len) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = plat_fopen(path, "rb");
     if (!f) {
         return false;
     }
@@ -166,7 +166,7 @@ static void resolve_target(const char *output_arg, const char *effective_dir,
         }
     }
     if (!mkdir_p(dir)) {
-        die("export: cannot create directory %s: %s", dir, strerror(errno));
+        die("export: cannot create directory %s: %s", dir, plat_strerror(errno));
     }
 
     *out_dir = dir;
@@ -220,7 +220,7 @@ static char *sanitize_for_filename(const char *raw) {
 
 static char *make_timestamp(void) {
     time_t now = time(NULL);
-    struct tm tmv = *localtime(&now);
+    struct tm tmv = *plat_localtime(&now);
     char buf[32];
     strftime(buf, sizeof(buf), "%Y%m%d-%H%M%S", &tmv);
     return xstrdup(buf);
@@ -321,7 +321,7 @@ int cmd_export(int argc, char **argv) {
         char *data;
         size_t len;
         if (!read_whole_file(cfg_path, &data, &len)) {
-            die("export: failed to read %s: %s", cfg_path, strerror(errno));
+            die("export: failed to read %s: %s", cfg_path, plat_strerror(errno));
         }
         zip_writer_add_file(&zw, "config.toml", data, len);
         free(data);
@@ -346,7 +346,7 @@ int cmd_export(int argc, char **argv) {
                 free(data);
             } else {
                 warn("export: failed to read %s, skipping '%s': %s", split_path, names[i],
-                     strerror(errno));
+                     plat_strerror(errno));
             }
             shim_entry_free(entry);
             free(entry);
@@ -409,7 +409,7 @@ int cmd_export(int argc, char **argv) {
 
     bool ok = write_file_atomic(final_path, zw.buf.data, zw.buf.len, 0600);
     if (!ok) {
-        die("export: failed to write %s: %s", final_path, strerror(errno));
+        die("export: failed to write %s: %s", final_path, plat_strerror(errno));
     }
 
     bool colorize = stdout_is_color();

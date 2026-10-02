@@ -57,7 +57,7 @@ static bool path_looks_absolute(const char *path) {
 }
 
 static char *xdg_env(const char *name) {
-    const char *val = getenv(name);
+    const char *val = plat_getenv(name);
     if (!val || val[0] == '\0' || !path_looks_absolute(val)) {
         return NULL;
     }
@@ -95,7 +95,7 @@ static char *win_base_dir(const char *env_name, const char *home_leaf) {
     free(home_shimback_dir);
 
     if (!home_exists) {
-        const char *appdata_env = getenv(env_name);
+        const char *appdata_env = plat_getenv(env_name);
         if (appdata_env && appdata_env[0] != '\0') {
             char *appdata_shimback_dir = path_join(appdata_env, "shimback");
             bool appdata_exists = path_is_dir(appdata_shimback_dir);
@@ -419,7 +419,7 @@ bool looks_like_shimback_binary(const char *path) {
         return false;
     }
 
-    FILE *f = fopen(path, "rb");
+    FILE *f = plat_fopen(path, "rb");
     if (!f) {
         return false;
     }
@@ -502,7 +502,7 @@ void format_link_create_error(char *buf, size_t bufcap, const char *cmd_prefix,
     (void)target;
 #endif
     snprintf(buf, bufcap, "%s: failed to create shim link %s: %s", cmd_prefix, link_path,
-             strerror(link_errno));
+             plat_strerror(link_errno));
 }
 
 bool create_shim_link(const char *target, const char *link_path, const char *cmd_prefix) {
@@ -523,7 +523,7 @@ bool create_shim_link(const char *target, const char *link_path, const char *cmd
             return true;
         }
         warn("%s: also failed to copy shimback's binary to %s as a fallback: %s", cmd_prefix,
-             link_path, strerror(errno));
+             link_path, plat_strerror(errno));
     }
 #else
     (void)cmd_prefix;
@@ -557,7 +557,7 @@ bool refresh_shim_link(const char *target, const char *link_path, const char *cm
 }
 
 static bool copy_file_mode(const char *src, const char *dst, mode_t mode) {
-    FILE *in = fopen(src, "rb");
+    FILE *in = plat_fopen(src, "rb");
     if (!in) {
         return false;
     }
@@ -566,7 +566,7 @@ static bool copy_file_mode(const char *src, const char *dst, mode_t mode) {
     snprintf(tmp, sizeof(tmp), "%s.tmp.%d.XXXXXX", dst, (int)getpid());
     /* plat_mkstemp both creates the file exclusively (immune to a
      * pre-planted symlink at this predictable-looking name -- a plain
-     * fopen(tmp, "wb") would silently follow one) and fills in an
+     * plat_fopen(tmp, "wb") would silently follow one) and fills in an
      * unguessable suffix, rather than relying on the pid alone. */
     int fd = plat_mkstemp(tmp);
     if (fd < 0) {
@@ -755,7 +755,7 @@ void shim_dir_lock_file_remove(const char *shim_dir) {
 
 char *path_search(const char *name, const char *exclude_dir,
                    const char *exclude_canonical) {
-    const char *path_env = getenv("PATH");
+    const char *path_env = plat_getenv("PATH");
     if (!path_env) {
         return NULL;
     }

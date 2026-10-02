@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "platform/platform.h"
+
 typedef struct {
     uint32_t state[8];
     uint64_t total_bytes;
@@ -114,7 +116,7 @@ static void sha256_final(Sha256 *c, uint8_t out[32]) {
 }
 
 bool sha256_file(const char *path, char out_hex[65]) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = plat_fopen(path, "rb");
     if (!f) {
         return false;
     }

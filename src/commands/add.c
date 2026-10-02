@@ -112,10 +112,10 @@ static void restore_from_backup(const char *path, const char *backup_path) {
          * rename()/MoveFileW don't replace an existing destination on
          * Windows, see platform.h. */
         if (!plat_rename_replace(backup_path, path)) {
-            warn("add: failed to restore %s from backup: %s", path, strerror(errno));
+            warn("add: failed to restore %s from backup: %s", path, plat_strerror(errno));
         }
     } else if (unlink(path) != 0 && errno != ENOENT) {
-        warn("add: failed to remove %s while rolling back: %s", path, strerror(errno));
+        warn("add: failed to remove %s while rolling back: %s", path, plat_strerror(errno));
     }
 }
 
@@ -124,7 +124,7 @@ static void restore_from_backup(const char *path, const char *backup_path) {
  * correctness problem. */
 static void discard_backup(const char *backup_path) {
     if (unlink(backup_path) != 0 && errno != ENOENT) {
-        warn("add: failed to remove rollback backup %s: %s", backup_path, strerror(errno));
+        warn("add: failed to remove rollback backup %s: %s", backup_path, plat_strerror(errno));
     }
 }
 
@@ -378,7 +378,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
     if (shim_lock_fd < 0) {
         die("add: failed to acquire the shim directory lock on %s: %s", shim_dir,
-            strerror(errno));
+            plat_strerror(errno));
     }
 
     char *cfg_path = config_file_path();
@@ -608,7 +608,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
             unlink(tmp_link);
             rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
                               "add: failed to replace existing symlink %s: %s", symlink_path,
-                              strerror(errno));
+                              plat_strerror(errno));
         }
     } else if (!create_shim_link(self_exe, symlink_path, "add")) {
         int link_errno = errno;

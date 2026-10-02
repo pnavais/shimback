@@ -66,19 +66,19 @@ static bool download_via_curl(const char *curl, const char *url, const char *des
          * to get otherwise (mkdtemp()'s own directory is 0700, but that
          * says nothing about what curl -o created the file itself with)
          * -- treat a failed chmod() as a failed download instead. */
-        warn("install: failed to set permissions on downloaded man page: %s", strerror(errno));
+        warn("install: failed to set permissions on downloaded man page: %s", plat_strerror(errno));
         ok = false;
     }
     if (ok && rename(tmp_file, dest) == 0) {
         if (rmdir(tmpdir) != 0) {
             warn("install: failed to remove temporary directory %s: %s", tmpdir,
-                 strerror(errno));
+                 plat_strerror(errno));
         }
         return true;
     }
     unlink(tmp_file);
     if (rmdir(tmpdir) != 0) {
-        warn("install: failed to remove temporary directory %s: %s", tmpdir, strerror(errno));
+        warn("install: failed to remove temporary directory %s: %s", tmpdir, plat_strerror(errno));
     }
     return false;
 }
@@ -108,7 +108,7 @@ static void install_man_page(const char *prefix, const char *self_exe) {
             info("man page installed to " COLOR_PATH_FMT, COLOR_PATH_ARGS(man_dest, colorize));
         } else {
             warn("install: failed to copy man page from %s to %s: %s", local_man, man_dest,
-                 strerror(errno));
+                 plat_strerror(errno));
         }
     } else {
         char *curl = path_search("curl", NULL, NULL);
@@ -306,7 +306,7 @@ int cmd_install(int argc, char **argv) {
             info("removed leftover " COLOR_PATH_FMT " from a previous uninstall",
                  COLOR_PATH_ARGS(dest_old, colorize));
         } else {
-            warn("install: failed to remove leftover %s: %s", dest_old, strerror(errno));
+            warn("install: failed to remove leftover %s: %s", dest_old, plat_strerror(errno));
         }
     }
     dynbuf_free(&dest_old_buf);
@@ -338,7 +338,7 @@ int cmd_install(int argc, char **argv) {
              COLOR_PATH_ARGS(dest, colorize));
     } else {
         if (!copy_executable(self_exe, dest)) {
-            die("install: failed to copy %s to %s: %s", self_exe, dest, strerror(errno));
+            die("install: failed to copy %s to %s: %s", self_exe, dest, plat_strerror(errno));
         }
         info("installed to " COLOR_PATH_FMT, COLOR_PATH_ARGS(dest, colorize));
     }

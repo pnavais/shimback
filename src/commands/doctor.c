@@ -102,7 +102,7 @@ static void fix_symlink_if_needed(const char *shim_dir, const char *name, const 
     int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
     if (shim_lock_fd < 0) {
         warn("doctor fix: failed to acquire the shim directory lock on %s: %s -- skipping '%s'",
-             shim_dir, strerror(errno), name);
+             shim_dir, plat_strerror(errno), name);
         free(link_path);
         return;
     }
@@ -269,7 +269,7 @@ static bool fix_cycle_if_needed(ShimEntry *entry, const char *self_exe) {
 }
 
 static bool dir_on_path(const char *dir) {
-    const char *path_env = getenv("PATH");
+    const char *path_env = plat_getenv("PATH");
     if (!path_env) {
         return false;
     }
@@ -500,7 +500,7 @@ int cmd_doctor(int argc, char **argv) {
                          COLOR_PATH_ARGS(shim_dir, g_colorize));
             shim_dir_missing = false;
         } else {
-            warn("doctor fix: failed to create shim directory %s: %s", shim_dir, strerror(errno));
+            warn("doctor fix: failed to create shim directory %s: %s", shim_dir, plat_strerror(errno));
         }
     }
     if (shim_dir_missing) {
@@ -615,7 +615,7 @@ int cmd_doctor(int argc, char **argv) {
                 if (shim_lock_fd < 0) {
                     warn("doctor fix: failed to acquire the shim directory lock on %s: %s -- "
                          "skipping '%s'",
-                         shim_dir, strerror(errno), name);
+                         shim_dir, plat_strerror(errno), name);
                     free(link_path);
                     continue;
                 }
@@ -634,7 +634,7 @@ int cmd_doctor(int argc, char **argv) {
                     report_fixed("removed orphaned symlink (no configuration found for it)");
                 } else {
                     warn("doctor fix: failed to remove orphaned symlink for '%s': %s", name,
-                         strerror(errno));
+                         plat_strerror(errno));
                 }
                 shim_dir_lock_release(shim_lock_fd);
                 free(link_path);
@@ -782,7 +782,7 @@ int cmd_doctor(int argc, char **argv) {
         if (shim_lock_fd < 0) {
             warn("doctor fix: failed to acquire the shim directory lock on %s: %s -- saving "
                  "config anyway",
-                 shim_dir, strerror(errno));
+                 shim_dir, plat_strerror(errno));
         }
         ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
         shim_dir_lock_release(shim_lock_fd);

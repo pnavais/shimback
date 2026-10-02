@@ -164,7 +164,7 @@ static bool platform_asset(char *out, size_t out_size) {
  * name optionally prefixed with '*' for binary mode). Returns a heap string
  * or NULL. */
 static char *expected_digest(const char *sums_path, const char *asset) {
-    FILE *f = fopen(sums_path, "r");
+    FILE *f = plat_fopen(sums_path, "r");
     if (!f) {
         return NULL;
     }
@@ -173,7 +173,16 @@ static char *expected_digest(const char *sums_path, const char *asset) {
     while (!found && fgets(line, sizeof(line), f)) {
         char hex[128];
         char name[256];
+        /* sscanf_s (unlike plain sscanf) requires an extra buffer-size
+         * argument after each %s/%c/%[ conversion -- a real signature
+         * difference, not just a name change, so this is one of the few
+         * call sites handled directly rather than through a plat_*
+         * wrapper. */
+#ifdef _WIN32
+        if (sscanf_s(line, "%127s %255s", hex, (unsigned)sizeof(hex), name, (unsigned)sizeof(name)) != 2) {
+#else
         if (sscanf(line, "%127s %255s", hex, name) != 2) {
+#endif
             continue;
         }
         const char *n = name[0] == '*' ? name + 1 : name;
@@ -286,7 +295,7 @@ int cmd_update(int argc, char **argv) {
     }
 #endif
 
-    const char *base_url = getenv("SHIMBACK_RELEASE_URL");
+    const char *base_url = plat_getenv("SHIMBACK_RELEASE_URL");
     bool custom_release_url = base_url && base_url[0] != '\0';
     if (!custom_release_url) {
         base_url = DEFAULT_RELEASE_URL;
@@ -317,15 +326,15 @@ int cmd_update(int argc, char **argv) {
      * usual per-user scratch dirs; falling back to "." if neither is set
      * is unusual but safe (matches this function's own working directory
      * assumptions no worse than /tmp would). */
-    const char *tmp_root = getenv("TEMP");
+    const char *tmp_root = plat_getenv("TEMP");
     if (!tmp_root || !tmp_root[0]) {
-        tmp_root = getenv("TMP");
+        tmp_root = plat_getenv("TMP");
     }
     if (!tmp_root || !tmp_root[0]) {
         tmp_root = ".";
     }
 #else
-    const char *tmp_root = getenv("TMPDIR");
+    const char *tmp_root = plat_getenv("TMPDIR");
     if (!tmp_root || !tmp_root[0]) {
         tmp_root = "/tmp";
     }
@@ -334,7 +343,7 @@ int cmd_update(int argc, char **argv) {
     snprintf(tmpl, sizeof(tmpl), "%s/shimback-update.XXXXXX", tmp_root);
     char *tmpdir = plat_mkdtemp(tmpl);
     if (!tmpdir) {
-        die("update: failed to create a temporary directory: %s", strerror(errno));
+        die("update: failed to create a temporary directory: %s", plat_strerror(errno));
     }
 
     bool colorize = stdout_is_color();
@@ -439,7 +448,7 @@ int cmd_update(int argc, char **argv) {
     }
 
     if (!copy_executable(new_binary, inst->binary)) {
-        warn("update: failed to replace %s: %s", inst->binary, strerror(errno));
+        warn("update: failed to replace %s: %s", inst->binary, plat_strerror(errno));
         goto done;
     }
 
@@ -521,7 +530,7 @@ int cmd_update(int argc, char **argv) {
                     info("refreshed shim '%s'", stale_names.items[i]);
                 } else {
                     warn("update: failed to refresh shim '%s' at %s: %s", stale_names.items[i],
-                         shim_path, strerror(errno));
+                         shim_path, plat_strerror(errno));
                 }
                 free(shim_path);
             }

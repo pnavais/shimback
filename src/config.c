@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "paths.h"
+#include "platform/platform.h"
 #include "util.h"
 
 /* Strictly parses a non-negative integer field: rejects empty input,
@@ -401,19 +402,19 @@ static bool parse_int_array(const char **cursor, int **out, size_t *out_count) {
 /* Reads the whole (already-opened) `f` into a newly allocated, NUL-terminated
  * buffer, closing it either way. Shared by config_load and
  * config_load_split, whose only difference is how a missing file is
- * handled (empty-but-valid vs. an error) -- both, so, do their own fopen()
+ * handled (empty-but-valid vs. an error) -- both, so, do their own plat_fopen()
  * and ENOENT-handling before calling this. */
 static ConfigStatus read_file_into_buffer(FILE *f, const char *path, char **out, char *errbuf,
                                            size_t errbuf_size) {
     if (fseek(f, 0, SEEK_END) != 0) {
         fclose(f);
-        snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, strerror(errno));
+        snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, plat_strerror(errno));
         return CONFIG_ERR_IO;
     }
     long size = ftell(f);
     if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
         fclose(f);
-        snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, strerror(errno));
+        snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, plat_strerror(errno));
         return CONFIG_ERR_IO;
     }
     char *contents = xmalloc((size_t)size + 1);
@@ -836,12 +837,12 @@ ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t er
 ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t errbuf_size) {
     config_init(cfg);
 
-    FILE *f = fopen(path, "rb");
+    FILE *f = plat_fopen(path, "rb");
     if (!f) {
         if (errno == ENOENT) {
             return CONFIG_OK; /* no config yet is not an error */
         }
-        snprintf(errbuf, errbuf_size, "cannot open %s: %s", path, strerror(errno));
+        snprintf(errbuf, errbuf_size, "cannot open %s: %s", path, plat_strerror(errno));
         return CONFIG_ERR_IO;
     }
 
@@ -1110,9 +1111,9 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
 
 ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
                                 size_t errbuf_size) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = plat_fopen(path, "rb");
     if (!f) {
-        snprintf(errbuf, errbuf_size, "cannot open %s: %s", path, strerror(errno));
+        snprintf(errbuf, errbuf_size, "cannot open %s: %s", path, plat_strerror(errno));
         return CONFIG_ERR_IO;
     }
 
@@ -1452,7 +1453,7 @@ ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size
     if (slash) {
         *slash = '\0';
         if (!mkdir_p(dir)) {
-            snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, strerror(errno));
+            snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, plat_strerror(errno));
             free(dir);
             return CONFIG_ERR_IO;
         }
@@ -1472,7 +1473,7 @@ ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size
     dynbuf_free(&out);
 
     if (!ok) {
-        snprintf(errbuf, errbuf_size, "cannot write %s: %s", path, strerror(errno));
+        snprintf(errbuf, errbuf_size, "cannot write %s: %s", path, plat_strerror(errno));
         return CONFIG_ERR_IO;
     }
 
@@ -1486,7 +1487,7 @@ ConfigStatus config_save_split(const ShimEntry *entry, const char *path, char *e
     if (slash) {
         *slash = '\0';
         if (!mkdir_p(dir)) {
-            snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, strerror(errno));
+            snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, plat_strerror(errno));
             free(dir);
             return CONFIG_ERR_IO;
         }
@@ -1504,7 +1505,7 @@ ConfigStatus config_save_split(const ShimEntry *entry, const char *path, char *e
     dynbuf_free(&out);
 
     if (!ok) {
-        snprintf(errbuf, errbuf_size, "cannot write %s: %s", path, strerror(errno));
+        snprintf(errbuf, errbuf_size, "cannot write %s: %s", path, plat_strerror(errno));
         return CONFIG_ERR_IO;
     }
 
@@ -1536,7 +1537,7 @@ size_t remove_split_configs(const char *name) {
              * (permissions, read-only filesystem, ...) is worth surfacing
              * even though callers here treat this as best-effort: it's
              * the only place that finds out at all. */
-            warn("failed to remove split config %s: %s", paths[i], strerror(errno));
+            warn("failed to remove split config %s: %s", paths[i], plat_strerror(errno));
         }
         free(paths[i]);
     }

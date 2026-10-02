@@ -89,6 +89,13 @@ if(SHIMBACK_TARGET_WINDOWS)
   # comment for why this (S_ISREG/S_ISDIR) needs /FI rather than the
   # win32-compat include-path trick getopt.h/unistd.h use.
   add_compile_options("/FI${CMAKE_CURRENT_SOURCE_DIR}/src/platform/win32-compat/shimback_prelude.h")
+
+  # No _CRT_SECURE_NO_WARNINGS/_CRT_NONSTDC_NO_WARNINGS blanket suppression
+  # here: every call site the UCRT headers warned about (fopen, getenv,
+  # strerror, localtime, fdopen, sscanf) goes through the plat_* seam in
+  # platform.h instead, or (sscanf, the one with a real signature
+  # difference) an explicit #ifdef _WIN32 -- so the warnings are fixed at
+  # the source rather than hidden.
 endif()
 
 # `--version`'s build-provenance fields (see version.h.in): GITHUB_ACTIONS is

@@ -5,6 +5,8 @@
 #include <string.h>
 #include <time.h>
 
+#include "platform/platform.h"
+
 /* One already-written local file header's worth of bookkeeping, needed
  * again when the central directory is appended at zip_writer_finish()
  * time -- ZIP's central directory is a second, trailing index over
@@ -72,7 +74,7 @@ static void append_u32(DynBuf *buf, uint32_t v) {
  * clamping/validation is done. */
 static void dos_datetime_now(uint16_t *out_time, uint16_t *out_date) {
     time_t now = time(NULL);
-    struct tm tmv = *localtime(&now); /* copied out immediately; localtime()'s static
+    struct tm tmv = *plat_localtime(&now); /* copied out immediately; plat_localtime()'s static
                                         * buffer is fine here since this project's CLI
                                         * commands are single-threaded throughout. */
     *out_time = (uint16_t)((tmv.tm_hour << 11) | (tmv.tm_min << 5) | (tmv.tm_sec / 2));
