@@ -79,6 +79,17 @@ marker_count="$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
 assert_eq "add: marker block still singular after shim dir change" "1" "$marker_count"
 assert_contains "add: PATH block updated to new shim dir" "$(cat "$ZSHRC")" "$XDG_DATA_HOME/shimback/bin"
 assert_not_contains "add: old shim dir no longer referenced" "$(cat "$ZSHRC")" "$OLD_DATA_HOME/shimback/bin"
+
+# --- ...and drops the stale entry without reordering the directories
+# around it (their order is PATH precedence); the new shim dir is appended
+# like any newly added directory ---
+STALE_SHIM_DIR="$SANDBOX/home/.local/share-stale/shimback/bin"
+printf '# >>> shimback >>>\nif command -v zsh-defer >/dev/null 2>&1; then\n    zsh-defer export PATH=%s:%s:%s:"$PATH"\nelse\n    export PATH=%s:%s:%s:"$PATH"\nfi\n# <<< shimback <<<\n' \
+    "'$STALE_SHIM_DIR'" "'/opt/keep-a/bin'" "'/opt/keep-b/bin'" \
+    "'$STALE_SHIM_DIR'" "'/opt/keep-a/bin'" "'/opt/keep-b/bin'" >"$ZSHRC"
+"$SHIMBACK" add mytool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
+assert_contains "add: stale shim dir dropped, other dirs keep their order" \
+    "$(cat "$ZSHRC")" "export PATH=\"/opt/keep-a/bin:/opt/keep-b/bin:$XDG_DATA_HOME/shimback/bin:\$PATH\""
 export XDG_DATA_HOME="$OLD_DATA_HOME"
 
 # --- source == fallback: rejected, nothing written ---

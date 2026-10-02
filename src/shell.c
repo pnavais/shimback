@@ -656,22 +656,24 @@ static bool resolve_mise_integration(MiseIntegrationMode mode) {
  * present) for most directories, except that shim_bin_dir() (see paths.c)
  * is always "<data dir>/shimback/bin" and can change between invocations if
  * $XDG_DATA_HOME/$HOME changes -- when `dir` is one, any existing entry
- * that's also one (there should be at most one) is replaced instead, so a
- * changed shim directory doesn't leave a stale, dead entry behind in PATH
- * forever. Anything else already present (e.g. install's own bin dir)
- * doesn't match that shape and is left alone. Shared by every shell's
- * ensure-path logic so they all treat a changed shim dir the same way. */
+ * that's also one (there should be at most one) is removed and `dir` is
+ * appended like any new directory, so a changed shim directory doesn't
+ * leave a stale, dead entry behind in PATH forever. The removal keeps the
+ * remaining entries in their order, which is PATH precedence. Anything
+ * else already present (e.g. install's own bin dir) doesn't match that
+ * shape and is left alone. Shared by every shell's ensure-path logic so
+ * they all treat a changed shim dir the same way. */
 static void merge_dir_into(StrVec *dirs, const char *dir) {
     if (ends_with(dir, "/shimback/bin")) {
-        for (size_t i = 0; i < dirs->count;) {
+        size_t kept = 0;
+        for (size_t i = 0; i < dirs->count; i++) {
             if (ends_with(dirs->items[i], "/shimback/bin") && strcmp(dirs->items[i], dir) != 0) {
                 free(dirs->items[i]);
-                dirs->items[i] = dirs->items[dirs->count - 1];
-                dirs->count--;
             } else {
-                i++;
+                dirs->items[kept++] = dirs->items[i];
             }
         }
+        dirs->count = kept;
     }
 
     for (size_t i = 0; i < dirs->count; i++) {
