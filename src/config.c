@@ -237,11 +237,34 @@ static void trim(char **start, char *end_hint) {
     *start = s;
 }
 
-/* Truncates `line` at the first '#' that occurs outside a quoted string. */
+/* Splits off the next line of a NUL-terminated buffer in place: writes a
+ * NUL over its '\n', advances *cursor past it, and returns the line, or
+ * NULL once the buffer is exhausted. Unlike strtok_r, empty lines are
+ * returned too, so a line counter stays in step with the physical file. */
+static char *next_line(char **cursor) {
+    char *line = *cursor;
+    if (line == NULL) {
+        return NULL;
+    }
+    char *nl = strchr(line, '\n');
+    if (nl) {
+        *nl = '\0';
+        *cursor = nl + 1;
+    } else {
+        *cursor = NULL;
+    }
+    return line;
+}
+
+/* Truncates `line` at the first '#' that occurs outside a quoted string.
+ * Inside quotes a backslash escapes the next character, matching
+ * parse_quoted_string, so "C:\\" ends at its last quote. */
 static void strip_trailing_comment(char *line) {
     bool in_quotes = false;
     for (char *p = line; *p != '\0'; p++) {
-        if (*p == '"' && (p == line || p[-1] != '\\')) {
+        if (in_quotes && *p == '\\' && p[1] != '\0') {
+            p++;
+        } else if (*p == '"') {
             in_quotes = !in_quotes;
         } else if (*p == '#' && !in_quotes) {
             *p = '\0';
@@ -512,7 +535,8 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
         if (!v || !no_trailing_garbage(cursor) || !policy_from_string(v, &entry->policy)) {
             snprintf(errbuf, errbuf_size,
                      "line %d: 'policy' must be \"exit-code\", \"heuristic\", "
-                     "\"exit-code-match\", \"route-args\", or \"rewrite\"",
+                     "\"exit-code-match\", \"route-args\", \"rewrite\", \"split-args\", "
+                     "\"route-map\", or \"passthrough\"",
                      line_no);
             free(v);
             return CONFIG_ERR_PARSE;
@@ -857,16 +881,15 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
     int line_no = 0;
     ConfigStatus status = CONFIG_OK;
 
-    char *saveptr = NULL;
-    char *line = strtok_r(contents, "\n", &saveptr);
-    while (line != NULL && status == CONFIG_OK) {
+    char *cursor = contents;
+    char *line;
+    while (status == CONFIG_OK && (line = next_line(&cursor)) != NULL) {
         line_no++;
         strip_trailing_comment(line);
         char *trimmed = line;
         trim(&trimmed, line + strlen(line));
 
         if (*trimmed == '\0') {
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -924,7 +947,6 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             current_route_index = (ssize_t)shim->route_count;
             shim->route_count++;
 
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -963,7 +985,6 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                 warn("config: line %d: unknown section [%s], ignoring", line_no, header);
                 current_index = -1;
             }
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -989,7 +1010,6 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             if (status != CONFIG_OK) {
                 break;
             }
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -1081,7 +1101,6 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             } else {
                 warn("config: line %d: unknown top-level key '%s', ignoring", line_no, key);
             }
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -1090,8 +1109,6 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
         if (status != CONFIG_OK) {
             break;
         }
-
-        line = strtok_r(NULL, "\n", &saveptr);
     }
 
     free(contents);
@@ -1127,16 +1144,15 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
     ConfigStatus status = CONFIG_OK;
     ssize_t current_route_index = -1; /* -1 = not inside a [[routes]] block */
 
-    char *saveptr = NULL;
-    char *line = strtok_r(contents, "\n", &saveptr);
-    while (line != NULL && status == CONFIG_OK) {
+    char *cursor = contents;
+    char *line;
+    while (status == CONFIG_OK && (line = next_line(&cursor)) != NULL) {
         line_no++;
         strip_trailing_comment(line);
         char *trimmed = line;
         trim(&trimmed, line + strlen(line));
 
         if (*trimmed == '\0') {
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -1149,7 +1165,6 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
             memset(&entry->routes[entry->route_count], 0, sizeof(RouteEntry));
             current_route_index = (ssize_t)entry->route_count;
             entry->route_count++;
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -1185,7 +1200,6 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
             if (status != CONFIG_OK) {
                 break;
             }
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -1193,8 +1207,6 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
         if (status != CONFIG_OK) {
             break;
         }
-
-        line = strtok_r(NULL, "\n", &saveptr);
     }
 
     free(contents);

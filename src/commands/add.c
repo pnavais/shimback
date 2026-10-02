@@ -821,7 +821,8 @@ int cmd_add(int argc, char **argv) {
     Policy policy;
     if (!policy_from_string(policy_arg, &policy)) {
         die("add: --policy must be \"exit-code\", \"heuristic\", \"exit-code-match\", "
-            "\"route-args\", \"rewrite\", \"split-args\", or \"route-map\"");
+            "\"route-args\", \"rewrite\", \"split-args\", \"route-map\", or "
+            "\"passthrough\"");
     }
 
     bool missing_name = (name == NULL);
