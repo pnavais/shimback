@@ -1202,142 +1202,87 @@ static void append_escaped_string(DynBuf *out, const char *s) {
  * once a `[[...]]` array-of-tables block is open, any subsequent bare
  * `key = value` line belongs to *that* table, not back to the shim itself
  * -- so nothing from this function can follow them. */
+/* `key = "value"` -- nothing when `value` is NULL. */
+static void append_str_line(DynBuf *out, const char *key, const char *value) {
+    if (!value) {
+        return;
+    }
+    dynbuf_append_str(out, key);
+    dynbuf_append_str(out, " = ");
+    append_escaped_string(out, value);
+    dynbuf_append_char(out, '\n');
+}
+
+/* `key = ["a", "b"]` -- nothing when the array is empty. */
+static void append_str_array_line(DynBuf *out, const char *key, char *const *items,
+                                  size_t count) {
+    if (count == 0) {
+        return;
+    }
+    dynbuf_append_str(out, key);
+    dynbuf_append_str(out, " = [");
+    for (size_t j = 0; j < count; j++) {
+        if (j > 0) {
+            dynbuf_append_str(out, ", ");
+        }
+        append_escaped_string(out, items[j]);
+    }
+    dynbuf_append_str(out, "]\n");
+}
+
 static void render_shim_entry_body(const ShimEntry *entry, DynBuf *out,
                                     const char *route_header_prefix) {
     char line[64];
-    {
-        if (entry->source) {
-            dynbuf_append_str(out, "source = ");
-            append_escaped_string(out, entry->source);
-            dynbuf_append_char(out, '\n');
-        }
-        if (entry->source_arg_count > 0) {
-            dynbuf_append_str(out, "source_args = [");
-            for (size_t j = 0; j < entry->source_arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->source_args[j]);
+    append_str_line(out, "source", entry->source);
+    append_str_array_line(out, "source_args", entry->source_args, entry->source_arg_count);
+
+    append_str_line(out, "fallback", entry->fallback);
+    append_str_array_line(out, "fallback_args", entry->fallback_args, entry->fallback_arg_count);
+
+    append_str_line(out, "policy", policy_to_string(entry->policy));
+
+    append_str_array_line(out, "error_patterns", entry->error_patterns,
+                          entry->error_pattern_count);
+
+    if (entry->exit_code_count > 0) {
+        dynbuf_append_str(out, "exit_codes = [");
+        for (size_t j = 0; j < entry->exit_code_count; j++) {
+            if (j > 0) {
+                dynbuf_append_str(out, ", ");
             }
-            dynbuf_append_str(out, "]\n");
+            char numbuf[16];
+            snprintf(numbuf, sizeof(numbuf), "%d", entry->exit_codes[j]);
+            dynbuf_append_str(out, numbuf);
         }
+        dynbuf_append_str(out, "]\n");
+    }
 
-        if (entry->fallback) {
-            dynbuf_append_str(out, "fallback = ");
-            append_escaped_string(out, entry->fallback);
-            dynbuf_append_char(out, '\n');
-        }
-        if (entry->fallback_arg_count > 0) {
-            dynbuf_append_str(out, "fallback_args = [");
-            for (size_t j = 0; j < entry->fallback_arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->fallback_args[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
+    append_str_array_line(out, "route_args", entry->route_args, entry->route_arg_count);
+    append_str_array_line(out, "source_route_args", entry->source_route_args,
+                          entry->source_route_arg_count);
+    append_str_array_line(out, "fallback_route_args", entry->fallback_route_args,
+                          entry->fallback_route_arg_count);
 
-        dynbuf_append_str(out, "policy = ");
-        append_escaped_string(out, policy_to_string(entry->policy));
-        dynbuf_append_char(out, '\n');
+    if (entry->strip_matched_args) {
+        dynbuf_append_str(out, "strip_matched_args = true\n");
+    }
 
-        if (entry->error_pattern_count > 0) {
-            dynbuf_append_str(out, "error_patterns = [");
-            for (size_t j = 0; j < entry->error_pattern_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->error_patterns[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
+    append_str_array_line(out, "rewrite_from", entry->rewrite_from, entry->rewrite_from_count);
+    append_str_array_line(out, "rewrite_to", entry->rewrite_to, entry->rewrite_to_count);
 
-        if (entry->exit_code_count > 0) {
-            dynbuf_append_str(out, "exit_codes = [");
-            for (size_t j = 0; j < entry->exit_code_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                char numbuf[16];
-                snprintf(numbuf, sizeof(numbuf), "%d", entry->exit_codes[j]);
-                dynbuf_append_str(out, numbuf);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-
-        if (entry->route_arg_count > 0) {
-            dynbuf_append_str(out, "route_args = [");
-            for (size_t j = 0; j < entry->route_arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->route_args[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-
-        if (entry->source_route_arg_count > 0) {
-            dynbuf_append_str(out, "source_route_args = [");
-            for (size_t j = 0; j < entry->source_route_arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->source_route_args[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-
-        if (entry->fallback_route_arg_count > 0) {
-            dynbuf_append_str(out, "fallback_route_args = [");
-            for (size_t j = 0; j < entry->fallback_route_arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->fallback_route_args[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-
-        if (entry->strip_matched_args) {
-            dynbuf_append_str(out, "strip_matched_args = true\n");
-        }
-
-        if (entry->rewrite_from_count > 0) {
-            dynbuf_append_str(out, "rewrite_from = [");
-            for (size_t j = 0; j < entry->rewrite_from_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->rewrite_from[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-        if (entry->rewrite_to_count > 0) {
-            dynbuf_append_str(out, "rewrite_to = [");
-            for (size_t j = 0; j < entry->rewrite_to_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->rewrite_to[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-
-        if (entry->diagnostic) {
-            dynbuf_append_str(out, "diagnostic = true\n");
-        }
-        if (entry->force) {
-            dynbuf_append_str(out, "force = true\n");
-        }
-        if (entry->capture_timeout_set) {
-            snprintf(line, sizeof(line), "capture_timeout_ms = %d\n", entry->capture_timeout_ms);
-            dynbuf_append_str(out, line);
-        }
-        if (entry->capture_limit_set) {
-            snprintf(line, sizeof(line), "capture_limit = \"%zu\"\n", entry->capture_limit_bytes);
-            dynbuf_append_str(out, line);
-        }
+    if (entry->diagnostic) {
+        dynbuf_append_str(out, "diagnostic = true\n");
+    }
+    if (entry->force) {
+        dynbuf_append_str(out, "force = true\n");
+    }
+    if (entry->capture_timeout_set) {
+        snprintf(line, sizeof(line), "capture_timeout_ms = %d\n", entry->capture_timeout_ms);
+        dynbuf_append_str(out, line);
+    }
+    if (entry->capture_limit_set) {
+        snprintf(line, sizeof(line), "capture_limit = \"%zu\"\n", entry->capture_limit_bytes);
+        dynbuf_append_str(out, line);
     }
 
     for (size_t i = 0; i < entry->route_count; i++) {
@@ -1351,24 +1296,9 @@ static void render_shim_entry_body(const ShimEntry *entry, DynBuf *out,
         }
         dynbuf_append_str(out, "routes]]\n");
 
-        dynbuf_append_str(out, "match = ");
-        append_escaped_string(out, route->match);
-        dynbuf_append_char(out, '\n');
-
-        dynbuf_append_str(out, "command = ");
-        append_escaped_string(out, route->command);
-        dynbuf_append_char(out, '\n');
-
-        if (route->arg_count > 0) {
-            dynbuf_append_str(out, "args = [");
-            for (size_t j = 0; j < route->arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, route->args[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
+        append_str_line(out, "match", route->match);
+        append_str_line(out, "command", route->command);
+        append_str_array_line(out, "args", route->args, route->arg_count);
     }
 }
 
@@ -1387,16 +1317,8 @@ static void render_config(const Config *cfg, DynBuf *out) {
         snprintf(line, sizeof(line), "capture_limit = \"%zu\"\n", cfg->capture_limit_bytes);
         dynbuf_append_str(out, line);
     }
-    if (cfg->backup_dir) {
-        dynbuf_append_str(out, "backup_dir = ");
-        append_escaped_string(out, cfg->backup_dir);
-        dynbuf_append_char(out, '\n');
-    }
-    if (cfg->backup_name_pattern) {
-        dynbuf_append_str(out, "backup_name = ");
-        append_escaped_string(out, cfg->backup_name_pattern);
-        dynbuf_append_char(out, '\n');
-    }
+    append_str_line(out, "backup_dir", cfg->backup_dir);
+    append_str_line(out, "backup_name", cfg->backup_name_pattern);
     if (cfg->backup_override) {
         dynbuf_append_str(out, "backup_override = true\n");
     }
