@@ -5,7 +5,6 @@
 
 #include <errno.h>
 #include <getopt.h>
-#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -705,13 +704,12 @@ int cmd_add(int argc, char **argv) {
             case 'p': policy_arg = optarg; break;
             case 'e': strvec_push(&patterns, xstrdup(optarg)); break;
             case 'x': {
-                char *end;
-                long v = strtol(optarg, &end, 10);
-                if (*optarg == '\0' || *end != '\0' || v < 0 || v > 255) {
+                int v;
+                if (!parse_nonneg_int(optarg, &v) || v > 255) {
                     die("add: --exit-code must be an integer between 0 and 255 (got '%s')",
                         optarg);
                 }
-                push_exit_code(&exit_codes, &exit_code_count, &exit_code_cap, (int)v);
+                push_exit_code(&exit_codes, &exit_code_count, &exit_code_cap, v);
                 break;
             }
             case 'r': strvec_push(&route_args, xstrdup(optarg)); break;
@@ -741,20 +739,14 @@ int cmd_add(int argc, char **argv) {
             case 'd': diagnostic = true; break;
             case OPT_FORCE: force = true; break;
             case 'v': verbose = true; break;
-            case OPT_CAPTURE_TIMEOUT: {
-                errno = 0;
-                char *end;
-                long v = strtol(optarg, &end, 10);
-                if (*optarg == '\0' || *end != '\0' || errno == ERANGE || v < 0 ||
-                    v > INT_MAX) {
+            case OPT_CAPTURE_TIMEOUT:
+                if (!parse_nonneg_int(optarg, &capture_timeout_ms)) {
                     die("add: --capture-timeout must be a non-negative integer of milliseconds "
                         "(got '%s')",
                         optarg);
                 }
                 capture_timeout_set = true;
-                capture_timeout_ms = (int)v;
                 break;
-            }
             case OPT_CAPTURE_LIMIT: {
                 if (!parse_size_bytes(optarg, &capture_limit_bytes)) {
                     die("add: --capture-limit must be a size like \"8MiB\" or a plain byte count "

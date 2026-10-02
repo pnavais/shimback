@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -233,6 +234,20 @@ bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count
             return false;
         }
     }
+    return true;
+}
+
+bool parse_nonneg_int(const char *s, int *out) {
+    if (s[0] == '\0') {
+        return false;
+    }
+    errno = 0;
+    char *end;
+    long v = strtol(s, &end, 10);
+    if (*end != '\0' || errno == ERANGE || v < 0 || v > INT_MAX) {
+        return false;
+    }
+    *out = (int)v;
     return true;
 }
 

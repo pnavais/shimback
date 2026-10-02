@@ -2,7 +2,6 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,27 +11,6 @@
 #include "paths.h"
 #include "platform/platform.h"
 #include "util.h"
-
-/* Strictly parses a non-negative integer field: rejects empty input,
- * trailing garbage, an out-of-range value, and a negative one. Unlike a
- * bare strtol() call, "nope" (or "-5", or "99999999999999999999") is
- * never silently accepted as 0 (or some wrapped/truncated value) -- for a
- * field like capture_timeout_ms, which directly drives dispatch behavior
- * (0 means "cut over to live output immediately"), silently misparsing a
- * typo would change behavior without ever surfacing as an error. */
-static bool parse_nonneg_int(const char *s, int *out) {
-    if (s[0] == '\0') {
-        return false;
-    }
-    errno = 0;
-    char *end;
-    long v = strtol(s, &end, 10);
-    if (*end != '\0' || errno == ERANGE || v < 0 || v > INT_MAX) {
-        return false;
-    }
-    *out = (int)v;
-    return true;
-}
 
 void config_init(Config *cfg) {
     cfg->version = 1;

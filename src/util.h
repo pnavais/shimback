@@ -164,4 +164,13 @@ void str_array_free(char **a, size_t count);
  * multiplied out. */
 bool parse_size_bytes(const char *s, size_t *out);
 
+/* Strictly parses a non-negative integer field: rejects empty input,
+ * trailing garbage, an out-of-range value, and a negative one. Unlike a
+ * bare strtol() call, "nope" (or "-5", or "99999999999999999999") is
+ * never silently accepted as 0 (or some wrapped/truncated value) -- for a
+ * field like capture_timeout_ms, which directly drives dispatch behavior
+ * (0 means "cut over to live output immediately"), silently misparsing a
+ * typo would change behavior without ever surfacing as an error. */
+bool parse_nonneg_int(const char *s, int *out);
+
 #endif /* SHIMBACK_UTIL_H */
