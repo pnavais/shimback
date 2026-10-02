@@ -132,9 +132,14 @@ static void discard_backup(const char *backup_path) {
  * config file from their backups, then dies with the given message --
  * shared by every failure point after either file has been overwritten, so
  * none of them can forget to roll back before exiting. */
-static void rollback_and_die(const char *cfg_path, const char *cfg_backup_path,
-                              const char *split_target_path, const char *split_backup_path,
-                              const char *fmt, ...) {
+_Noreturn static void rollback_and_die(const char *cfg_path, const char *cfg_backup_path,
+                                        const char *split_target_path,
+                                        const char *split_backup_path, const char *fmt, ...)
+    SHIMBACK_PRINTF(5, 6);
+
+_Noreturn static void rollback_and_die(const char *cfg_path, const char *cfg_backup_path,
+                                        const char *split_target_path,
+                                        const char *split_backup_path, const char *fmt, ...) {
     restore_from_backup(cfg_path, cfg_backup_path);
     if (split_target_path) {
         restore_from_backup(split_target_path, split_backup_path);

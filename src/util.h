@@ -53,31 +53,36 @@ bool stderr_is_color(void);
  * still colors the body text on top of this). */
 #define ANSI_PREFIX ANSI_BLUE
 
+/* printf-style format checking for this project's variadic output
+ * helpers: argument `fmt_idx` is the format string, and the values to
+ * check against it start at argument `first_arg`. */
+#define SHIMBACK_PRINTF(fmt_idx, first_arg) __attribute__((format(printf, fmt_idx, first_arg)))
+
 /* Prints "shimback: <msg>" to stdout -- the stdout counterpart to warn(),
  * for ordinary success/info messages (e.g. "removed ..."), not just
  * errors/warnings. */
-void info(const char *fmt, ...);
+void info(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
 
 /* Prints <msg> to stdout, colored ANSI_YELLOW (warn color) when stdout is
  * a color terminal, with no "shimback:" prefix -- for a standalone
  * recommended next step (e.g. "Restart your shell ... for the PATH
  * change to take effect."), set apart on its own line from whatever
  * info()/warn() lines led up to it. */
-void recommend(const char *fmt, ...);
+void recommend(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
 
 /* Prints "shimback: <msg>" to stderr and exits with status 1. Never returns.
  * Reserved for unrecoverable CLI/validation errors -- never call this from
  * dispatch's success/fallback paths, which have their own precise exit codes. */
-void die(const char *fmt, ...);
+_Noreturn void die(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
 
 /* Prints "shimback: <msg>" to stderr. Does not exit. */
-void warn(const char *fmt, ...);
+void warn(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
 
 /* Like warn(), but the message body is also wrapped in `color` (an ANSI_*
  * string) when stderr is a color terminal -- for the few user-facing
  * conditions (e.g. "already installed") worth standing out further than
  * the "shimback:" prefix every warn() already gets. */
-void warn_colored(const char *color, const char *fmt, ...);
+void warn_colored(const char *color, const char *fmt, ...) SHIMBACK_PRINTF(2, 3);
 
 /* Allocation wrappers that die() on OOM, so call sites never need to check. */
 void *xmalloc(size_t size);

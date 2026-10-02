@@ -64,7 +64,7 @@ static const char *markup_escape(char c) {
     }
 }
 
-static void pf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void pf(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
 
 static void pf(const char *fmt, ...) {
     DynBuf f;

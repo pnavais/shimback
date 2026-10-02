@@ -20,6 +20,8 @@
  * updated" status lines (zsh/bash/fish/powershell/pwsh/cmd), so each
  * shell's own name-prefix stays visually distinguishable from shimback's
  * own brand prefix elsewhere in the same output. */
+static void shell_status(const char *shell_name, const char *fmt, ...) SHIMBACK_PRINTF(2, 3);
+
 static void shell_status(const char *shell_name, const char *fmt, ...) {
     bool colorize = stdout_is_color();
     va_list ap;

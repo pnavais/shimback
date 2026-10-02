@@ -26,6 +26,11 @@ static bool g_colorize = false;
  * block. */
 #define SHIM_DIR_TAG "shimback"
 
+static void report_ok(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
+static void report_fail(int *issues, const char *fmt, ...) SHIMBACK_PRINTF(2, 3);
+static void report_fixed(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
+static void report_warn(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
+
 static void report_ok(const char *fmt, ...) {
     va_list ap;
     if (g_colorize) {

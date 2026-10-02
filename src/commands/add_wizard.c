@@ -473,6 +473,8 @@ static void print_breadcrumb(const WizardState *st, const History *hist, size_t 
  * decorative: every page still emits exactly the line count it always did,
  * which is what input_row()'s analytic row-counting depends on -- this only
  * changes what each of those lines looks like. */
+static void bar_line(bool colorize, const char *fmt, ...) SHIMBACK_PRINTF(2, 3);
+
 static void bar_line(bool colorize, const char *fmt, ...) {
     fputs(colorize ? ANSI_CYAN BAR_GLYPH ANSI_RESET " " : "| ", stdout);
     va_list ap;
@@ -598,7 +600,7 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
                     bar_line(colorize, "  %s", POLICY_NAMES[i]);
                 }
             }
-            bar_line(colorize, "");
+            bar_line(colorize, "%s", "");
             bar_line(colorize, "%s%s%s", dim, POLICY_DESCRIPTIONS[policy_highlight], reset);
             break;
         case PAGE_SOURCE:

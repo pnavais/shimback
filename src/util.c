@@ -38,7 +38,7 @@ void recommend(const char *fmt, ...) {
     printf("%s\n", colorize ? ANSI_RESET : "");
 }
 
-void die(const char *fmt, ...) {
+_Noreturn void die(const char *fmt, ...) {
     bool colorize = stderr_is_color();
     va_list ap;
     fprintf(stderr, "%sshimback:%s ", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "");
