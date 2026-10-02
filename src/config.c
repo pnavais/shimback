@@ -1459,18 +1459,23 @@ static void render_config(const Config *cfg, DynBuf *out) {
     }
 }
 
-ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size_t errbuf_size) {
-    char *dir = xstrdup(path);
-    char *slash = strrchr(dir, '/');
-    if (slash) {
-        *slash = '\0';
-        if (!mkdir_p(dir)) {
-            snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, plat_strerror(errno));
-            free(dir);
-            return CONFIG_ERR_IO;
-        }
+/* Creates the directory `path` will be written into, if needed. */
+static ConfigStatus ensure_parent_dir(const char *path, char *errbuf, size_t errbuf_size) {
+    char *dir = dir_of(path);
+    ConfigStatus st = CONFIG_OK;
+    if (!mkdir_p(dir)) {
+        snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, plat_strerror(errno));
+        st = CONFIG_ERR_IO;
     }
     free(dir);
+    return st;
+}
+
+ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size_t errbuf_size) {
+    ConfigStatus dir_st = ensure_parent_dir(path, errbuf, errbuf_size);
+    if (dir_st != CONFIG_OK) {
+        return dir_st;
+    }
 
     DynBuf out;
     dynbuf_init(&out);
@@ -1494,17 +1499,10 @@ ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size
 
 ConfigStatus config_save_split(const ShimEntry *entry, const char *path, char *errbuf,
                                 size_t errbuf_size) {
-    char *dir = xstrdup(path);
-    char *slash = strrchr(dir, '/');
-    if (slash) {
-        *slash = '\0';
-        if (!mkdir_p(dir)) {
-            snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, plat_strerror(errno));
-            free(dir);
-            return CONFIG_ERR_IO;
-        }
+    ConfigStatus dir_st = ensure_parent_dir(path, errbuf, errbuf_size);
+    if (dir_st != CONFIG_OK) {
+        return dir_st;
     }
-    free(dir);
 
     DynBuf out;
     dynbuf_init(&out);

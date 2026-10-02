@@ -57,48 +57,19 @@ static bool read_whole_file(const char *path, char **out, size_t *out_len) {
     return true;
 }
 
-/* True if `path` ends in a path separator ('/' always; also '\' on
- * Windows) -- mirrors paths.c's own is_path_sep()/mkdir_p reasoning
- * (that one's static to paths.c; this is export.c's own narrow use of
- * the same idea, only for the -o directory-vs-file disambiguation
- * below). */
+/* True if `path` ends in a path separator -- the -o directory-vs-file
+ * disambiguation below. */
 static bool ends_with_sep(const char *path) {
     size_t len = strlen(path);
-    if (len == 0) {
-        return false;
-    }
-    char c = path[len - 1];
-#ifdef _WIN32
-    return c == '/' || c == '\\';
-#else
-    return c == '/';
-#endif
+    return len > 0 && is_path_sep(path[len - 1]);
 }
 
 /* Splits `path` into its directory and filename components purely
- * lexically (no existence check, no symlink resolution) -- like
- * paths.h's force_resolve_binary_arg, not canonicalize(). `path` itself
+ * lexically (no existence check, no symlink resolution). `path` itself
  * is not required to exist. */
 static void split_dir_name(const char *path, char **out_dir, char **out_name) {
-    const char *slash = strrchr(path, '/');
-#ifdef _WIN32
-    const char *backslash = strrchr(path, '\\');
-    if (backslash && (!slash || backslash > slash)) {
-        slash = backslash;
-    }
-#endif
-    if (slash) {
-        *out_dir = xstrndup(path, (size_t)(slash - path));
-        *out_name = xstrdup(slash + 1);
-    } else {
-        *out_dir = xstrdup(".");
-        *out_name = xstrdup(path);
-    }
-}
-
-static bool is_existing_dir(const char *path) {
-    struct stat st;
-    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+    *out_dir = dir_of(path);
+    *out_name = xstrdup(path_basename(path));
 }
 
 static bool path_exists(const char *path) {
@@ -146,7 +117,7 @@ static void resolve_target(const char *output_arg, const char *effective_dir,
     if (!output_arg) {
         dir = xstrdup(effective_dir);
         name = xstrdup(default_name);
-    } else if (is_existing_dir(output_arg)) {
+    } else if (path_is_dir(output_arg)) {
         dir = xstrdup(output_arg);
         name = xstrdup(default_name);
     } else if (path_exists(output_arg)) {
@@ -157,7 +128,7 @@ static void resolve_target(const char *output_arg, const char *effective_dir,
         needs_prompt = true;
     } else {
         split_dir_name(output_arg, &dir, &name);
-        needs_prompt = !is_existing_dir(dir);
+        needs_prompt = !path_is_dir(dir);
     }
 
     if (needs_prompt) {

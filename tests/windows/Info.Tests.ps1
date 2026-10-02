@@ -37,6 +37,26 @@ Describe "info" {
         $r.StdOut | Should -Match "no problems noticed"
     }
 
+    It "finds a split config next to the shimback binary (backslash exe path)" {
+        $a = @("add", "binsplit", "-s", $PS, "-f", $PS, "--split-config")
+        foreach ($x in $PrimaryArgs) { $a += @("--source-arg", $x) }
+        foreach ($x in $FallbackArgs) { $a += @("--fallback-arg", $x) }
+        Invoke-Shimback $a | Out-Null
+
+        # GetModuleFileNameW reports the exe path with backslashes; the
+        # binary-dir location must still be its real directory, not ".".
+        $altBin = Join-Path $Sandbox.Root "altbin"
+        New-Item -ItemType Directory -Force -Path $altBin | Out-Null
+        $altExe = Join-Path $altBin "shimback.exe"
+        Copy-Item (Get-ShimbackExe) $altExe
+        $cfgDir = Split-Path (Get-ConfigFile $Sandbox)
+        Move-Item (Join-Path $cfgDir "binsplit-config.toml") (Join-Path $altBin "binsplit-config.toml")
+
+        $r = Invoke-Exe $altExe @("info", "binsplit")
+        $r.StdOut | Should -Match "a split config file"
+        $r.StdOut | Should -Match ([regex]::Escape("altbin"))
+    }
+
     It "shows the passthrough policy's own summary and rejects diagnostic in its output" {
         $a = @("add", "pttool", "-s", $PS, "-f", $PS, "--policy", "passthrough")
         foreach ($x in $PrimaryArgs) { $a += @("--source-arg", $x) }

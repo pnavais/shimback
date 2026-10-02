@@ -72,8 +72,6 @@ char *xdg_data_home(void) {
     return xdg_env("XDG_DATA_HOME");
 }
 
-static bool path_is_dir(const char *path);
-
 #ifdef _WIN32
 /* Windows-only fallback used when no XDG_*_HOME override is set. Prefers
  * the same ".config"/".local/share" (under %USERPROFILE%) layout macOS/
@@ -334,19 +332,24 @@ char *self_exe_path(void) {
     return plat_self_exe_path();
 }
 
+const char *path_basename(const char *path) {
+    const char *base = path;
+    for (const char *p = path; *p; p++) {
+        if (is_path_sep(*p)) {
+            base = p + 1;
+        }
+    }
+    return base;
+}
+
 char *dir_of(const char *path) {
-    const char *slash = strrchr(path, '/');
-    if (!slash) {
+    const char *base = path_basename(path);
+    if (base == path) {
         return xstrdup(".");
     }
-    if (slash == path) {
-        return xstrdup("/");
-    }
-    size_t len = (size_t)(slash - path);
-    char *result = xmalloc(len + 1);
-    memcpy(result, path, len);
-    result[len] = '\0';
-    return result;
+    size_t len = (size_t)(base - path - 1);
+    /* A lone leading separator is the root itself, not an empty dir. */
+    return xstrndup(path, len == 0 ? 1 : len);
 }
 
 bool is_executable_file(const char *path) {
@@ -618,7 +621,7 @@ bool copy_file(const char *src, const char *dst) {
  * silently treated as already set up, and the real failure would only
  * surface later, far from here, as a confusing ENOTDIR trying to create
  * something *inside* what everyone assumed was a directory. */
-static bool path_is_dir(const char *path) {
+bool path_is_dir(const char *path) {
     struct stat st;
     return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
@@ -633,7 +636,7 @@ static bool path_is_dir(const char *path) {
  * (unlike this function) never creates more than one missing level at a
  * time and fails with ENOENT -- found exactly this way, via a Pester test
  * whose sandbox path was built with Join-Path. */
-static bool is_path_sep(char c) {
+bool is_path_sep(char c) {
 #ifdef _WIN32
     return c == '/' || c == '\\';
 #else

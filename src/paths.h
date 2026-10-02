@@ -99,9 +99,19 @@ char *canonicalize(const char *path);
  * (macOS: _NSGetExecutablePath; Linux: /proc/self/exe). */
 char *self_exe_path(void);
 
-/* The directory portion of `path` (everything before the last '/'), or "."
- * if `path` has no '/'. Newly allocated. */
+/* The directory portion of `path` (everything before the last path
+ * separator, see is_path_sep), or "." if `path` has none. Newly allocated. */
 char *dir_of(const char *path);
+
+/* The final component of `path`: a pointer just past its last path
+ * separator, or `path` itself if it has none. Not allocated. */
+const char *path_basename(const char *path);
+
+/* '/' everywhere; also '\' on Windows. */
+bool is_path_sep(char c);
+
+/* True if `path` exists and is a directory (following symlinks). */
+bool path_is_dir(const char *path);
 
 bool is_executable_file(const char *path);
 
