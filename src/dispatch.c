@@ -165,6 +165,19 @@ static void replay(DynBuf *out, DynBuf *err) {
     fflush(stderr);
 }
 
+/* The canonical path of `path` if it's an executable file; otherwise
+ * reports it as the shim's missing `role` ("fallback", "route command")
+ * and returns NULL, for the caller to exit 127. */
+static char *resolve_executable_or_report(const char *path, const char *role,
+                                          const char *shim_name) {
+    char *resolved = is_executable_file(path) ? canonicalize(path) : NULL;
+    if (!resolved) {
+        fprintf(stderr, "shimback: %s '%s' for '%s' not found or not executable\n", role, path,
+                shim_name);
+    }
+    return resolved;
+}
+
 int dispatch_run(const char *shim_name, int argc, char **argv) {
     char *cfg_path = config_file_path();
     Config cfg;
@@ -242,17 +255,9 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         char *resolved_route_command = NULL;
 
         if (matched_route) {
-            if (!is_executable_file(matched_route->command)) {
-                fprintf(stderr,
-                        "shimback: route command '%s' for '%s' not found or not executable\n",
-                        matched_route->command, shim_name);
-                return 127;
-            }
-            resolved_route_command = canonicalize(matched_route->command);
+            resolved_route_command =
+                resolve_executable_or_report(matched_route->command, "route command", shim_name);
             if (!resolved_route_command) {
-                fprintf(stderr,
-                        "shimback: route command '%s' for '%s' not found or not executable\n",
-                        matched_route->command, shim_name);
                 return 127;
             }
             target = resolved_route_command;
@@ -279,15 +284,8 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     }
 
     /* Every remaining policy needs a fallback to potentially run. */
-    if (!is_executable_file(entry->fallback)) {
-        fprintf(stderr, "shimback: fallback '%s' for '%s' not found or not executable\n",
-                entry->fallback, shim_name);
-        return 127;
-    }
-    char *resolved_fallback = canonicalize(entry->fallback);
+    char *resolved_fallback = resolve_executable_or_report(entry->fallback, "fallback", shim_name);
     if (!resolved_fallback) {
-        fprintf(stderr, "shimback: fallback '%s' for '%s' not found or not executable\n",
-                entry->fallback, shim_name);
         return 127;
     }
 
