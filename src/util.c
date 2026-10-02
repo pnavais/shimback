@@ -168,11 +168,15 @@ void strvec_push(StrVec *v, char *owned_str) {
     v->items[v->count++] = owned_str;
 }
 
-void strvec_free(StrVec *v) {
-    for (size_t i = 0; i < v->count; i++) {
-        free(v->items[i]);
+void str_array_free(char **a, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        free(a[i]);
     }
-    free(v->items);
+    free(a);
+}
+
+void strvec_free(StrVec *v) {
+    str_array_free(v->items, v->count);
     v->items = NULL;
     v->count = 0;
     v->cap = 0;

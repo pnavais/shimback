@@ -134,6 +134,9 @@ const char *str_casestr(const char *haystack, const char *needle);
  * no-op-shim check and in dispatch's matching runtime shortcut. */
 bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count);
 
+/* Frees each of the `count` strings in `a`, then `a` itself. */
+void str_array_free(char **a, size_t count);
+
 /* Parses a human-friendly byte size: a non-negative integer optionally
  * followed by a case-insensitive unit suffix, with no whitespace in
  * between -- "B" (or no suffix at all) for plain bytes, "K"/"KB" for

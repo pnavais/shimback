@@ -152,6 +152,14 @@ _Noreturn static void rollback_and_die(const char *cfg_path, const char *cfg_bac
     die("%s", msg);
 }
 
+/* Replaces the string array at `*dst` (of `*dst_count` items) with `src`'s
+ * items, taking ownership of them; `src` must not be freed afterwards. */
+static void take_strvec(char ***dst, size_t *dst_count, StrVec *src) {
+    str_array_free(*dst, *dst_count);
+    *dst = src->items;
+    *dst_count = src->count;
+}
+
 /* Everything from policy validation through creating the symlink and
  * writing the config entry -- shared by both the "everything was already
  * given on the command line" path and the "the interactive wizard filled
@@ -403,61 +411,21 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * already assume: a stable absolute path, not a bare name they'd have
      * to re-search $PATH for themselves. */
     entry->source = source_arg ? xstrdup(resolved_source_for_check) : NULL;
-    for (size_t i = 0; i < entry->source_arg_count; i++) {
-        free(entry->source_args[i]);
-    }
-    free(entry->source_args);
-    entry->source_args = source_args->items; /* ownership transferred */
-    entry->source_arg_count = source_args->count;
+    take_strvec(&entry->source_args, &entry->source_arg_count, source_args);
     free(entry->fallback);
     entry->fallback = resolved_fallback ? xstrdup(resolved_fallback) : NULL;
-    for (size_t i = 0; i < entry->fallback_arg_count; i++) {
-        free(entry->fallback_args[i]);
-    }
-    free(entry->fallback_args);
-    entry->fallback_args = fallback_args->items; /* ownership transferred */
-    entry->fallback_arg_count = fallback_args->count;
+    take_strvec(&entry->fallback_args, &entry->fallback_arg_count, fallback_args);
     entry->policy = policy;
-    for (size_t i = 0; i < entry->error_pattern_count; i++) {
-        free(entry->error_patterns[i]);
-    }
-    free(entry->error_patterns);
-    entry->error_patterns = patterns->items; /* ownership transferred */
-    entry->error_pattern_count = patterns->count;
+    take_strvec(&entry->error_patterns, &entry->error_pattern_count, patterns);
     free(entry->exit_codes);
     entry->exit_codes = exit_codes; /* ownership transferred */
     entry->exit_code_count = exit_code_count;
-    for (size_t i = 0; i < entry->route_arg_count; i++) {
-        free(entry->route_args[i]);
-    }
-    free(entry->route_args);
-    entry->route_args = route_args->items; /* ownership transferred */
-    entry->route_arg_count = route_args->count;
-    for (size_t i = 0; i < entry->source_route_arg_count; i++) {
-        free(entry->source_route_args[i]);
-    }
-    free(entry->source_route_args);
-    entry->source_route_args = split_source_args->items; /* ownership transferred */
-    entry->source_route_arg_count = split_source_args->count;
-    for (size_t i = 0; i < entry->fallback_route_arg_count; i++) {
-        free(entry->fallback_route_args[i]);
-    }
-    free(entry->fallback_route_args);
-    entry->fallback_route_args = split_fallback_args->items; /* ownership transferred */
-    entry->fallback_route_arg_count = split_fallback_args->count;
+    take_strvec(&entry->route_args, &entry->route_arg_count, route_args);
+    take_strvec(&entry->source_route_args, &entry->source_route_arg_count, split_source_args);
+    take_strvec(&entry->fallback_route_args, &entry->fallback_route_arg_count, split_fallback_args);
     entry->strip_matched_args = strip_matched_args;
-    for (size_t i = 0; i < entry->rewrite_from_count; i++) {
-        free(entry->rewrite_from[i]);
-    }
-    free(entry->rewrite_from);
-    entry->rewrite_from = rewrite_from->items; /* ownership transferred */
-    entry->rewrite_from_count = rewrite_from->count;
-    for (size_t i = 0; i < entry->rewrite_to_count; i++) {
-        free(entry->rewrite_to[i]);
-    }
-    free(entry->rewrite_to);
-    entry->rewrite_to = rewrite_to->items; /* ownership transferred */
-    entry->rewrite_to_count = rewrite_to->count;
+    take_strvec(&entry->rewrite_from, &entry->rewrite_from_count, rewrite_from);
+    take_strvec(&entry->rewrite_to, &entry->rewrite_to_count, rewrite_to);
     /* --route can't express per-route args, so a hand-edited `args = [...]`
      * on an existing route would otherwise be silently lost on every
      * re-add. Carry them over to the new route with the same match and
@@ -477,13 +445,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         }
     }
     for (size_t i = 0; i < entry->route_count; i++) {
-        RouteEntry *old_route = &entry->routes[i];
-        free(old_route->match);
-        free(old_route->command);
-        for (size_t j = 0; j < old_route->arg_count; j++) {
-            free(old_route->args[j]);
-        }
-        free(old_route->args);
+        route_entry_free(&entry->routes[i]);
     }
     free(entry->routes);
     entry->routes = resolved_routes; /* ownership transferred */

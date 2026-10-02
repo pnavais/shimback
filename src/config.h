@@ -307,6 +307,9 @@ size_t config_upsert(Config *cfg, const char *name);
  * removed. */
 bool config_remove(Config *cfg, const char *name);
 
+/* Frees what `route` owns (match, command, args), not `route` itself. */
+void route_entry_free(RouteEntry *route);
+
 void shim_entry_free(ShimEntry *entry);
 void config_free(Config *cfg);
 

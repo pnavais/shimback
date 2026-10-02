@@ -153,51 +153,27 @@ bool config_remove(Config *cfg, const char *name) {
     return false;
 }
 
+void route_entry_free(RouteEntry *route) {
+    free(route->match);
+    free(route->command);
+    str_array_free(route->args, route->arg_count);
+}
+
 void shim_entry_free(ShimEntry *entry) {
     free(entry->name);
     free(entry->source);
     free(entry->fallback);
-    for (size_t i = 0; i < entry->source_arg_count; i++) {
-        free(entry->source_args[i]);
-    }
-    free(entry->source_args);
-    for (size_t i = 0; i < entry->fallback_arg_count; i++) {
-        free(entry->fallback_args[i]);
-    }
-    free(entry->fallback_args);
-    for (size_t i = 0; i < entry->error_pattern_count; i++) {
-        free(entry->error_patterns[i]);
-    }
-    free(entry->error_patterns);
+    str_array_free(entry->source_args, entry->source_arg_count);
+    str_array_free(entry->fallback_args, entry->fallback_arg_count);
+    str_array_free(entry->error_patterns, entry->error_pattern_count);
     free(entry->exit_codes);
-    for (size_t i = 0; i < entry->route_arg_count; i++) {
-        free(entry->route_args[i]);
-    }
-    free(entry->route_args);
-    for (size_t i = 0; i < entry->source_route_arg_count; i++) {
-        free(entry->source_route_args[i]);
-    }
-    free(entry->source_route_args);
-    for (size_t i = 0; i < entry->fallback_route_arg_count; i++) {
-        free(entry->fallback_route_args[i]);
-    }
-    free(entry->fallback_route_args);
-    for (size_t i = 0; i < entry->rewrite_from_count; i++) {
-        free(entry->rewrite_from[i]);
-    }
-    free(entry->rewrite_from);
-    for (size_t i = 0; i < entry->rewrite_to_count; i++) {
-        free(entry->rewrite_to[i]);
-    }
-    free(entry->rewrite_to);
+    str_array_free(entry->route_args, entry->route_arg_count);
+    str_array_free(entry->source_route_args, entry->source_route_arg_count);
+    str_array_free(entry->fallback_route_args, entry->fallback_route_arg_count);
+    str_array_free(entry->rewrite_from, entry->rewrite_from_count);
+    str_array_free(entry->rewrite_to, entry->rewrite_to_count);
     for (size_t i = 0; i < entry->route_count; i++) {
-        RouteEntry *route = &entry->routes[i];
-        free(route->match);
-        free(route->command);
-        for (size_t j = 0; j < route->arg_count; j++) {
-            free(route->args[j]);
-        }
-        free(route->args);
+        route_entry_free(&entry->routes[i]);
     }
     free(entry->routes);
     memset(entry, 0, sizeof(*entry));
