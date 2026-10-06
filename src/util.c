@@ -19,14 +19,21 @@ bool stderr_is_color(void) {
     return !plat_getenv("NO_COLOR") && plat_isatty_stderr();
 }
 
+/* "shimback: <msg>\n" on `f`, the prefix colored when `colorize`, and the
+ * message body also wrapped in `body_color` when that's non-NULL. */
+static void vemit(FILE *f, bool colorize, const char *body_color, const char *fmt, va_list ap) {
+    bool color_body = colorize && body_color;
+    fprintf(f, "%sshimback:%s %s", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "",
+            color_body ? body_color : "");
+    vfprintf(f, fmt, ap);
+    fprintf(f, "%s\n", color_body ? ANSI_RESET : "");
+}
+
 void info(const char *fmt, ...) {
-    bool colorize = stdout_is_color();
     va_list ap;
-    printf("%sshimback:%s ", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "");
     va_start(ap, fmt);
-    vprintf(fmt, ap);
+    vemit(stdout, stdout_is_color(), NULL, fmt, ap);
     va_end(ap);
-    printf("\n");
 }
 
 void recommend(const char *fmt, ...) {
@@ -40,35 +47,25 @@ void recommend(const char *fmt, ...) {
 }
 
 _Noreturn void die(const char *fmt, ...) {
-    bool colorize = stderr_is_color();
     va_list ap;
-    fprintf(stderr, "%sshimback:%s ", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "");
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vemit(stderr, stderr_is_color(), NULL, fmt, ap);
     va_end(ap);
-    fprintf(stderr, "\n");
     exit(1);
 }
 
 void warn_colored(const char *color, const char *fmt, ...) {
-    bool colorize = stderr_is_color();
     va_list ap;
-    fprintf(stderr, "%sshimback:%s %s", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "",
-            colorize ? color : "");
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vemit(stderr, stderr_is_color(), color, fmt, ap);
     va_end(ap);
-    fprintf(stderr, "%s\n", colorize ? ANSI_RESET : "");
 }
 
 void warn(const char *fmt, ...) {
-    bool colorize = stderr_is_color();
     va_list ap;
-    fprintf(stderr, "%sshimback:%s ", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "");
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vemit(stderr, stderr_is_color(), NULL, fmt, ap);
     va_end(ap);
-    fprintf(stderr, "\n");
 }
 
 void *xmalloc(size_t size) {
