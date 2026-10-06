@@ -130,7 +130,8 @@ static const CommandHelp COMMAND_HELP[] = {
         "                      [\001--split-source-arg\001 \002<arg>\002]... "
         "[\001--split-fallback-arg\001 \002<arg>\002]...\n"
         "                      [\001--rewrite\001 \002<from>\002=\002<to>\002]... "
-        "[\001--diagnostic\001] [\001--force\001] [\001-v\001|\001--verbose\001]\n"
+        "[\001--route\001 \002<match>\002=\002<command>\002]...\n"
+        "                      [\001--diagnostic\001] [\001--force\001] [\001-v\001|\001--verbose\001]\n"
         "                      [\001--capture-timeout\001 \002<ms>\002] "
         "[\001--capture-limit\001 \002<size>\002] [\001--split-config\001]\n",
 
@@ -141,7 +142,8 @@ static const CommandHelp COMMAND_HELP[] = {
         "\n"
         "              \001--policy rewrite\001 is different from the rest: it never falls\n"
         "              back, just rewrites matched \001--rewrite\001 arguments before running\n"
-        "              source every time, and \001--fallback\001 is optional for it.\n"
+        "              source every time, and \001--fallback\001 is optional for it (as for\n"
+        "              \001--policy route-map\001, which runs one of its \001--route\001 commands).\n"
         "\n"
         "              \001--source-arg\001/\001--fallback-arg\001 attach fixed, baked-in arguments\n"
         "              to whichever runs, independent of policy, so a shim can also\n"
