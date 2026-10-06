@@ -779,14 +779,13 @@ int cmd_add(int argc, char **argv) {
 
     Policy policy;
     if (!policy_from_string(policy_arg, &policy)) {
-        die("add: --policy must be \"exit-code\", \"heuristic\", \"exit-code-match\", "
-            "\"route-args\", \"rewrite\", \"split-args\", \"route-map\", or "
-            "\"passthrough\"");
+        char *names = policy_names_list();
+        die("add: --policy must be %s", names);
     }
 
     bool missing_name = (name == NULL);
     bool missing_fallback =
-        (!fallback_arg && policy != POLICY_REWRITE && policy != POLICY_ROUTE_MAP);
+        (!fallback_arg && policy_uses_fallback(policy));
     bool missing_patterns = (policy == POLICY_HEURISTIC && patterns.count == 0);
     bool missing_exit_codes = (policy == POLICY_EXIT_CODE_MATCH && exit_code_count == 0);
     bool missing_route_args = (policy == POLICY_ROUTE_ARGS && route_args.count == 0);

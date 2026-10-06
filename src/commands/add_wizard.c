@@ -58,23 +58,6 @@ typedef enum {
     PAGE_DONE,
 } PageId;
 
-#define POLICY_COUNT 8
-
-static const char *const POLICY_NAMES[POLICY_COUNT] = {
-    "exit-code",       "heuristic", "exit-code-match", "route-args",
-    "rewrite",         "split-args", "route-map",      "passthrough",
-};
-static const char *const POLICY_DESCRIPTIONS[POLICY_COUNT] = {
-    "Fall back whenever source exits non-zero (the default).",
-    "Fall back only when source's stderr matches a configured error pattern.",
-    "Fall back only when source exits with one of the configured codes.",
-    "Pick source or fallback up front, based on the invocation's arguments.",
-    "Always run source, rewriting matched arguments first; no fallback used.",
-    "Pick source or fallback up front, from each side's own most-discriminating args.",
-    "Route to any number of other commands, based on the invocation's arguments.",
-    "Like exit-code, but never hides source's output -- no diagnostic or capture limits.",
-};
-
 /* Working state for the whole wizard: one field (plus a "committed yet"
  * flag) per possible page, mutated in place as pages get committed. */
 typedef struct {
@@ -592,16 +575,16 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
             break;
         case PAGE_POLICY:
             bar_line(colorize, "%sPolicy:%s", hdr, reset);
-            for (int i = 0; i < POLICY_COUNT; i++) {
+            for (int i = 0; i < POLICY__COUNT; i++) {
                 bool hl = (i == policy_highlight);
                 if (hl) {
-                    bar_line(colorize, "> %s%s%s", hl_color, POLICY_NAMES[i], reset);
+                    bar_line(colorize, "> %s%s%s", hl_color, policy_to_string((Policy)i), reset);
                 } else {
-                    bar_line(colorize, "  %s", POLICY_NAMES[i]);
+                    bar_line(colorize, "  %s", policy_to_string((Policy)i));
                 }
             }
             bar_line(colorize, "%s", "");
-            bar_line(colorize, "%s%s%s", dim, POLICY_DESCRIPTIONS[policy_highlight], reset);
+            bar_line(colorize, "%s%s%s", dim, policy_description((Policy)policy_highlight), reset);
             break;
         case PAGE_SOURCE:
             bar_line(colorize,
@@ -833,11 +816,11 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
 
         if (page == PAGE_POLICY) {
             if (key.type == TUI_KEY_UP) {
-                policy_highlight = (policy_highlight + POLICY_COUNT - 1) % POLICY_COUNT;
+                policy_highlight = (policy_highlight + POLICY__COUNT - 1) % POLICY__COUNT;
                 continue;
             }
             if (key.type == TUI_KEY_DOWN) {
-                policy_highlight = (policy_highlight + 1) % POLICY_COUNT;
+                policy_highlight = (policy_highlight + 1) % POLICY__COUNT;
                 continue;
             }
             if (key.type == TUI_KEY_ENTER) {

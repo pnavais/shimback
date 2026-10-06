@@ -27,68 +27,95 @@ void config_init(Config *cfg) {
     cfg->mise_integration = false;
 }
 
+/* Everything about each policy that's a fixed property of the policy
+ * itself, in enum order. */
+static const struct {
+    const char *name;
+    const char *color; /* see policy_color */
+    const char *description;
+    bool uses_fallback;
+    bool uses_trial_run;
+} POLICY_INFO[POLICY__COUNT] = {
+    [POLICY_EXIT_CODE] = {"exit-code", NULL,
+                          "Fall back whenever source exits non-zero (the default).", true, true},
+    [POLICY_HEURISTIC] = {"heuristic", ANSI_YELLOW,
+                          "Fall back only when source's stderr matches a configured error "
+                          "pattern.",
+                          true, true},
+    [POLICY_EXIT_CODE_MATCH] = {"exit-code-match", ANSI_MAGENTA,
+                                "Fall back only when source exits with one of the configured "
+                                "codes.",
+                                true, true},
+    [POLICY_ROUTE_ARGS] = {"route-args", ANSI_CYAN,
+                           "Pick source or fallback up front, based on the invocation's "
+                           "arguments.",
+                           true, false},
+    [POLICY_REWRITE] = {"rewrite", ANSI_GREEN,
+                        "Always run source, rewriting matched arguments first; no fallback used.",
+                        false, false},
+    [POLICY_SPLIT_ARGS] = {"split-args", ANSI_RED,
+                           "Pick source or fallback up front, from each side's own "
+                           "most-discriminating args.",
+                           true, true},
+    [POLICY_ROUTE_MAP] = {"route-map", ANSI_BLUE,
+                          "Route to any number of other commands, based on the invocation's "
+                          "arguments.",
+                          false, false},
+    [POLICY_PASSTHROUGH] = {"passthrough", ANSI_BOLD ANSI_MAGENTA,
+                            "Like exit-code, but never hides source's output -- no diagnostic "
+                            "or capture limits.",
+                            true, false},
+};
+
+/* An out-of-range value reads as the default policy. */
+static Policy valid_policy(Policy p) {
+    return (unsigned)p < POLICY__COUNT ? p : POLICY_EXIT_CODE;
+}
+
 const char *policy_to_string(Policy p) {
-    switch (p) {
-        case POLICY_HEURISTIC: return "heuristic";
-        case POLICY_EXIT_CODE_MATCH: return "exit-code-match";
-        case POLICY_ROUTE_ARGS: return "route-args";
-        case POLICY_REWRITE: return "rewrite";
-        case POLICY_SPLIT_ARGS: return "split-args";
-        case POLICY_ROUTE_MAP: return "route-map";
-        case POLICY_PASSTHROUGH: return "passthrough";
-        case POLICY_EXIT_CODE:
-        default: return "exit-code";
-    }
+    return POLICY_INFO[valid_policy(p)].name;
 }
 
 bool policy_from_string(const char *s, Policy *out) {
-    if (strcmp(s, "exit-code") == 0) {
-        *out = POLICY_EXIT_CODE;
-        return true;
-    }
-    if (strcmp(s, "heuristic") == 0) {
-        *out = POLICY_HEURISTIC;
-        return true;
-    }
-    if (strcmp(s, "exit-code-match") == 0) {
-        *out = POLICY_EXIT_CODE_MATCH;
-        return true;
-    }
-    if (strcmp(s, "route-args") == 0) {
-        *out = POLICY_ROUTE_ARGS;
-        return true;
-    }
-    if (strcmp(s, "rewrite") == 0) {
-        *out = POLICY_REWRITE;
-        return true;
-    }
-    if (strcmp(s, "split-args") == 0) {
-        *out = POLICY_SPLIT_ARGS;
-        return true;
-    }
-    if (strcmp(s, "route-map") == 0) {
-        *out = POLICY_ROUTE_MAP;
-        return true;
-    }
-    if (strcmp(s, "passthrough") == 0) {
-        *out = POLICY_PASSTHROUGH;
-        return true;
+    for (int i = 0; i < POLICY__COUNT; i++) {
+        if (strcmp(s, POLICY_INFO[i].name) == 0) {
+            *out = (Policy)i;
+            return true;
+        }
     }
     return false;
 }
 
 const char *policy_color(Policy p) {
-    switch (p) {
-        case POLICY_HEURISTIC: return ANSI_YELLOW;
-        case POLICY_EXIT_CODE_MATCH: return ANSI_MAGENTA;
-        case POLICY_ROUTE_ARGS: return ANSI_CYAN;
-        case POLICY_REWRITE: return ANSI_GREEN;
-        case POLICY_SPLIT_ARGS: return ANSI_RED;
-        case POLICY_ROUTE_MAP: return ANSI_BLUE;
-        case POLICY_PASSTHROUGH: return ANSI_BOLD ANSI_MAGENTA;
-        case POLICY_EXIT_CODE:
-        default: return NULL;
+    return POLICY_INFO[valid_policy(p)].color;
+}
+
+const char *policy_description(Policy p) {
+    return POLICY_INFO[valid_policy(p)].description;
+}
+
+bool policy_uses_fallback(Policy p) {
+    return POLICY_INFO[valid_policy(p)].uses_fallback;
+}
+
+bool policy_uses_trial_run(Policy p) {
+    return POLICY_INFO[valid_policy(p)].uses_trial_run;
+}
+
+char *policy_names_list(void) {
+    DynBuf buf;
+    dynbuf_init(&buf);
+    for (int i = 0; i < POLICY__COUNT; i++) {
+        if (i > 0) {
+            dynbuf_append_str(&buf, i == POLICY__COUNT - 1 ? ", or " : ", ");
+        }
+        dynbuf_append_char(&buf, '"');
+        dynbuf_append_str(&buf, POLICY_INFO[i].name);
+        dynbuf_append_char(&buf, '"');
     }
+    char *result = xstrdup(dynbuf_cstr(&buf));
+    dynbuf_free(&buf);
+    return result;
 }
 
 ShimEntry *config_find(Config *cfg, const char *name) {
@@ -514,11 +541,9 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
     } else if (strcmp(key, "policy") == 0) {
         char *v = parse_quoted_string(&cursor);
         if (!v || !no_trailing_garbage(cursor) || !policy_from_string(v, &entry->policy)) {
-            snprintf(errbuf, errbuf_size,
-                     "line %d: 'policy' must be \"exit-code\", \"heuristic\", "
-                     "\"exit-code-match\", \"route-args\", \"rewrite\", \"split-args\", "
-                     "\"route-map\", or \"passthrough\"",
-                     line_no);
+            char *names = policy_names_list();
+            snprintf(errbuf, errbuf_size, "line %d: 'policy' must be %s", line_no, names);
+            free(names);
             free(v);
             return CONFIG_ERR_PARSE;
         }
@@ -623,7 +648,7 @@ static ConfigStatus parse_route_field(RouteEntry *route, const char *key, char *
  * called directly by add.c's finish_add before writing a new/updated
  * entry to disk -- see the declaration in config.h. */
 ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t errbuf_size) {
-    if (!entry->fallback && entry->policy != POLICY_REWRITE && entry->policy != POLICY_ROUTE_MAP) {
+    if (!entry->fallback && policy_uses_fallback(entry->policy)) {
         snprintf(errbuf, errbuf_size, "shim '%s' is missing a required 'fallback'", entry->name);
         return CONFIG_ERR_VALIDATION;
     }

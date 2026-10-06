@@ -76,6 +76,10 @@ typedef enum {
     POLICY_PASSTHROUGH,
 } Policy;
 
+/* The number of policies -- a macro rather than an enumerator, so switches
+ * over Policy stay checked for exhaustiveness. */
+#define POLICY__COUNT (POLICY_PASSTHROUGH + 1)
+
 /* One entry in a POLICY_ROUTE_MAP shim's `routes` list. Unlike
  * route-args' single fallback, `command` isn't required to be unique
  * across routes -- the same command can appear in two routes with
@@ -315,6 +319,20 @@ void config_free(Config *cfg);
 
 const char *policy_to_string(Policy p);
 bool policy_from_string(const char *s, Policy *out);
+
+/* One-line description of `p`, as the add wizard shows it. */
+const char *policy_description(Policy p);
+
+/* Whether `p` ever runs the fallback (rewrite and route-map never do, so
+ * they don't need one), and whether it ever runs the source as a hidden,
+ * captured trial run. */
+bool policy_uses_fallback(Policy p);
+bool policy_uses_trial_run(Policy p);
+
+/* Every policy name, quoted, as an English list for error messages:
+ * "\"exit-code\", \"heuristic\", ..., or \"passthrough\"". Newly
+ * allocated. */
+char *policy_names_list(void);
 
 /* ANSI color escape (see util.h) associated with `p` for colored output in
  * `list` and `add`'s confirmation line -- NULL for POLICY_EXIT_CODE, which

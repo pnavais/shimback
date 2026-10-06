@@ -257,16 +257,6 @@ static const char *policy_summary(Policy p) {
     return "";
 }
 
-static bool policy_uses_fallback(Policy p) {
-    return p != POLICY_REWRITE && p != POLICY_ROUTE_MAP;
-}
-
-/* Policies that ever run the source as a hidden, captured trial run. */
-static bool policy_uses_trial_run(Policy p) {
-    return p == POLICY_EXIT_CODE || p == POLICY_HEURISTIC || p == POLICY_EXIT_CODE_MATCH ||
-           p == POLICY_SPLIT_ARGS;
-}
-
 /* ---- symlink / PATH ------------------------------------------------------ */
 
 static bool same_dir(const char *a, const char *b) {
