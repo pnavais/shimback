@@ -159,6 +159,37 @@ static void take_strvec(char ***dst, size_t *dst_count, StrVec *src) {
     *dst_count = src->count;
 }
 
+#define SHIM_LOOP_TAIL                                                                     \
+    "this shim were ever invoked (did it resolve via $PATH to another shim, or to this one?)"
+
+/* Resolves the binary argument `arg` (the shim's `what`: "source",
+ * "fallback", "--route command") the way add stores it -- or, with
+ * --force, accepts a path that doesn't exist yet -- dying if it can't be
+ * resolved or resolves back to shimback itself, which would loop forever
+ * if `loop_tail` happened. Newly allocated. */
+static char *resolve_target_or_die(const char *arg, const char *what, const char *force_what,
+                                   bool force, const char *self_exe, const char *loop_tail) {
+    char *resolved = resolve_binary_arg(arg);
+    if (!resolved && force) {
+        resolved = force_resolve_binary_arg(arg);
+    }
+    if (!resolved) {
+        if (force) {
+            die("add: --force still needs a path for %s (with a path separator), not a bare "
+                "name -- there's nothing to resolve '%s' against if it doesn't exist anywhere "
+                "yet",
+                force_what, arg);
+        }
+        die("add: %s '%s' does not exist, is not executable, or isn't on $PATH", what, arg);
+    }
+    if (strcmp(resolved, self_exe) == 0) {
+        die("add: %s '%s' resolves back to the shimback binary itself -- that would loop "
+            "forever if %s",
+            what, arg, loop_tail);
+    }
+    return resolved;
+}
+
 /* Everything from policy validation through creating the symlink and
  * writing the config entry -- shared by both the "everything was already
  * given on the command line" path and the "the interactive wizard filled
@@ -181,26 +212,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
 
     char *resolved_fallback = NULL;
     if (fallback_arg) {
-        resolved_fallback = resolve_binary_arg(fallback_arg);
-        if (!resolved_fallback && force) {
-            resolved_fallback = force_resolve_binary_arg(fallback_arg);
-        }
-        if (!resolved_fallback) {
-            if (force) {
-                die("add: --force still needs a path for fallback (with a path separator), not a bare "
-                    "name -- there's nothing to resolve '%s' against if it doesn't exist "
-                    "anywhere yet",
-                    fallback_arg);
-            }
-            die("add: fallback '%s' does not exist, is not executable, or isn't on $PATH",
-                fallback_arg);
-        }
-        if (strcmp(resolved_fallback, self_exe) == 0) {
-            die("add: fallback '%s' resolves back to the shimback binary itself -- that would "
-                "loop forever if this shim were ever invoked (did it resolve via $PATH to "
-                "another shim, or to this one?)",
-                fallback_arg);
-        }
+        resolved_fallback = resolve_target_or_die(fallback_arg, "fallback", "fallback", force,
+                                                  self_exe, SHIM_LOOP_TAIL);
     } else if (fallback_args->count > 0) {
         /* --fallback-arg is meaningless without a fallback to attach it to
          * (only reachable at all with --policy rewrite, the one policy
@@ -219,26 +232,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
 
     char *resolved_source_for_check = NULL;
     if (source_arg) {
-        resolved_source_for_check = resolve_binary_arg(source_arg);
-        if (!resolved_source_for_check && force) {
-            resolved_source_for_check = force_resolve_binary_arg(source_arg);
-        }
-        if (!resolved_source_for_check) {
-            if (force) {
-                die("add: --force still needs a path for source (with a path separator), not a bare "
-                    "name -- there's nothing to resolve '%s' against if it doesn't exist "
-                    "anywhere yet",
-                    source_arg);
-            }
-            die("add: source '%s' does not exist, is not executable, or isn't on $PATH",
-                source_arg);
-        }
-        if (strcmp(resolved_source_for_check, self_exe) == 0) {
-            die("add: source '%s' resolves back to the shimback binary itself -- that would "
-                "loop forever if this shim were ever invoked (did it resolve via $PATH to "
-                "another shim, or to this one?)",
-                source_arg);
-        }
+        resolved_source_for_check = resolve_target_or_die(source_arg, "source", "source", force,
+                                                          self_exe, SHIM_LOOP_TAIL);
     } else {
         resolved_source_for_check = path_search(name, shim_dir, self_exe);
     }
@@ -261,27 +256,10 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     size_t route_count = route_match->count;
     RouteEntry *resolved_routes = route_count > 0 ? xmalloc(route_count * sizeof(RouteEntry)) : NULL;
     for (size_t i = 0; i < route_count; i++) {
-        const char *route_command_arg = route_command->items[i];
-        char *resolved_route_command = resolve_binary_arg(route_command_arg);
-        if (!resolved_route_command && force) {
-            resolved_route_command = force_resolve_binary_arg(route_command_arg);
-        }
-        if (!resolved_route_command) {
-            if (force) {
-                die("add: --force still needs a path for --route's command (with a path separator), "
-                    "not a bare name -- there's nothing to resolve '%s' against if it doesn't "
-                    "exist anywhere yet",
-                    route_command_arg);
-            }
-            die("add: --route command '%s' does not exist, is not executable, or isn't on "
-                "$PATH",
-                route_command_arg);
-        }
-        if (strcmp(resolved_route_command, self_exe) == 0) {
-            die("add: --route command '%s' resolves back to the shimback binary itself -- "
-                "that would loop forever if this route were ever triggered",
-                route_command_arg);
-        }
+        char *resolved_route_command =
+            resolve_target_or_die(route_command->items[i], "--route command",
+                                  "--route's command", force, self_exe,
+                                  "this route were ever triggered");
         resolved_routes[i].match = xstrdup(route_match->items[i]);
         resolved_routes[i].command = resolved_route_command;
         resolved_routes[i].args = NULL;
