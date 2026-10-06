@@ -219,13 +219,12 @@ static bool confirm_remove_orphan(const char *name, bool auto_yes) {
     printf("  '%s' has a real shim symlink but no configuration anywhere for it (no "
            "config.toml entry, no split config file). Remove the symlink? [y/N] ",
            name);
-    fflush(stdout);
-    char line[64];
-    if (!fgets(line, sizeof(line), stdin)) {
-        printf("\n  Leaving '%s' as-is.\n", name);
-        return false;
+    bool eof;
+    bool yes = read_yes_no(&eof);
+    if (eof) {
+        printf("  Leaving '%s' as-is.\n", name);
     }
-    return line[0] == 'y' || line[0] == 'Y';
+    return yes;
 }
 
 /* If `entry`'s fallback (or, if explicit, its source) resolves to the

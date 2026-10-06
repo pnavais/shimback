@@ -68,13 +68,7 @@ static bool confirm_create_dir(const char *dir, bool auto_yes) {
     bool colorize = stdout_is_color();
     printf("%sshimback:%s export: directory %s does not exist. Create it? [y/N] ",
            colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "", dir);
-    fflush(stdout);
-    char line[64];
-    if (!fgets(line, sizeof(line), stdin)) {
-        printf("\n");
-        return false;
-    }
-    return line[0] == 'y' || line[0] == 'Y';
+    return read_yes_no(NULL);
 }
 
 /* Resolves `-o`'s value (or, if NULL, the default backup location) to a

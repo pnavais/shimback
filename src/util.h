@@ -135,6 +135,12 @@ const char *str_casestr(const char *haystack, const char *needle);
  * no-op-shim check and in dispatch's matching runtime shortcut. */
 bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count);
 
+/* Reads the answer to a "[y/N]" prompt the caller just printed (flushing
+ * stdout first): true only for an answer starting with 'y' or 'Y'. On EOF
+ * (non-interactive stdin, Ctrl+D) prints a newline to end the prompt's
+ * line, returns false, and sets *eof if `eof` is non-NULL. */
+bool read_yes_no(bool *eof);
+
 typedef enum {
     FILE_READ_OK,
     FILE_READ_SEEK_FAILED, /* the size couldn't be determined; errno is set */

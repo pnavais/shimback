@@ -169,6 +169,20 @@ void strvec_push(StrVec *v, char *owned_str) {
     v->items[v->count++] = owned_str;
 }
 
+bool read_yes_no(bool *eof) {
+    fflush(stdout);
+    char line[64];
+    bool got = fgets(line, sizeof(line), stdin) != NULL;
+    if (eof) {
+        *eof = !got;
+    }
+    if (!got) {
+        printf("\n");
+        return false;
+    }
+    return line[0] == 'y' || line[0] == 'Y';
+}
+
 FileReadStatus read_open_file(FILE *f, char **out, size_t *out_len, long *expected_len) {
     long size = -1;
     if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0) {

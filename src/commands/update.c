@@ -209,13 +209,7 @@ static bool confirm_refresh_shims(bool auto_yes) {
         return true;
     }
     printf("Refresh them now? [y/N] ");
-    fflush(stdout);
-    char line[64];
-    if (!fgets(line, sizeof(line), stdin)) {
-        printf("\n");
-        return false;
-    }
-    return line[0] == 'y' || line[0] == 'Y';
+    return read_yes_no(NULL);
 }
 
 int cmd_update(int argc, char **argv) {
