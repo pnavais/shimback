@@ -13,9 +13,8 @@ file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SHIMBACK_VERSION LIMIT_COUNT 
 project(shimback LANGUAGES C VERSION ${SHIMBACK_VERSION})
 
 # clang-cl (targeting the MSVC ABI) is detected this way rather than by
-# CMAKE_C_COMPILER_ID alone, which is just "Clang" either way -- see
-# windows-port.md's toolchain discussion for why clang-cl was chosen over
-# MinGW-w64/plain MSVC. Not just WIN32: cross-compiling *to* Windows from
+# CMAKE_C_COMPILER_ID alone, which is just "Clang" either way -- clang-cl was
+# chosen over MinGW-w64/plain MSVC. Not just WIN32: cross-compiling *to* Windows from
 # another host is a real, intended use (see SHIMBACK_MSVC_SYSROOT below),
 # so this must not assume the host itself is Windows.
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang" AND CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
@@ -64,7 +63,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 # --- Windows (clang-cl) toolchain wiring ------------------------------------
-# See windows-port.md Phase 1. Sysroot/target-triple detection (from
+# Sysroot/target-triple detection (from
 # SHIMBACK_MSVC_SYSROOT, an xwin-splatted MSVC/Windows SDK tree -- see
 # https://github.com/Jake-Shadle/xwin) lives in cmake/windows-clang-cl.cmake,
 # a toolchain file evaluated *before* project() -- required so CMake's own
@@ -171,8 +170,8 @@ else()
   target_sources(shimback PRIVATE src/platform/platform_posix.c)
   # edit.c uses wordexp() (no Windows equivalent) and an exec-fails-in-child
   # fallback-chain idiom that needs a real PATH-search-first redesign for
-  # Windows, not a mechanical port -- deliberately deferred, see
-  # windows-port.md's Phase 0 notes. Excluded from the Windows build
+  # Windows, not a mechanical port -- deliberately deferred.
+  # Excluded from the Windows build
   # entirely rather than partially ported.
   target_sources(shimback PRIVATE src/commands/edit.c)
 endif()
@@ -192,10 +191,10 @@ if(SHIMBACK_TARGET_WINDOWS)
   # already applies them globally via CMAKE_C_FLAGS_INIT/
   # CMAKE_EXE_LINKER_FLAGS_INIT, per its own top-of-file comment.)
   target_include_directories(shimback PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/win32-compat")
-  # advapi32: registry access (cmd.exe AutoRun, HKCU\Environment\Path --
-  # Phase 5). user32: SendMessageTimeoutW, broadcasting a PATH change to
-  # already-running processes (Phase 5). psapi/kernel32's Toolhelp32
-  # snapshot functions (parent-process detection, also Phase 5) are already
+  # advapi32: registry access (cmd.exe AutoRun, HKCU\Environment\Path).
+  # user32: SendMessageTimeoutW, broadcasting a PATH change to
+  # already-running processes. psapi/kernel32's Toolhelp32
+  # snapshot functions (parent-process detection) are already
   # available via kernel32, linked by default.
   target_link_libraries(shimback PRIVATE shell32 ole32 advapi32 user32)
 endif()

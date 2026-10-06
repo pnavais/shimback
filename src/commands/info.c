@@ -279,7 +279,7 @@ static void print_symlink(const char *link_path, const char *self_exe) {
     /* A Windows shim is a hard link, not a symlink -- there's no separate
      * "raw unresolved target" to read at all (unlike a symlink, a hard
      * link just *is* the same file, so "dead"/"missing" as concepts don't
-     * carry over the same way either -- see windows-port.md Phase 3).
+     * carry over the same way either).
      * looks_like_shimback_binary() (which already checks
      * is_executable_file internally) is both the existence and validity
      * check in one, mirroring check_symlink's identical Windows branch in

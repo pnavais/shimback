@@ -462,7 +462,7 @@ static ConfigStatus read_file_into_buffer(FILE *f, const char *path, char **out,
  * `fallback = "/bin/echo" garbage` is silently accepted with the trailing
  * garbage simply ignored -- and then silently dropped for good the next
  * time shimback rewrites the file, hiding what was actually a malformed
- * line instead of rejecting it (see review.md). */
+ * line instead of rejecting it. */
 static bool no_trailing_garbage(const char *cursor) {
     skip_ws(&cursor);
     return *cursor == '\0';
@@ -779,9 +779,7 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
          * single-bracket branch below: that branch strips only one
          * trailing ']', which would otherwise leave this as
          * "[shims.<name>.routes" (leading '[' still attached) and
-         * silently misfile it as an "unknown section", not fail loudly
-         * (see review.md's history of exactly this class of silent-
-         * misparse bug for other constructs). */
+         * silently misfile it as an "unknown section", not fail loudly. */
         if (trimmed[0] == '[' && trimmed[1] == '[') {
             size_t len = strlen(trimmed);
             if (len < 4 || trimmed[len - 1] != ']' || trimmed[len - 2] != ']') {
@@ -852,7 +850,7 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                  * own directories entirely. A hand-edited config.toml
                  * with a name like this is exactly as malformed as one
                  * with broken section-header syntax, so it's rejected the
-                 * same way (see review.md). */
+                 * same way. */
                 if (!is_valid_shim_name(shim_name)) {
                     snprintf(errbuf, errbuf_size,
                              "line %d: invalid shim name '%s' in section header -- names may "
@@ -1262,7 +1260,7 @@ ConfigStatus config_save_split(const ShimEntry *entry, const char *path, char *e
 size_t remove_split_configs(const char *name) {
     /* Same reasoning as resolve_split_config_path(): callers sweeping
      * every name they can find (uninstall --full over list_shim_symlink_
-     * names(), in particular -- see review.md) can hand this an unsafe
+     * names(), in particular) can hand this an unsafe
      * name that was never validated by add.c/remove.c/config_load(). An
      * invalid name can never have a legitimate split file to remove, so
      * skip it (with a warning, since it's still worth knowing about)

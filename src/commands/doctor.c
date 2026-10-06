@@ -86,7 +86,7 @@ static void fix_symlink_if_needed(const char *shim_dir, const char *name, const 
     /* Held across the whole check-then-recreate sequence below, so a
      * concurrent `add`/`remove`/`doctor fix` racing the same symlink as
      * the same user can't land in between the check and the unlink()+
-     * create that acts on it (see review.md). shim_dir is guaranteed
+     * create that acts on it. shim_dir is guaranteed
      * to exist here -- this is only ever reached for an already-known
      * shim entry. */
     int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
@@ -98,7 +98,7 @@ static void fix_symlink_if_needed(const char *shim_dir, const char *name, const 
     }
 
 #ifdef _WIN32
-    /* No "dangling" case on Windows at all (see windows-port.md Phase 3):
+    /* No "dangling" case on Windows at all:
      * a hard link has nothing separate to go missing out from under it --
      * as long as this entry's own link exists, its file data is alive
      * regardless of what happens to self_exe's own path. "missing" is the
@@ -290,8 +290,8 @@ static void check_symlink(int *issues, const char *shim_dir, const char *name, b
 
 #ifdef _WIN32
     /* No separate "target" to resolve and check for a hard link -- its
-     * content already *is* the target's content (see windows-port.md
-     * Phase 3), so looks_like_shimback_binary() (which itself already
+     * content already *is* the target's content,
+     * so looks_like_shimback_binary() (which itself already
      * checks is_executable_file internally) is both the existence and the
      * validity check in one, unlike the POSIX branch's three separate
      * steps below. */
@@ -596,7 +596,7 @@ int cmd_doctor(int argc, char **argv) {
                  * Orphan status is re-verified fresh inside the lock
                  * before acting, since a concurrent `add` could have
                  * legitimately reclaimed this exact name while the prompt
-                 * was waiting (see review.md). */
+                 * was waiting. */
                 char *shim_file = shim_file_name(name);
                 char *link_path = path_join(shim_dir, shim_file);
                 free(shim_file);
@@ -759,8 +759,8 @@ int cmd_doctor(int argc, char **argv) {
          * config_load above -- matching the same "lock right before the
          * actual mutation" approach already used for orphan removal, not
          * the wider "lock the whole operation" one add/remove use, since
-         * doctor's own run can span an unbounded interactive prompt
-         * (see review.md). This prevents a concurrent add/remove from
+         * doctor's own run can span an unbounded interactive prompt.
+         * This prevents a concurrent add/remove from
          * racing *this* save specifically; it doesn't fully close the
          * separate, narrower risk of doctor's own in-memory `cfg` having
          * gone stale relative to a change made by something else earlier

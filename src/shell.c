@@ -168,7 +168,7 @@ static char *read_file_or_empty(const char *path) {
  * mid-line inside unrelated content (a comment, a string, a command) that
  * happens to contain the same bytes -- which could then make PATH setup
  * or uninstall treat content shimback never wrote as its own managed
- * block, and edit or delete it (see review.md). */
+ * block, and edit or delete it. */
 static const char *find_marker_line(const char *content, const char *marker) {
     size_t marker_len = strlen(marker);
     const char *p = content;
@@ -1415,7 +1415,7 @@ static bool remove_powershell(const char *tag) {
 }
 
 /* cmd.exe's AutoRun executes only the *first line* of its registry value --
- * confirmed by testing (see windows-port.md Phase 5): an embedded newline
+ * confirmed by testing: an embedded newline
  * is NOT a further command the way a batch file's lines are, so the whole
  * managed block has to be one single line, its commands chained with '&'.
  * That also rules out `rem` as a marker: REM consumes the rest of the
@@ -1476,8 +1476,8 @@ static bool find_autorun_segment(const char *content, const char *tag, const cha
  * just ends the quoted region early), so a '"' in --prefix or a shim
  * directory would let arbitrary extra commands be appended to this line
  * and run on every new cmd.exe session -- the same class of injection
- * append_sh_squoted/append_ps_squoted close for the POSIX/PowerShell cases
- * (see review.md), just with no in-band escape available here to
+ * append_sh_squoted/append_ps_squoted close for the POSIX/PowerShell cases,
+ * just with no in-band escape available here to
  * neutralize it with instead. */
 static void build_cmd_body(DynBuf *body, const StrVec *dirs) {
     for (size_t i = 0; i < dirs->count; i++) {

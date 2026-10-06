@@ -24,8 +24,7 @@
  * has no such permission for a regular file) -- X_OK degrades to "exists",
  * matching F_OK. This means is_executable_file() (paths.c) doesn't yet
  * distinguish an executable from any other existing regular file on
- * Windows -- a known, tracked gap (see windows-port.md's "File metadata /
- * perms" seam entry: Windows executability is extension-based, not
+ * Windows -- a known gap (Windows executability is extension-based, not
  * permission-bit-based, and needs its own real check, not this stand-in). */
 #define X_OK 0
 

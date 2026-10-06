@@ -274,7 +274,7 @@ bool parse_size_bytes(const char *s, size_t *out) {
          * on a 64-bit system that's frequently == SIZE_MAX, which would
          * otherwise slip straight past the multiplier-overflow check below
          * (ULLONG_MAX > SIZE_MAX / 1 is false) and get accepted as a huge,
-         * unintended capture_limit (see review.md). */
+         * unintended capture_limit. */
         return false;
     }
     const char *suffix = end;

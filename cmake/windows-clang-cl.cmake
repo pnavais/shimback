@@ -1,6 +1,5 @@
 # CMake toolchain file for building shimback on Windows with clang-cl +
-# lld-link, targeting the MSVC ABI without a full Visual Studio install --
-# see windows-port.md Phase 1 for the full toolchain discussion.
+# lld-link, targeting the MSVC ABI without a full Visual Studio install.
 #
 # Usage:
 #   cmake -S . -B build-windows -G Ninja \
@@ -83,15 +82,15 @@ if(NOT DEFINED SHIMBACK_MSVC_SYSROOT)
       "Building for Windows with clang-cl needs an xwin-splatted MSVC/Windows SDK "
       "sysroot -- pass -DSHIMBACK_MSVC_SYSROOT=<path> (or set the SHIMBACK_MSVC_SYSROOT "
       "environment variable) pointing at the architecture-specific splat root (the "
-      "directory directly containing VC/ and 'Windows Kits/'). See windows-port.md Phase 1.")
+      "directory directly containing VC/ and 'Windows Kits/').")
   endif()
 endif()
 
-# Sysroot layout, one splat per architecture (see windows-port.md Phase 1)
+# Sysroot layout, one splat per architecture
 # -- xwin's own splat layout has changed across versions, confirmed by
 # hitting both in practice, so both are supported here:
 #   New (xwin >= 0.10, confirmed via a real GitHub Actions windows-2025
-#   run -- see windows-port.md Phase 7's CI addendum): flat, no version
+#   run): flat, no version
 #   directory at all:
 #     <sysroot>/crt/{include,lib/<arch>}
 #     <sysroot>/sdk/{include,lib}/{ucrt,um,shared}[/<arch>]
@@ -170,8 +169,8 @@ set(CMAKE_EXE_LINKER_FLAGS_INIT "${SHIMBACK_WIN_LINKER_FLAGS_INIT}")
 
 # Always the release static CRT (/MT via libcmt.lib), even for a
 # CMAKE_BUILD_TYPE=Debug shimback build -- deliberate, not just the /MT-
-# for-a-single-self-contained-exe choice explained in windows-port.md Phase
-# 1: this xwin-splatted sysroot only has the release CRT import libs
+# for-a-single-self-contained-exe choice:
+# this xwin-splatted sysroot only has the release CRT import libs
 # (libcmt.lib, msvcrt.lib), not the debug ones (libcmtd.lib, msvcrtd.lib,
 # which xwin doesn't fetch by default) -- CMake's usual per-config default
 # of /MTd for a Debug build would fail to link here regardless of the /MT-

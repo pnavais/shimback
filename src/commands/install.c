@@ -315,7 +315,7 @@ int cmd_install(int argc, char **argv) {
      * anything, install used to overwrite whatever was already at `dest`
      * unconditionally -- a typo'd or shared --prefix could silently
      * replace an unrelated existing file that just happened to be named
-     * "shimback" (see review.md). Refusing here when something else is
+     * "shimback". Refusing here when something else is
      * already there costs nothing for the normal cases: a brand-new
      * install has nothing at `dest` yet, and overwriting an existing
      * shimback binary (--force) still passes this check, since that

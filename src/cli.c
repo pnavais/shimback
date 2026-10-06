@@ -10,14 +10,14 @@
 #include "version.h"
 
 #ifdef _WIN32
-/* edit.c is excluded from the Windows build entirely -- see
- * windows-port.md's Phase 0 notes (wordexp() has no Windows equivalent,
+/* edit.c is excluded from the Windows build entirely
+ * (wordexp() has no Windows equivalent,
  * and the fallback-editor chain needs a real PATH-search-first redesign,
  * not a mechanical port). */
 static int cmd_edit_unsupported(int argc, char **argv) {
     (void)argc;
     (void)argv;
-    die("edit: not yet implemented on Windows (see windows-port.md)");
+    die("edit: not yet implemented on Windows");
 }
 #define CMD_EDIT cmd_edit_unsupported
 #else

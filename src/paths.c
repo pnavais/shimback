@@ -235,8 +235,8 @@ char **list_shim_symlink_names(size_t *out_count) {
          * pre-upgrade binary invisible to list/doctor even though
          * uninstall's own sweep (also built on this same check) would
          * still recognize and clean it up, giving inconsistent answers
-         * about the same symlink depending which command asked (see
-         * review.md). See is_shim_dir_entry's own comment for how this
+         * about the same symlink depending which command asked.
+         * See is_shim_dir_entry's own comment for how this
          * recognition differs by platform (symlink+resolve on POSIX,
          * direct content-scan on Windows, since a hard link has nothing
          * separate to resolve). */
@@ -383,14 +383,14 @@ bool is_executable_file(const char *path) {
  * actually shimback's" for the same symlink -- using an exact match
  * against *this* running binary's own path in some of them and this
  * marker scan in others used to give different answers for a shim that
- * predates an upgrade or binary relocation (see review.md).
+ * predates an upgrade or binary relocation.
  *
  * Deliberately does NOT execute the candidate to ask it what it is (e.g.
  * `path --version`): a foreign executable placed at a shimback-owned
  * path can print whatever it likes -- including a convincing "shimback "
  * prefix -- while doing something else first, so running an untrusted
  * file just to decide whether to trust/delete it is itself a
- * code-execution risk, not a safety check (see review.md). A plain
+ * code-execution risk, not a safety check. A plain
  * byte-scan can still be fooled by a file that happens to embed the same
  * marker bytes, but reading them can never execute anything, which is
  * the actual property this needs.
@@ -399,7 +399,7 @@ bool is_executable_file(const char *path) {
  * -- SHIMBACK_BINARY_MARKER is a fixed public byte sequence compiled into
  * every build (readable with `strings` on any shimback binary), so
  * nothing stops a different file from embedding the same bytes and being
- * misclassified as ours (see review.md). Deliberately not hardened
+ * misclassified as ours. Deliberately not hardened
  * further than this: doing so would mean either trusting some other piece
  * of locally-writable state (an installed-binary manifest, a recorded
  * hash) that's exactly as forgeable by anything that can already write to
@@ -715,7 +715,7 @@ bool mkdir_p(const char *dir) {
  * the same one) running concurrently as the same user could interleave
  * between the check and the mutation, so the mutation ends up acting on
  * whatever a *different* concurrent command's check saw, not what this
- * one just verified (see review.md). Doesn't defend against a directory
+ * one just verified. Doesn't defend against a directory
  * writable by other users -- that's the separate, already-rejected
  * precondition checked before this is ever called -- only against two
  * same-user shimback invocations racing each other.

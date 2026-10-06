@@ -15,8 +15,8 @@ const char shimback_binary_marker[] = SHIMBACK_BINARY_MARKER;
 
 #ifdef _WIN32
 /* Every Windows executable this project produces -- shimback.exe itself
- * and every shim (a hard link named "<name>.exe", see windows-port.md
- * Phase 3) -- carries a .exe suffix that argv[0]'s basename includes but
+ * and every shim (a hard link named "<name>.exe")
+ * -- carries a .exe suffix that argv[0]'s basename includes but
  * shim names themselves (as stored in config.toml, and as compared
  * against "shimback" below) never do. Stripped once, here, at the single
  * point every dispatch decision already funnels through, rather than at

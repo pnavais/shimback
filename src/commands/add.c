@@ -241,9 +241,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     /* Each route's command gets the same resolution treatment source/
      * fallback already get above -- it shouldn't be exempt from the
      * existence/executable checks everything else gets just because
-     * there can be more than one of them (see review.md's own note, from
-     * the split-config work, about not letting a new kind of target skip
-     * checks an old one already has to pass). --route <match>=<command>
+     * there can be more than one of them (a new kind of target mustn't
+     * skip checks an old one already has to pass). --route <match>=<command>
      * always pushes one match and one command together (see cmd_add and
      * the wizard's route flow), so the two lists staying the same length
      * is a construction invariant, not something callers need to enforce
@@ -286,7 +285,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * the config is safely saved.
      *
      * shim_file_name() appends ".exe" on Windows -- shims are hard links
-     * there (see windows-port.md Phase 3), and cmd.exe/PowerShell only
+     * there, and cmd.exe/PowerShell only
      * resolve a bare command name against a PATHEXT-listed extension. */
     char *shim_file = shim_file_name(name);
     char *symlink_path = path_join(shim_dir, shim_file);
@@ -298,8 +297,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
          * -- an exact self_exe match here used to refuse to update a shim
          * created by an older or relocated shimback binary even though
          * it's still genuinely shimback's, and disagreed with uninstall's
-         * own (marker-based) recognition of the very same link (see
-         * review.md). On Windows this is also the *only* signal available
+         * own (marker-based) recognition of the very same link.
+         * On Windows this is also the *only* signal available
          * at all (a hard link has no distinct file type to check, unlike
          * a POSIX symlink) -- see is_shim_dir_entry's own comment. */
         if (!is_shim_dir_entry(symlink_path)) {
@@ -314,8 +313,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
          * that anyone besides its owner can write into would let a
          * concurrent process swap symlink_path for something else in that
          * window, so the later rename() would silently replace whatever
-         * got swapped in, not what was actually just checked (see
-         * review.md). Refusing outright when the directory isn't
+         * got swapped in, not what was actually just checked.
+         * Refusing outright when the directory isn't
          * owner-only-writable is the "at minimum" bar for this: it can't
          * close the window by itself (a single-writer directory still has
          * one), but it rules out the actual precondition the race needs
@@ -358,7 +357,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * their own in-memory copy, and atomically save it, with the second
      * save silently discarding whatever the first one added or removed
      * (a lost update) -- and the same for the shell startup file's own
-     * read-merge-write cycle in shell_ensure_path (see review.md). This
+     * read-merge-write cycle in shell_ensure_path. This
      * reuses the same lock the original TOCTOU fix introduced, widened
      * to serialize the whole operation against a concurrent
      * add/remove/doctor fix, not just the one narrow symlink-swap race
@@ -440,7 +439,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * don't happen to catch (e.g. two identical --route entries) is
      * rejected right now with a clear error, instead of being silently
      * written to config.toml and only discovered the next time something
-     * else reloads it (see review.md-style reasoning: exactly this kind
+     * else reloads it (exactly this kind
      * of gap is worth closing generally, not per-policy). */
     if (validate_shim_entry(entry, errbuf, sizeof(errbuf)) != CONFIG_OK) {
         die("add: %s", errbuf);
@@ -459,7 +458,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * so a failure anywhere below -- including in config_save/mkdir_p/the
      * symlink step, all of which run after these writes -- can restore the
      * previous, still-valid content instead of leaving it destroyed by a
-     * command that itself reported failure (see review.md). */
+     * command that itself reported failure. */
     char *split_target_path = NULL;
     char *split_backup_path = NULL;
     if (split_config) {
@@ -541,7 +540,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
          * rename() gets to closing the TOCTOU window from the ownership
          * check above, shrinking it from "however long config I/O took"
          * down to the handful of syscalls between here and rename()
-         * itself (see review.md). */
+         * itself. */
         if (!is_shim_dir_entry(symlink_path)) {
             unlink(tmp_link);
             rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,

@@ -231,7 +231,7 @@ ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size
  * ...) -- exposed so a command that builds/mutates a ShimEntry in memory
  * (add.c's finish_add) can run the same check before writing it to disk,
  * instead of only finding out the config is invalid the next time
- * something reloads it (see review.md-style reasoning: a gap here once
+ * something reloads it (a gap here once
  * already let `add` write a config that every other command then refused
  * to load). */
 ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t errbuf_size);

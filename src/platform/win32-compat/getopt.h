@@ -5,9 +5,8 @@
  * clang-cl compiles against have no getopt of any kind, unlike glibc/
  * Darwin's libc on the platforms this project already supports. Vendored
  * rather than assumed, since this is the one CLI-parsing primitive with no
- * Windows SDK equivalent at all (see windows-port.md's toolchain
- * discussion). Only this directory is added to the include path, and only
- * for WIN32 builds (see CMakeLists.txt), so a plain `#include <getopt.h>`
+ * Windows SDK equivalent at all. Only this directory is added to the
+ * include path, and only for WIN32 builds (see CMakeLists.txt), so a plain `#include <getopt.h>`
  * in the existing source files resolves here automatically with no source
  * changes needed, and this header can never shadow a real system one on
  * macOS/Linux.

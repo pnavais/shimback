@@ -40,7 +40,7 @@
  * POSIX process-management primitive (needs pid_t, which doesn't exist on
  * Windows at all), not a portable utility -- moved here, with an explicit
  * prototype in edit.c (its one remaining external caller, itself deferred
- * from the Windows build -- see windows-port.md), when util.h's own
+ * from the Windows build), when util.h's own
  * unconditional `pid_t` dependency turned out to make that header
  * uncompilable on Windows regardless of whether anything there actually
  * called this. */
@@ -510,7 +510,7 @@ bool plat_read_stdin_byte(char *out) {
     return n == 1;
 }
 
-/* --- Shell/PATH integration (Phase 5) -------------------------------- */
+/* --- Shell/PATH integration -------------------------------- */
 /* All five of these are Windows-only concepts (a "Documents" special
  * folder, parent-process detection in lieu of $SHELL, cmd.exe's AutoRun
  * registry hook, and the HKCU\Environment\Path persistent-PATH registry

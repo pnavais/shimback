@@ -54,7 +54,7 @@ static char *wide_to_utf8(const wchar_t *w) {
     return s;
 }
 
-/* --- Process spawn (Phase 2) ----------------------------------------------
+/* --- Process spawn ----------------------------------------------
  * CreateProcessW + GetExitCodeProcess replace fork/execv/waitpid. Windows
  * has no fork()-then-exec() split -- CreateProcessW does both atomically --
  * so the POSIX "fork failed" (die-worthy, -1) vs. "execv failed in the
@@ -779,7 +779,7 @@ bool plat_isatty_stderr(void) {
     return _isatty(_fileno(stderr)) != 0;
 }
 
-/* --- Terminal raw mode (Phase 6) --------------------------------------
+/* --- Terminal raw mode --------------------------------------
  * GetConsoleMode/SetConsoleMode replace termios; tui_read_key()'s escape-
  * sequence parsing itself is portable as-is (see platform.h) -- these four
  * just need to feed it the same byte stream a real POSIX terminal would.
@@ -969,7 +969,7 @@ bool plat_read_stdin_byte(char *out) {
     return true;
 }
 
-/* --- ANSI/VT output (Phase 6) ------------------------------------------
+/* --- ANSI/VT output ------------------------------------------
  * Modern Windows consoles (10+) and Windows Terminal understand the same
  * ANSI escape sequences already used throughout this codebase for color
  * (util.c's ANSI_* constants) and the add wizard's cursor movement/clear-
@@ -1067,7 +1067,7 @@ char *plat_realpath(const char *path) {
     return result;
 }
 
-/* --- Shell/PATH integration (Phase 5) -------------------------------- */
+/* --- Shell/PATH integration -------------------------------- */
 
 char *plat_documents_dir(void) {
     PWSTR known_path = NULL;

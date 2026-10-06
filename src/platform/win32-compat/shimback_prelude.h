@@ -15,8 +15,8 @@
  * call site in this codebase (paths.c, several files under commands)
  * compiles unchanged once these exist. No S_ISLNK: Windows hard links have no
  * distinct file-type bit to check that way at all -- every S_ISLNK call
- * site is part of the Phase 3-deferred symlink/hard-link work (see
- * windows-port.md) and isn't expected to compile on Windows yet regardless. */
+ * site is POSIX-only code; Windows recognizes hard links by content
+ * instead (see is_shim_dir_entry in paths.c). */
 #include <sys/stat.h>
 #ifndef S_ISREG
 #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
