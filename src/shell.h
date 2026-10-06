@@ -5,6 +5,12 @@
 
 #include "util.h"
 
+/* The marker tag of the one PATH block add/init/install all merge their
+ * directories into, and the separate tag install used before that merge
+ * existed (still removed/migrated wherever a block may linger). */
+#define SHELL_BLOCK_TAG "shimback"
+#define SHELL_LEGACY_BLOCK_TAG "shimback-bin"
+
 typedef enum {
     SHELL_ZSH,
     SHELL_BASH,

@@ -72,8 +72,6 @@ char *xdg_data_home(void) {
     return xdg_env("XDG_DATA_HOME");
 }
 
-static bool path_is_dir(const char *path);
-
 #ifdef _WIN32
 /* Windows-only fallback used when no XDG_*_HOME override is set. Prefers
  * the same ".config"/".local/share" (under %USERPROFILE%) layout macOS/
@@ -237,8 +235,8 @@ char **list_shim_symlink_names(size_t *out_count) {
          * pre-upgrade binary invisible to list/doctor even though
          * uninstall's own sweep (also built on this same check) would
          * still recognize and clean it up, giving inconsistent answers
-         * about the same symlink depending which command asked (see
-         * review.md). See is_shim_dir_entry's own comment for how this
+         * about the same symlink depending which command asked.
+         * See is_shim_dir_entry's own comment for how this
          * recognition differs by platform (symlink+resolve on POSIX,
          * direct content-scan on Windows, since a hard link has nothing
          * separate to resolve). */
@@ -334,19 +332,24 @@ char *self_exe_path(void) {
     return plat_self_exe_path();
 }
 
+const char *path_basename(const char *path) {
+    const char *base = path;
+    for (const char *p = path; *p; p++) {
+        if (is_path_sep(*p)) {
+            base = p + 1;
+        }
+    }
+    return base;
+}
+
 char *dir_of(const char *path) {
-    const char *slash = strrchr(path, '/');
-    if (!slash) {
+    const char *base = path_basename(path);
+    if (base == path) {
         return xstrdup(".");
     }
-    if (slash == path) {
-        return xstrdup("/");
-    }
-    size_t len = (size_t)(slash - path);
-    char *result = xmalloc(len + 1);
-    memcpy(result, path, len);
-    result[len] = '\0';
-    return result;
+    size_t len = (size_t)(base - path - 1);
+    /* A lone leading separator is the root itself, not an empty dir. */
+    return xstrndup(path, len == 0 ? 1 : len);
 }
 
 bool is_executable_file(const char *path) {
@@ -380,14 +383,14 @@ bool is_executable_file(const char *path) {
  * actually shimback's" for the same symlink -- using an exact match
  * against *this* running binary's own path in some of them and this
  * marker scan in others used to give different answers for a shim that
- * predates an upgrade or binary relocation (see review.md).
+ * predates an upgrade or binary relocation.
  *
  * Deliberately does NOT execute the candidate to ask it what it is (e.g.
  * `path --version`): a foreign executable placed at a shimback-owned
  * path can print whatever it likes -- including a convincing "shimback "
  * prefix -- while doing something else first, so running an untrusted
  * file just to decide whether to trust/delete it is itself a
- * code-execution risk, not a safety check (see review.md). A plain
+ * code-execution risk, not a safety check. A plain
  * byte-scan can still be fooled by a file that happens to embed the same
  * marker bytes, but reading them can never execute anything, which is
  * the actual property this needs.
@@ -396,7 +399,7 @@ bool is_executable_file(const char *path) {
  * -- SHIMBACK_BINARY_MARKER is a fixed public byte sequence compiled into
  * every build (readable with `strings` on any shimback binary), so
  * nothing stops a different file from embedding the same bytes and being
- * misclassified as ours (see review.md). Deliberately not hardened
+ * misclassified as ours. Deliberately not hardened
  * further than this: doing so would mean either trusting some other piece
  * of locally-writable state (an installed-binary manifest, a recorded
  * hash) that's exactly as forgeable by anything that can already write to
@@ -618,7 +621,7 @@ bool copy_file(const char *src, const char *dst) {
  * silently treated as already set up, and the real failure would only
  * surface later, far from here, as a confusing ENOTDIR trying to create
  * something *inside* what everyone assumed was a directory. */
-static bool path_is_dir(const char *path) {
+bool path_is_dir(const char *path) {
     struct stat st;
     return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
@@ -633,7 +636,7 @@ static bool path_is_dir(const char *path) {
  * (unlike this function) never creates more than one missing level at a
  * time and fails with ENOENT -- found exactly this way, via a Pester test
  * whose sandbox path was built with Join-Path. */
-static bool is_path_sep(char c) {
+bool is_path_sep(char c) {
 #ifdef _WIN32
     return c == '/' || c == '\\';
 #else
@@ -647,6 +650,24 @@ bool mkdir_p(const char *dir) {
     if (len == 0) {
         free(copy);
         return false;
+    }
+    /* The root prefix: "/", or on Windows "C:" plus its separator if any. */
+    size_t root_len = 0;
+#ifdef _WIN32
+    if (len >= 2 && copy[1] == ':') {
+        root_len = 2;
+    }
+#endif
+    if (is_path_sep(copy[root_len])) {
+        root_len++;
+    }
+    /* A root always exists and can never be mkdir'd: just check it. Bare
+     * "C:" is checked as "C:/" -- see the drive-root note below. */
+    if (len <= root_len || (len == 2 && root_len == 2)) {
+        char root[4] = {copy[0], copy[1], '/', '\0'};
+        bool ok = path_is_dir(root_len == 1 ? "/" : root);
+        free(copy);
+        return ok;
     }
     /* Strip a trailing separator so we don't try to mkdir an empty final segment. */
     if (is_path_sep(copy[len - 1])) {
@@ -712,7 +733,7 @@ bool mkdir_p(const char *dir) {
  * the same one) running concurrently as the same user could interleave
  * between the check and the mutation, so the mutation ends up acting on
  * whatever a *different* concurrent command's check saw, not what this
- * one just verified (see review.md). Doesn't defend against a directory
+ * one just verified. Doesn't defend against a directory
  * writable by other users -- that's the separate, already-rejected
  * precondition checked before this is ever called -- only against two
  * same-user shimback invocations racing each other.

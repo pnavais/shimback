@@ -26,79 +26,29 @@ static const char *USAGE = "usage: shimback export [-o|--output <path>] [-y|--ye
 
 /* Reads the whole file at `path` into a newly allocated, NUL-terminated
  * buffer; *out_len receives its length (not counting the NUL). Returns
- * false on any I/O failure, leaving *out and *out_len untouched -- own
- * small copy of this project's existing read-file-into-memory pattern
- * (config.c's read_file_into_buffer, shell.c's read_file_or_empty are
- * each private to their own file the same way). */
+ * false on any I/O failure, leaving *out untouched. */
 static bool read_whole_file(const char *path, char **out, size_t *out_len) {
     FILE *f = plat_fopen(path, "rb");
     if (!f) {
         return false;
     }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        return false;
-    }
-    long size = ftell(f);
-    if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return false;
-    }
-    char *buf = xmalloc((size_t)size + 1);
-    size_t n = fread(buf, 1, (size_t)size, f);
-    fclose(f);
-    if (n != (size_t)size) {
-        free(buf);
-        return false;
-    }
-    buf[size] = '\0';
-    *out = buf;
-    *out_len = (size_t)size;
-    return true;
+    long size;
+    return read_open_file(f, out, out_len, &size) == FILE_READ_OK;
 }
 
-/* True if `path` ends in a path separator ('/' always; also '\' on
- * Windows) -- mirrors paths.c's own is_path_sep()/mkdir_p reasoning
- * (that one's static to paths.c; this is export.c's own narrow use of
- * the same idea, only for the -o directory-vs-file disambiguation
- * below). */
+/* True if `path` ends in a path separator -- the -o directory-vs-file
+ * disambiguation below. */
 static bool ends_with_sep(const char *path) {
     size_t len = strlen(path);
-    if (len == 0) {
-        return false;
-    }
-    char c = path[len - 1];
-#ifdef _WIN32
-    return c == '/' || c == '\\';
-#else
-    return c == '/';
-#endif
+    return len > 0 && is_path_sep(path[len - 1]);
 }
 
 /* Splits `path` into its directory and filename components purely
- * lexically (no existence check, no symlink resolution) -- like
- * paths.h's force_resolve_binary_arg, not canonicalize(). `path` itself
+ * lexically (no existence check, no symlink resolution). `path` itself
  * is not required to exist. */
 static void split_dir_name(const char *path, char **out_dir, char **out_name) {
-    const char *slash = strrchr(path, '/');
-#ifdef _WIN32
-    const char *backslash = strrchr(path, '\\');
-    if (backslash && (!slash || backslash > slash)) {
-        slash = backslash;
-    }
-#endif
-    if (slash) {
-        *out_dir = xstrndup(path, (size_t)(slash - path));
-        *out_name = xstrdup(slash + 1);
-    } else {
-        *out_dir = xstrdup(".");
-        *out_name = xstrdup(path);
-    }
-}
-
-static bool is_existing_dir(const char *path) {
-    struct stat st;
-    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+    *out_dir = dir_of(path);
+    *out_name = xstrdup(path_basename(path));
 }
 
 static bool path_exists(const char *path) {
@@ -118,13 +68,7 @@ static bool confirm_create_dir(const char *dir, bool auto_yes) {
     bool colorize = stdout_is_color();
     printf("%sshimback:%s export: directory %s does not exist. Create it? [y/N] ",
            colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "", dir);
-    fflush(stdout);
-    char line[64];
-    if (!fgets(line, sizeof(line), stdin)) {
-        printf("\n");
-        return false;
-    }
-    return line[0] == 'y' || line[0] == 'Y';
+    return read_yes_no(NULL);
 }
 
 /* Resolves `-o`'s value (or, if NULL, the default backup location) to a
@@ -146,7 +90,7 @@ static void resolve_target(const char *output_arg, const char *effective_dir,
     if (!output_arg) {
         dir = xstrdup(effective_dir);
         name = xstrdup(default_name);
-    } else if (is_existing_dir(output_arg)) {
+    } else if (path_is_dir(output_arg)) {
         dir = xstrdup(output_arg);
         name = xstrdup(default_name);
     } else if (path_exists(output_arg)) {
@@ -157,7 +101,7 @@ static void resolve_target(const char *output_arg, const char *effective_dir,
         needs_prompt = true;
     } else {
         split_dir_name(output_arg, &dir, &name);
-        needs_prompt = !is_existing_dir(dir);
+        needs_prompt = !path_is_dir(dir);
     }
 
     if (needs_prompt) {

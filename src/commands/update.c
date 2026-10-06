@@ -107,7 +107,7 @@ static char *binary_version(const char *binary) {
  * platform.h), so this specific defense is a known gap there for now; the
  * scratch directory is exclusively created and populated by this same
  * update flow, not attacker-influenced, which is why that gap is
- * acceptable to leave open rather than block Phase 1 on closing it. */
+ * acceptable to leave open rather than block on closing it. */
 static void rmtree(const char *path) {
     if (plat_path_is_symlink(path)) {
         unlink(path);
@@ -209,13 +209,7 @@ static bool confirm_refresh_shims(bool auto_yes) {
         return true;
     }
     printf("Refresh them now? [y/N] ");
-    fflush(stdout);
-    char line[64];
-    if (!fgets(line, sizeof(line), stdin)) {
-        printf("\n");
-        return false;
-    }
-    return line[0] == 'y' || line[0] == 'Y';
+    return read_yes_no(NULL);
 }
 
 int cmd_update(int argc, char **argv) {
@@ -474,8 +468,8 @@ int cmd_update(int argc, char **argv) {
      * that old file once copy_executable()'s own atomic rename swaps a
      * new one into inst->binary's place, and a copy-fallback shim
      * (create_shim_link(), used when a hard link couldn't be made at all
-     * -- different drives) never shared data with it in the first place
-     * (see windows-port.md's Phase 3/6 notes). Comparing each shim's own
+     * -- different drives) never shared data with it in the first place.
+     * Comparing each shim's own
      * content hash against the binary just installed catches both cases
      * uniformly, and is naturally a no-op on POSIX, where shims are
      * symlinks that always resolve to whatever's at inst->binary *now* --

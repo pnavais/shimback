@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -18,14 +19,21 @@ bool stderr_is_color(void) {
     return !plat_getenv("NO_COLOR") && plat_isatty_stderr();
 }
 
+/* "shimback: <msg>\n" on `f`, the prefix colored when `colorize`, and the
+ * message body also wrapped in `body_color` when that's non-NULL. */
+static void vemit(FILE *f, bool colorize, const char *body_color, const char *fmt, va_list ap) {
+    bool color_body = colorize && body_color;
+    fprintf(f, "%sshimback:%s %s", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "",
+            color_body ? body_color : "");
+    vfprintf(f, fmt, ap);
+    fprintf(f, "%s\n", color_body ? ANSI_RESET : "");
+}
+
 void info(const char *fmt, ...) {
-    bool colorize = stdout_is_color();
     va_list ap;
-    printf("%sshimback:%s ", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "");
     va_start(ap, fmt);
-    vprintf(fmt, ap);
+    vemit(stdout, stdout_is_color(), NULL, fmt, ap);
     va_end(ap);
-    printf("\n");
 }
 
 void recommend(const char *fmt, ...) {
@@ -38,36 +46,26 @@ void recommend(const char *fmt, ...) {
     printf("%s\n", colorize ? ANSI_RESET : "");
 }
 
-void die(const char *fmt, ...) {
-    bool colorize = stderr_is_color();
+_Noreturn void die(const char *fmt, ...) {
     va_list ap;
-    fprintf(stderr, "%sshimback:%s ", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "");
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vemit(stderr, stderr_is_color(), NULL, fmt, ap);
     va_end(ap);
-    fprintf(stderr, "\n");
     exit(1);
 }
 
 void warn_colored(const char *color, const char *fmt, ...) {
-    bool colorize = stderr_is_color();
     va_list ap;
-    fprintf(stderr, "%sshimback:%s %s", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "",
-            colorize ? color : "");
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vemit(stderr, stderr_is_color(), color, fmt, ap);
     va_end(ap);
-    fprintf(stderr, "%s\n", colorize ? ANSI_RESET : "");
 }
 
 void warn(const char *fmt, ...) {
-    bool colorize = stderr_is_color();
     va_list ap;
-    fprintf(stderr, "%sshimback:%s ", colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "");
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vemit(stderr, stderr_is_color(), NULL, fmt, ap);
     va_end(ap);
-    fprintf(stderr, "\n");
 }
 
 void *xmalloc(size_t size) {
@@ -168,11 +166,52 @@ void strvec_push(StrVec *v, char *owned_str) {
     v->items[v->count++] = owned_str;
 }
 
-void strvec_free(StrVec *v) {
-    for (size_t i = 0; i < v->count; i++) {
-        free(v->items[i]);
+bool read_yes_no(bool *eof) {
+    fflush(stdout);
+    char line[64];
+    bool got = fgets(line, sizeof(line), stdin) != NULL;
+    if (eof) {
+        *eof = !got;
     }
-    free(v->items);
+    if (!got) {
+        printf("\n");
+        return false;
+    }
+    return line[0] == 'y' || line[0] == 'Y';
+}
+
+FileReadStatus read_open_file(FILE *f, char **out, size_t *out_len, long *expected_len) {
+    long size = -1;
+    if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0) {
+        int saved_errno = errno;
+        fclose(f);
+        errno = saved_errno;
+        return FILE_READ_SEEK_FAILED;
+    }
+    char *buf = xmalloc((size_t)size + 1);
+    size_t n = fread(buf, 1, (size_t)size, f);
+    bool read_error = ferror(f) || n != (size_t)size;
+    fclose(f);
+    *out_len = n;
+    *expected_len = size;
+    if (read_error) {
+        free(buf);
+        return FILE_READ_SHORT;
+    }
+    buf[n] = '\0';
+    *out = buf;
+    return FILE_READ_OK;
+}
+
+void str_array_free(char **a, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        free(a[i]);
+    }
+    free(a);
+}
+
+void strvec_free(StrVec *v) {
+    str_array_free(v->items, v->count);
     v->items = NULL;
     v->count = 0;
     v->cap = 0;
@@ -209,6 +248,20 @@ bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count
     return true;
 }
 
+bool parse_nonneg_int(const char *s, int *out) {
+    if (s[0] == '\0') {
+        return false;
+    }
+    errno = 0;
+    char *end;
+    long v = strtol(s, &end, 10);
+    if (*end != '\0' || errno == ERANGE || v < 0 || v > INT_MAX) {
+        return false;
+    }
+    *out = (int)v;
+    return true;
+}
+
 bool parse_size_bytes(const char *s, size_t *out) {
     if (s[0] == '\0' || !isdigit((unsigned char)s[0])) {
         return false;
@@ -221,7 +274,7 @@ bool parse_size_bytes(const char *s, size_t *out) {
          * on a 64-bit system that's frequently == SIZE_MAX, which would
          * otherwise slip straight past the multiplier-overflow check below
          * (ULLONG_MAX > SIZE_MAX / 1 is false) and get accepted as a huge,
-         * unintended capture_limit (see review.md). */
+         * unintended capture_limit. */
         return false;
     }
     const char *suffix = end;

@@ -46,7 +46,7 @@ int cmd_remove(int argc, char **argv) {
      * resolve_split_config_path/remove_split_configs, both below) with
      * '/'/'..' components still active, e.g. "remove ../../../victim"
      * deleting a "victim-config.toml" outside shimback's own directories
-     * entirely wherever that path happens to land (see review.md).
+     * entirely wherever that path happens to land.
      * split_config_filename() now also refuses an invalid name itself as
      * a last resort, but that's a die()-hard programming-error check, not
      * a friendly one -- this is the actual, clean rejection for ordinary
@@ -65,7 +65,7 @@ int cmd_remove(int argc, char **argv) {
      * old config.toml before either saves, so whichever one saves last
      * would silently discard whatever the other one changed (a lost
      * update), on top of the original symlink check-then-unlink race this
-     * lock was first introduced for (see review.md). Only meaningful if
+     * lock was first introduced for. Only meaningful if
      * shim_dir already exists; if it doesn't, there's nothing to lock,
      * remove, or lose an update to either way. */
     int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
@@ -117,7 +117,7 @@ int cmd_remove(int argc, char **argv) {
         }
 
         if (!config_find(&cfg, name) && !has_split_entry) {
-            fprintf(stderr, "shimback: remove: no shim configured for '%s'\n", name);
+            warn("remove: no shim configured for '%s'", name);
             if (candidates) {
                 char *hint = fuzzy_suggest(name, candidates, cfg.count);
                 if (hint) {
@@ -148,7 +148,7 @@ int cmd_remove(int argc, char **argv) {
      * config still describes the shim as configured. is_shim_dir_entry()
      * recognizes any shimback build/install location as ours, not just
      * this exact running binary's own path -- see the matching comment in
-     * add.c and review.md. */
+     * add.c. */
     bool have_managed_symlink = false;
     if (access(symlink_path, F_OK) == 0) {
         if (is_shim_dir_entry(symlink_path)) {

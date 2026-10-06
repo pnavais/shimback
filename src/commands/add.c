@@ -5,7 +5,6 @@
 
 #include <errno.h>
 #include <getopt.h>
-#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -132,9 +131,14 @@ static void discard_backup(const char *backup_path) {
  * config file from their backups, then dies with the given message --
  * shared by every failure point after either file has been overwritten, so
  * none of them can forget to roll back before exiting. */
-static void rollback_and_die(const char *cfg_path, const char *cfg_backup_path,
-                              const char *split_target_path, const char *split_backup_path,
-                              const char *fmt, ...) {
+_Noreturn static void rollback_and_die(const char *cfg_path, const char *cfg_backup_path,
+                                        const char *split_target_path,
+                                        const char *split_backup_path, const char *fmt, ...)
+    SHIMBACK_PRINTF(5, 6);
+
+_Noreturn static void rollback_and_die(const char *cfg_path, const char *cfg_backup_path,
+                                        const char *split_target_path,
+                                        const char *split_backup_path, const char *fmt, ...) {
     restore_from_backup(cfg_path, cfg_backup_path);
     if (split_target_path) {
         restore_from_backup(split_target_path, split_backup_path);
@@ -147,49 +151,63 @@ static void rollback_and_die(const char *cfg_path, const char *cfg_backup_path,
     die("%s", msg);
 }
 
+/* Replaces the string array at `*dst` (of `*dst_count` items) with `src`'s
+ * items, taking ownership of them; `src` must not be freed afterwards. */
+static void take_strvec(char ***dst, size_t *dst_count, StrVec *src) {
+    str_array_free(*dst, *dst_count);
+    *dst = src->items;
+    *dst_count = src->count;
+}
+
+#define SHIM_LOOP_TAIL                                                                     \
+    "this shim were ever invoked (did it resolve via $PATH to another shim, or to this one?)"
+
+/* Resolves the binary argument `arg` (the shim's `what`: "source",
+ * "fallback", "--route command") the way add stores it -- or, with
+ * --force, accepts a path that doesn't exist yet -- dying if it can't be
+ * resolved or resolves back to shimback itself, which would loop forever
+ * if `loop_tail` happened. Newly allocated. */
+static char *resolve_target_or_die(const char *arg, const char *what, const char *force_what,
+                                   bool force, const char *self_exe, const char *loop_tail) {
+    char *resolved = resolve_binary_arg(arg);
+    if (!resolved && force) {
+        resolved = force_resolve_binary_arg(arg);
+    }
+    if (!resolved) {
+        if (force) {
+            die("add: --force still needs a path for %s (with a path separator), not a bare "
+                "name -- there's nothing to resolve '%s' against if it doesn't exist anywhere "
+                "yet",
+                force_what, arg);
+        }
+        die("add: %s '%s' does not exist, is not executable, or isn't on $PATH", what, arg);
+    }
+    if (strcmp(resolved, self_exe) == 0) {
+        die("add: %s '%s' resolves back to the shimback binary itself -- that would loop "
+            "forever if %s",
+            what, arg, loop_tail);
+    }
+    return resolved;
+}
+
 /* Everything from policy validation through creating the symlink and
  * writing the config entry -- shared by both the "everything was already
  * given on the command line" path and the "the interactive wizard filled
  * in what was missing" path, so the two can never drift apart. */
-static int finish_add(const char *name, const char *source_arg, StrVec *source_args,
-                       const char *fallback_arg, StrVec *fallback_args, Policy policy,
-                       StrVec *patterns, int *exit_codes, size_t exit_code_count,
-                       StrVec *route_args, bool strip_matched_args, StrVec *split_source_args,
-                       StrVec *split_fallback_args, StrVec *rewrite_from, StrVec *rewrite_to,
-                       StrVec *route_match, StrVec *route_command, bool diagnostic, bool force,
-                       bool verbose, bool capture_timeout_set, int capture_timeout_ms,
-                       bool capture_limit_set, size_t capture_limit_bytes, bool split_config) {
-    if (!is_valid_shim_name(name)) {
+static int finish_add(AddRequest *req) {
+    if (!is_valid_shim_name(req->name)) {
         die("add: invalid shim name '%s' -- names may only contain letters, digits, '.', '_', "
             "'+', and '-'",
-            name);
+            req->name);
     }
 
     char *self_exe = self_exe_path();
 
     char *resolved_fallback = NULL;
-    if (fallback_arg) {
-        resolved_fallback = resolve_binary_arg(fallback_arg);
-        if (!resolved_fallback && force) {
-            resolved_fallback = force_resolve_binary_arg(fallback_arg);
-        }
-        if (!resolved_fallback) {
-            if (force) {
-                die("add: --force still needs a path for fallback (with a path separator), not a bare "
-                    "name -- there's nothing to resolve '%s' against if it doesn't exist "
-                    "anywhere yet",
-                    fallback_arg);
-            }
-            die("add: fallback '%s' does not exist, is not executable, or isn't on $PATH",
-                fallback_arg);
-        }
-        if (strcmp(resolved_fallback, self_exe) == 0) {
-            die("add: fallback '%s' resolves back to the shimback binary itself -- that would "
-                "loop forever if this shim were ever invoked (did it resolve via $PATH to "
-                "another shim, or to this one?)",
-                fallback_arg);
-        }
-    } else if (fallback_args->count > 0) {
+    if (req->fallback_arg) {
+        resolved_fallback = resolve_target_or_die(req->fallback_arg, "fallback", "fallback",
+                                                  req->force, self_exe, SHIM_LOOP_TAIL);
+    } else if (req->fallback_args.count > 0) {
         /* --fallback-arg is meaningless without a fallback to attach it to
          * (only reachable at all with --policy rewrite, the one policy
          * where -f/--fallback is optional) -- warn and discard rather than
@@ -199,78 +217,42 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         fprintf(stderr,
                 "%sshimback: --fallback-arg given without a fallback -- discarding it%s\n",
                 colorize ? ANSI_YELLOW : "", colorize ? ANSI_RESET : "");
-        strvec_free(fallback_args);
-        strvec_init(fallback_args);
+        strvec_free(&req->fallback_args);
+        strvec_init(&req->fallback_args);
     }
 
     char *shim_dir = shim_bin_dir();
 
     char *resolved_source_for_check = NULL;
-    if (source_arg) {
-        resolved_source_for_check = resolve_binary_arg(source_arg);
-        if (!resolved_source_for_check && force) {
-            resolved_source_for_check = force_resolve_binary_arg(source_arg);
-        }
-        if (!resolved_source_for_check) {
-            if (force) {
-                die("add: --force still needs a path for source (with a path separator), not a bare "
-                    "name -- there's nothing to resolve '%s' against if it doesn't exist "
-                    "anywhere yet",
-                    source_arg);
-            }
-            die("add: source '%s' does not exist, is not executable, or isn't on $PATH",
-                source_arg);
-        }
-        if (strcmp(resolved_source_for_check, self_exe) == 0) {
-            die("add: source '%s' resolves back to the shimback binary itself -- that would "
-                "loop forever if this shim were ever invoked (did it resolve via $PATH to "
-                "another shim, or to this one?)",
-                source_arg);
-        }
+    if (req->source_arg) {
+        resolved_source_for_check = resolve_target_or_die(req->source_arg, "source", "source",
+                                                          req->force, self_exe, SHIM_LOOP_TAIL);
     } else {
-        resolved_source_for_check = path_search(name, shim_dir, self_exe);
+        resolved_source_for_check = path_search(req->name, shim_dir, self_exe);
     }
 
     /* Each route's command gets the same resolution treatment source/
      * fallback already get above -- it shouldn't be exempt from the
      * existence/executable checks everything else gets just because
-     * there can be more than one of them (see review.md's own note, from
-     * the split-config work, about not letting a new kind of target skip
-     * checks an old one already has to pass). --route <match>=<command>
+     * there can be more than one of them (a new kind of target mustn't
+     * skip checks an old one already has to pass). --route <match>=<command>
      * always pushes one match and one command together (see cmd_add and
      * the wizard's route flow), so the two lists staying the same length
      * is a construction invariant, not something callers need to enforce
      * -- checked here anyway as a cheap defense against that invariant
      * ever accidentally breaking. */
-    if (route_match->count != route_command->count) {
+    if (req->route_match.count != req->route_command.count) {
         die("add: internal error: %zu route match(es) but %zu route command(s)",
-            route_match->count, route_command->count);
+            req->route_match.count, req->route_command.count);
     }
-    size_t route_count = route_match->count;
+    size_t route_count = req->route_match.count;
     RouteEntry *resolved_routes = route_count > 0 ? xmalloc(route_count * sizeof(RouteEntry)) : NULL;
     for (size_t i = 0; i < route_count; i++) {
-        const char *route_command_arg = route_command->items[i];
-        char *resolved_route_command = resolve_binary_arg(route_command_arg);
-        if (!resolved_route_command && force) {
-            resolved_route_command = force_resolve_binary_arg(route_command_arg);
-        }
-        if (!resolved_route_command) {
-            if (force) {
-                die("add: --force still needs a path for --route's command (with a path separator), "
-                    "not a bare name -- there's nothing to resolve '%s' against if it doesn't "
-                    "exist anywhere yet",
-                    route_command_arg);
-            }
-            die("add: --route command '%s' does not exist, is not executable, or isn't on "
-                "$PATH",
-                route_command_arg);
-        }
-        if (strcmp(resolved_route_command, self_exe) == 0) {
-            die("add: --route command '%s' resolves back to the shimback binary itself -- "
-                "that would loop forever if this route were ever triggered",
-                route_command_arg);
-        }
-        resolved_routes[i].match = xstrdup(route_match->items[i]);
+        char *resolved_route_command =
+            resolve_target_or_die(req->route_command.items[i], "--route command",
+                                  "--route's command", req->force, self_exe,
+                                  "this route were ever triggered");
+        resolved_routes[i].match = xstrdup(req->route_match.items[i]);
         resolved_routes[i].command = resolved_route_command;
         resolved_routes[i].args = NULL;
         resolved_routes[i].arg_count = 0;
@@ -281,8 +263,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * -- only reject when they'd be truly indistinguishable. */
     if (resolved_source_for_check && resolved_fallback &&
         strcmp(resolved_source_for_check, resolved_fallback) == 0 &&
-        str_array_eq(source_args->items, source_args->count, fallback_args->items,
-                     fallback_args->count)) {
+        str_array_eq(req->source_args.items, req->source_args.count, req->fallback_args.items,
+                     req->fallback_args.count)) {
         die("add: source and fallback both resolve to '%s' with the same arguments -- refusing "
             "to add a no-op shim",
             resolved_fallback);
@@ -296,9 +278,9 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * the config is safely saved.
      *
      * shim_file_name() appends ".exe" on Windows -- shims are hard links
-     * there (see windows-port.md Phase 3), and cmd.exe/PowerShell only
+     * there, and cmd.exe/PowerShell only
      * resolve a bare command name against a PATHEXT-listed extension. */
-    char *shim_file = shim_file_name(name);
+    char *shim_file = shim_file_name(req->name);
     char *symlink_path = path_join(shim_dir, shim_file);
     free(shim_file);
     bool replacing_existing_symlink = false;
@@ -308,8 +290,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
          * -- an exact self_exe match here used to refuse to update a shim
          * created by an older or relocated shimback binary even though
          * it's still genuinely shimback's, and disagreed with uninstall's
-         * own (marker-based) recognition of the very same link (see
-         * review.md). On Windows this is also the *only* signal available
+         * own (marker-based) recognition of the very same link.
+         * On Windows this is also the *only* signal available
          * at all (a hard link has no distinct file type to check, unlike
          * a POSIX symlink) -- see is_shim_dir_entry's own comment. */
         if (!is_shim_dir_entry(symlink_path)) {
@@ -324,8 +306,8 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
          * that anyone besides its owner can write into would let a
          * concurrent process swap symlink_path for something else in that
          * window, so the later rename() would silently replace whatever
-         * got swapped in, not what was actually just checked (see
-         * review.md). Refusing outright when the directory isn't
+         * got swapped in, not what was actually just checked.
+         * Refusing outright when the directory isn't
          * owner-only-writable is the "at minimum" bar for this: it can't
          * close the window by itself (a single-writer directory still has
          * one), but it rules out the actual precondition the race needs
@@ -368,7 +350,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * their own in-memory copy, and atomically save it, with the second
      * save silently discarding whatever the first one added or removed
      * (a lost update) -- and the same for the shell startup file's own
-     * read-merge-write cycle in shell_ensure_path (see review.md). This
+     * read-merge-write cycle in shell_ensure_path. This
      * reuses the same lock the original TOCTOU fix introduced, widened
      * to serialize the whole operation against a concurrent
      * add/remove/doctor fix, not just the one narrow symlink-swap race
@@ -389,7 +371,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         die("add: existing config at %s is invalid: %s", cfg_path, errbuf);
     }
 
-    size_t idx = config_upsert(&cfg, name);
+    size_t idx = config_upsert(&cfg, req->name);
     ShimEntry *entry = &cfg.shims[idx];
     free(entry->source);
     /* Store the resolved (canonicalized, and PATH-searched if bare) form,
@@ -397,62 +379,24 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * config" (see README) actually means, and it's what dispatch/doctor
      * already assume: a stable absolute path, not a bare name they'd have
      * to re-search $PATH for themselves. */
-    entry->source = source_arg ? xstrdup(resolved_source_for_check) : NULL;
-    for (size_t i = 0; i < entry->source_arg_count; i++) {
-        free(entry->source_args[i]);
-    }
-    free(entry->source_args);
-    entry->source_args = source_args->items; /* ownership transferred */
-    entry->source_arg_count = source_args->count;
+    entry->source = req->source_arg ? xstrdup(resolved_source_for_check) : NULL;
+    take_strvec(&entry->source_args, &entry->source_arg_count, &req->source_args);
     free(entry->fallback);
     entry->fallback = resolved_fallback ? xstrdup(resolved_fallback) : NULL;
-    for (size_t i = 0; i < entry->fallback_arg_count; i++) {
-        free(entry->fallback_args[i]);
-    }
-    free(entry->fallback_args);
-    entry->fallback_args = fallback_args->items; /* ownership transferred */
-    entry->fallback_arg_count = fallback_args->count;
-    entry->policy = policy;
-    for (size_t i = 0; i < entry->error_pattern_count; i++) {
-        free(entry->error_patterns[i]);
-    }
-    free(entry->error_patterns);
-    entry->error_patterns = patterns->items; /* ownership transferred */
-    entry->error_pattern_count = patterns->count;
+    take_strvec(&entry->fallback_args, &entry->fallback_arg_count, &req->fallback_args);
+    entry->policy = req->policy;
+    take_strvec(&entry->error_patterns, &entry->error_pattern_count, &req->patterns);
     free(entry->exit_codes);
-    entry->exit_codes = exit_codes; /* ownership transferred */
-    entry->exit_code_count = exit_code_count;
-    for (size_t i = 0; i < entry->route_arg_count; i++) {
-        free(entry->route_args[i]);
-    }
-    free(entry->route_args);
-    entry->route_args = route_args->items; /* ownership transferred */
-    entry->route_arg_count = route_args->count;
-    for (size_t i = 0; i < entry->source_route_arg_count; i++) {
-        free(entry->source_route_args[i]);
-    }
-    free(entry->source_route_args);
-    entry->source_route_args = split_source_args->items; /* ownership transferred */
-    entry->source_route_arg_count = split_source_args->count;
-    for (size_t i = 0; i < entry->fallback_route_arg_count; i++) {
-        free(entry->fallback_route_args[i]);
-    }
-    free(entry->fallback_route_args);
-    entry->fallback_route_args = split_fallback_args->items; /* ownership transferred */
-    entry->fallback_route_arg_count = split_fallback_args->count;
-    entry->strip_matched_args = strip_matched_args;
-    for (size_t i = 0; i < entry->rewrite_from_count; i++) {
-        free(entry->rewrite_from[i]);
-    }
-    free(entry->rewrite_from);
-    entry->rewrite_from = rewrite_from->items; /* ownership transferred */
-    entry->rewrite_from_count = rewrite_from->count;
-    for (size_t i = 0; i < entry->rewrite_to_count; i++) {
-        free(entry->rewrite_to[i]);
-    }
-    free(entry->rewrite_to);
-    entry->rewrite_to = rewrite_to->items; /* ownership transferred */
-    entry->rewrite_to_count = rewrite_to->count;
+    entry->exit_codes = req->exit_codes; /* ownership transferred */
+    entry->exit_code_count = req->exit_code_count;
+    take_strvec(&entry->route_args, &entry->route_arg_count, &req->route_args);
+    take_strvec(&entry->source_route_args, &entry->source_route_arg_count,
+                &req->split_source_args);
+    take_strvec(&entry->fallback_route_args, &entry->fallback_route_arg_count,
+                &req->split_fallback_args);
+    entry->strip_matched_args = req->strip_matched_args;
+    take_strvec(&entry->rewrite_from, &entry->rewrite_from_count, &req->rewrite_from);
+    take_strvec(&entry->rewrite_to, &entry->rewrite_to_count, &req->rewrite_to);
     /* --route can't express per-route args, so a hand-edited `args = [...]`
      * on an existing route would otherwise be silently lost on every
      * re-add. Carry them over to the new route with the same match and
@@ -472,23 +416,17 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
         }
     }
     for (size_t i = 0; i < entry->route_count; i++) {
-        RouteEntry *old_route = &entry->routes[i];
-        free(old_route->match);
-        free(old_route->command);
-        for (size_t j = 0; j < old_route->arg_count; j++) {
-            free(old_route->args[j]);
-        }
-        free(old_route->args);
+        route_entry_free(&entry->routes[i]);
     }
     free(entry->routes);
     entry->routes = resolved_routes; /* ownership transferred */
     entry->route_count = route_count;
-    entry->diagnostic = diagnostic;
-    entry->force = force;
-    entry->capture_timeout_set = capture_timeout_set;
-    entry->capture_timeout_ms = capture_timeout_ms;
-    entry->capture_limit_set = capture_limit_set;
-    entry->capture_limit_bytes = capture_limit_bytes;
+    entry->diagnostic = req->diagnostic;
+    entry->force = req->force;
+    entry->capture_timeout_set = req->capture_timeout_set;
+    entry->capture_timeout_ms = req->capture_timeout_ms;
+    entry->capture_limit_set = req->capture_limit_set;
+    entry->capture_limit_bytes = req->capture_limit_bytes;
 
     /* The same per-entry validation config_load/config_load_split run on
      * every entry they parse -- checked here too, before anything below
@@ -496,7 +434,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * don't happen to catch (e.g. two identical --route entries) is
      * rejected right now with a clear error, instead of being silently
      * written to config.toml and only discovered the next time something
-     * else reloads it (see review.md-style reasoning: exactly this kind
+     * else reloads it (exactly this kind
      * of gap is worth closing generally, not per-policy). */
     if (validate_shim_entry(entry, errbuf, sizeof(errbuf)) != CONFIG_OK) {
         die("add: %s", errbuf);
@@ -505,7 +443,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     /* --verbose only ever turns this invocation's verbosity *on*; the
      * config's own `verbose` default is what controls it when the flag
      * isn't given. */
-    bool effective_verbose = verbose || cfg.verbose;
+    bool effective_verbose = req->verbose || cfg.verbose;
 
     /* --split-config: write this shim's data to its own <name>-config.toml
      * in the config directory instead of config.toml, then drop it from
@@ -515,12 +453,12 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
      * so a failure anywhere below -- including in config_save/mkdir_p/the
      * symlink step, all of which run after these writes -- can restore the
      * previous, still-valid content instead of leaving it destroyed by a
-     * command that itself reported failure (see review.md). */
+     * command that itself reported failure. */
     char *split_target_path = NULL;
     char *split_backup_path = NULL;
-    if (split_config) {
+    if (req->split_config) {
         char *cfg_dir = dir_of(cfg_path);
-        char *split_filename = split_config_filename(name);
+        char *split_filename = split_config_filename(req->name);
         split_target_path = path_join(cfg_dir, split_filename);
         free(cfg_dir);
         free(split_filename);
@@ -540,7 +478,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
             restore_from_backup(split_target_path, split_backup_path);
             die("add: failed to save split config: %s", errbuf);
         }
-        config_remove(&cfg, name);
+        config_remove(&cfg, req->name);
     }
 
     char *cfg_backup_path;
@@ -597,7 +535,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
          * rename() gets to closing the TOCTOU window from the ownership
          * check above, shrinking it from "however long config I/O took"
          * down to the handful of syscalls between here and rename()
-         * itself (see review.md). */
+         * itself. */
         if (!is_shim_dir_entry(symlink_path)) {
             unlink(tmp_link);
             rollback_and_die(cfg_path, cfg_backup_path, split_target_path, split_backup_path,
@@ -632,7 +570,7 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     if (split_target_path) {
         discard_backup(split_backup_path);
     } else {
-        remove_split_configs(name);
+        remove_split_configs(req->name);
     }
 
     bool colorize = stdout_is_color();
@@ -640,18 +578,18 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
     const char *name_color = colorize ? ANSI_BOLD ANSI_CYAN : "";
     const char *path_color = colorize ? ANSI_GREEN : "";
     const char *fallback_color = colorize ? (resolved_fallback ? ANSI_BLUE : ANSI_DIM) : "";
-    const char *pc = policy_color(policy);
+    const char *pc = policy_color(req->policy);
     const char *policy_color_str = (colorize && pc) ? pc : "";
 
     /* "none" (no fallback configured) is a placeholder word, not a path --
      * quoted only when there's an actual path to quote. */
     const char *fb_quote = resolved_fallback ? "\"" : "";
-    info("'%s%s%s' -> %s\"%s\"%s (fallback: %s%s%s%s%s, policy: %s%s%s)", name_color, name, reset,
-         path_color, symlink_path, reset, fallback_color, fb_quote,
+    info("'%s%s%s' -> %s\"%s\"%s (fallback: %s%s%s%s%s, policy: %s%s%s)", name_color, req->name,
+         reset, path_color, symlink_path, reset, fallback_color, fb_quote,
          resolved_fallback ? resolved_fallback : "none", fb_quote, reset, policy_color_str,
-         policy_to_string(policy), reset);
-    if (split_config) {
-        info("config for '%s%s%s' saved to %s\"%s\"%s", name_color, name, reset, path_color,
+         policy_to_string(req->policy), reset);
+    if (req->split_config) {
+        info("config for '%s%s%s' saved to %s\"%s\"%s", name_color, req->name, reset, path_color,
              split_target_path, reset);
     }
 
@@ -669,40 +607,18 @@ static int finish_add(const char *name, const char *source_arg, StrVec *source_a
 }
 
 int cmd_add(int argc, char **argv) {
-    const char *source_arg = NULL;
-    const char *fallback_arg = NULL;
     const char *policy_arg = "exit-code";
-    bool diagnostic = false;
-    bool strip_matched_args = false;
-    bool force = false;
-    bool verbose = false;
-    bool capture_timeout_set = false;
-    int capture_timeout_ms = 0;
-    bool capture_limit_set = false;
-    size_t capture_limit_bytes = 0;
-    bool split_config = false;
-    StrVec source_args;
-    strvec_init(&source_args);
-    StrVec fallback_args;
-    strvec_init(&fallback_args);
-    StrVec patterns;
-    strvec_init(&patterns);
-    StrVec route_args;
-    strvec_init(&route_args);
-    StrVec split_source_args;
-    strvec_init(&split_source_args);
-    StrVec split_fallback_args;
-    strvec_init(&split_fallback_args);
-    StrVec rewrite_from;
-    strvec_init(&rewrite_from);
-    StrVec rewrite_to;
-    strvec_init(&rewrite_to);
-    StrVec route_match;
-    strvec_init(&route_match);
-    StrVec route_command;
-    strvec_init(&route_command);
-    int *exit_codes = NULL;
-    size_t exit_code_count = 0;
+    AddRequest req = {0};
+    strvec_init(&req.source_args);
+    strvec_init(&req.fallback_args);
+    strvec_init(&req.patterns);
+    strvec_init(&req.route_args);
+    strvec_init(&req.split_source_args);
+    strvec_init(&req.split_fallback_args);
+    strvec_init(&req.rewrite_from);
+    strvec_init(&req.rewrite_to);
+    strvec_init(&req.route_match);
+    strvec_init(&req.route_command);
     size_t exit_code_cap = 0;
 
     static struct option long_opts[] = {
@@ -731,35 +647,34 @@ int cmd_add(int argc, char **argv) {
     int opt;
     while ((opt = getopt_long(argc, argv, "s:f:p:e:x:r:w:dv", long_opts, NULL)) != -1) {
         switch (opt) {
-            case 's': source_arg = optarg; break;
-            case OPT_SOURCE_ARG: strvec_push(&source_args, xstrdup(optarg)); break;
-            case 'f': fallback_arg = optarg; break;
-            case OPT_FALLBACK_ARG: strvec_push(&fallback_args, xstrdup(optarg)); break;
+            case 's': req.source_arg = optarg; break;
+            case OPT_SOURCE_ARG: strvec_push(&req.source_args, xstrdup(optarg)); break;
+            case 'f': req.fallback_arg = optarg; break;
+            case OPT_FALLBACK_ARG: strvec_push(&req.fallback_args, xstrdup(optarg)); break;
             case 'p': policy_arg = optarg; break;
-            case 'e': strvec_push(&patterns, xstrdup(optarg)); break;
+            case 'e': strvec_push(&req.patterns, xstrdup(optarg)); break;
             case 'x': {
-                char *end;
-                long v = strtol(optarg, &end, 10);
-                if (*optarg == '\0' || *end != '\0' || v < 0 || v > 255) {
+                int v;
+                if (!parse_nonneg_int(optarg, &v) || v > 255) {
                     die("add: --exit-code must be an integer between 0 and 255 (got '%s')",
                         optarg);
                 }
-                push_exit_code(&exit_codes, &exit_code_count, &exit_code_cap, (int)v);
+                push_exit_code(&req.exit_codes, &req.exit_code_count, &exit_code_cap, v);
                 break;
             }
-            case 'r': strvec_push(&route_args, xstrdup(optarg)); break;
-            case OPT_STRIP_MATCHED_ARGS: strip_matched_args = true; break;
-            case OPT_SPLIT_SOURCE_ARG: strvec_push(&split_source_args, xstrdup(optarg)); break;
+            case 'r': strvec_push(&req.route_args, xstrdup(optarg)); break;
+            case OPT_STRIP_MATCHED_ARGS: req.strip_matched_args = true; break;
+            case OPT_SPLIT_SOURCE_ARG: strvec_push(&req.split_source_args, xstrdup(optarg)); break;
             case OPT_SPLIT_FALLBACK_ARG:
-                strvec_push(&split_fallback_args, xstrdup(optarg));
+                strvec_push(&req.split_fallback_args, xstrdup(optarg));
                 break;
             case 'w': {
                 const char *eq = strchr(optarg, '=');
                 if (!eq || eq == optarg) {
                     die("add: --rewrite must be '<from>=<to>' (got '%s')", optarg);
                 }
-                strvec_push(&rewrite_from, xstrndup(optarg, (size_t)(eq - optarg)));
-                strvec_push(&rewrite_to, xstrdup(eq + 1));
+                strvec_push(&req.rewrite_from, xstrndup(optarg, (size_t)(eq - optarg)));
+                strvec_push(&req.rewrite_to, xstrdup(eq + 1));
                 break;
             }
             case OPT_ROUTE: {
@@ -767,44 +682,38 @@ int cmd_add(int argc, char **argv) {
                 if (!eq || eq == optarg || eq[1] == '\0') {
                     die("add: --route must be '<match>=<command>' (got '%s')", optarg);
                 }
-                strvec_push(&route_match, xstrndup(optarg, (size_t)(eq - optarg)));
-                strvec_push(&route_command, xstrdup(eq + 1));
+                strvec_push(&req.route_match, xstrndup(optarg, (size_t)(eq - optarg)));
+                strvec_push(&req.route_command, xstrdup(eq + 1));
                 break;
             }
-            case 'd': diagnostic = true; break;
-            case OPT_FORCE: force = true; break;
-            case 'v': verbose = true; break;
-            case OPT_CAPTURE_TIMEOUT: {
-                errno = 0;
-                char *end;
-                long v = strtol(optarg, &end, 10);
-                if (*optarg == '\0' || *end != '\0' || errno == ERANGE || v < 0 ||
-                    v > INT_MAX) {
+            case 'd': req.diagnostic = true; break;
+            case OPT_FORCE: req.force = true; break;
+            case 'v': req.verbose = true; break;
+            case OPT_CAPTURE_TIMEOUT:
+                if (!parse_nonneg_int(optarg, &req.capture_timeout_ms)) {
                     die("add: --capture-timeout must be a non-negative integer of milliseconds "
                         "(got '%s')",
                         optarg);
                 }
-                capture_timeout_set = true;
-                capture_timeout_ms = (int)v;
+                req.capture_timeout_set = true;
                 break;
-            }
             case OPT_CAPTURE_LIMIT: {
-                if (!parse_size_bytes(optarg, &capture_limit_bytes)) {
+                if (!parse_size_bytes(optarg, &req.capture_limit_bytes)) {
                     die("add: --capture-limit must be a size like \"8MiB\" or a plain byte count "
                         "(got '%s')",
                         optarg);
                 }
-                capture_limit_set = true;
+                req.capture_limit_set = true;
                 break;
             }
-            case OPT_SPLIT_CONFIG: split_config = true; break;
+            case OPT_SPLIT_CONFIG: req.split_config = true; break;
             default:
                 fprintf(stderr, "%s", USAGE);
                 return 1;
         }
     }
 
-    const char *name = (optind < argc) ? argv[optind++] : NULL;
+    req.name = (optind < argc) ? argv[optind++] : NULL;
     if (optind < argc) {
         die("add: unexpected extra argument '%s'", argv[optind]);
     }
@@ -812,28 +721,28 @@ int cmd_add(int argc, char **argv) {
      * way (not "missing", so never wizard-eligible) -- finish_add() also
      * re-checks this (harmless for this path, the actual check for a
      * wizard-supplied name). */
-    if (name && !is_valid_shim_name(name)) {
+    if (req.name && !is_valid_shim_name(req.name)) {
         die("add: invalid shim name '%s' -- names may only contain letters, digits, '.', '_', "
             "'+', and '-'",
-            name);
+            req.name);
     }
 
-    Policy policy;
-    if (!policy_from_string(policy_arg, &policy)) {
-        die("add: --policy must be \"exit-code\", \"heuristic\", \"exit-code-match\", "
-            "\"route-args\", \"rewrite\", \"split-args\", or \"route-map\"");
+    if (!policy_from_string(policy_arg, &req.policy)) {
+        char *names = policy_names_list();
+        die("add: --policy must be %s", names);
     }
 
-    bool missing_name = (name == NULL);
+    bool missing_name = (req.name == NULL);
     bool missing_fallback =
-        (!fallback_arg && policy != POLICY_REWRITE && policy != POLICY_ROUTE_MAP);
-    bool missing_patterns = (policy == POLICY_HEURISTIC && patterns.count == 0);
-    bool missing_exit_codes = (policy == POLICY_EXIT_CODE_MATCH && exit_code_count == 0);
-    bool missing_route_args = (policy == POLICY_ROUTE_ARGS && route_args.count == 0);
-    bool missing_split_args = (policy == POLICY_SPLIT_ARGS &&
-                                (split_source_args.count == 0 || split_fallback_args.count == 0));
-    bool missing_rewrite = (policy == POLICY_REWRITE && rewrite_from.count == 0);
-    bool missing_routes = (policy == POLICY_ROUTE_MAP && route_match.count == 0);
+        (!req.fallback_arg && policy_uses_fallback(req.policy));
+    bool missing_patterns = (req.policy == POLICY_HEURISTIC && req.patterns.count == 0);
+    bool missing_exit_codes = (req.policy == POLICY_EXIT_CODE_MATCH && req.exit_code_count == 0);
+    bool missing_route_args = (req.policy == POLICY_ROUTE_ARGS && req.route_args.count == 0);
+    bool missing_split_args =
+        (req.policy == POLICY_SPLIT_ARGS &&
+         (req.split_source_args.count == 0 || req.split_fallback_args.count == 0));
+    bool missing_rewrite = (req.policy == POLICY_REWRITE && req.rewrite_from.count == 0);
+    bool missing_routes = (req.policy == POLICY_ROUTE_MAP && req.route_match.count == 0);
     bool something_missing = missing_name || missing_fallback || missing_patterns ||
                               missing_exit_codes || missing_route_args || missing_split_args ||
                               missing_rewrite || missing_routes;
@@ -867,47 +776,13 @@ int cmd_add(int argc, char **argv) {
     }
 
     if (something_missing) {
-        WizardSeed seed = {
-            .name = name,
-            .source_arg = source_arg,
-            .source_args = &source_args,
-            .fallback_arg = fallback_arg,
-            .fallback_args = &fallback_args,
-            .policy = policy,
-            .patterns = &patterns,
-            .exit_codes = exit_codes,
-            .exit_code_count = exit_code_count,
-            .route_args = &route_args,
-            .strip_matched_args = strip_matched_args,
-            .split_source_args = &split_source_args,
-            .split_fallback_args = &split_fallback_args,
-            .rewrite_from = &rewrite_from,
-            .rewrite_to = &rewrite_to,
-            .route_match = &route_match,
-            .route_command = &route_command,
-            .diagnostic = diagnostic,
-            .split_config = split_config,
-        };
-        WizardResult result;
-        if (!run_add_wizard(&seed, &result)) {
+        AddRequest completed;
+        if (!run_add_wizard(&req, &completed)) {
             printf("Aborted -- no shim was created.\n");
             return 1;
         }
-        return finish_add(result.name, result.source_arg, &result.source_args,
-                           result.fallback_arg, &result.fallback_args, result.policy,
-                           &result.patterns, result.exit_codes, result.exit_code_count,
-                           &result.route_args, result.strip_matched_args,
-                           &result.split_source_args, &result.split_fallback_args,
-                           &result.rewrite_from, &result.rewrite_to, &result.route_match,
-                           &result.route_command, result.diagnostic, force, verbose,
-                           capture_timeout_set, capture_timeout_ms, capture_limit_set,
-                           capture_limit_bytes, result.split_config);
+        return finish_add(&completed);
     }
 
-    return finish_add(name, source_arg, &source_args, fallback_arg, &fallback_args, policy,
-                       &patterns, exit_codes, exit_code_count, &route_args, strip_matched_args,
-                       &split_source_args, &split_fallback_args, &rewrite_from, &rewrite_to,
-                       &route_match, &route_command, diagnostic, force, verbose,
-                       capture_timeout_set, capture_timeout_ms, capture_limit_set,
-                       capture_limit_bytes, split_config);
+    return finish_add(&req);
 }

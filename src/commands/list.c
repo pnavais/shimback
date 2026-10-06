@@ -17,14 +17,6 @@ static const char *USAGE = "usage: shimback list [--full]\n";
 /* Prints `text`, optionally wrapped in `color`, then pads with spaces up to
  * `width` -- padding is based on the plain text length, since padding to
  * the length of a color-escaped string would misalign columns. */
-/* Just the filename portion of a frozen fallback path -- the compact table
- * shows this instead of the full path (see fallback_display below); --full
- * prints the full path back out in its own detail line. */
-static const char *basename_of(const char *path) {
-    const char *slash = strrchr(path, '/');
-    return slash ? slash + 1 : path;
-}
-
 static void print_cell(const char *text, size_t width, const char *color, bool colorize) {
     if (colorize && color) {
         printf("%s%s%s", color, text, ANSI_RESET);
@@ -306,7 +298,7 @@ int cmd_list(int argc, char **argv) {
         }
         ShimEntry *e = entries[i];
         const char *source_display = e->source ? e->source : "auto";
-        const char *fallback_display = e->fallback ? basename_of(e->fallback) : "none";
+        const char *fallback_display = e->fallback ? path_basename(e->fallback) : "none";
         size_t sl = strlen(source_display);
         size_t fl = strlen(fallback_display);
         size_t pl = strlen(policy_to_string(e->policy));
@@ -342,7 +334,7 @@ int cmd_list(int argc, char **argv) {
         }
         ShimEntry *e = entries[i];
         const char *source_display = e->source ? e->source : "auto";
-        const char *fallback_display = e->fallback ? basename_of(e->fallback) : "none";
+        const char *fallback_display = e->fallback ? path_basename(e->fallback) : "none";
         const char *policy_str = policy_to_string(e->policy);
 
         print_cell(names[i], name_w, ANSI_BOLD ANSI_CYAN, colorize);

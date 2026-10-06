@@ -155,7 +155,7 @@ static void ensure_shell_path(ShellKind kind, const char *shim_dir, const char *
                                MiseIntegrationMode mise_mode) {
     shell_ensure_path(kind, shim_dir, false, mise_mode);
     shell_ensure_path(kind, bin_dir, true, mise_mode);
-    shell_remove_path_tagged(kind, "shimback-bin");
+    shell_remove_path_tagged(kind, SHELL_LEGACY_BLOCK_TAG);
 }
 
 int cmd_install(int argc, char **argv) {
@@ -315,7 +315,7 @@ int cmd_install(int argc, char **argv) {
      * anything, install used to overwrite whatever was already at `dest`
      * unconditionally -- a typo'd or shared --prefix could silently
      * replace an unrelated existing file that just happened to be named
-     * "shimback" (see review.md). Refusing here when something else is
+     * "shimback". Refusing here when something else is
      * already there costs nothing for the normal cases: a brand-new
      * install has nothing at `dest` yet, and overwriting an existing
      * shimback binary (--force) still passes this check, since that

@@ -11,7 +11,6 @@
 #include "platform/platform.h"
 #include "util.h"
 
-#define DEFAULT_TAG "shimback"
 
 /* Prints "<shell_name>: <msg>" to stdout, with the shell-name prefix
  * colored ANSI_SHELL (distinct from util.c's info(), whose "shimback:"
@@ -20,6 +19,8 @@
  * updated" status lines (zsh/bash/fish/powershell/pwsh/cmd), so each
  * shell's own name-prefix stays visually distinguishable from shimback's
  * own brand prefix elsewhere in the same output. */
+static void shell_status(const char *shell_name, const char *fmt, ...) SHIMBACK_PRINTF(2, 3);
+
 static void shell_status(const char *shell_name, const char *fmt, ...) {
     bool colorize = stdout_is_color();
     va_list ap;
@@ -141,34 +142,22 @@ static char *read_file_or_empty(const char *path) {
     if (!f) {
         return xstrdup("");
     }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
+    char *buf;
+    size_t n = 0;
+    long size = 0;
+    FileReadStatus st = read_open_file(f, &buf, &n, &size);
+    if (st == FILE_READ_SEEK_FAILED) {
         return xstrdup("");
     }
-    long size = ftell(f);
-    if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return xstrdup("");
-    }
-    char *buf = xmalloc((size_t)size + 1);
-    size_t n = fread(buf, 1, (size_t)size, f);
-    bool read_error = ferror(f) || n != (size_t)size;
-    fclose(f);
-    if (read_error) {
-        /* A short read here (genuine I/O error, or the file changing size
-         * underneath us) must not be silently treated as "here's the
-         * whole file" -- every caller goes on to compute a modified
-         * version of this content and write it straight back over the
-         * user's actual shell startup file, so a truncated read here
-         * would risk truncating *that* file for real. Refusing to
-         * continue is the safe failure mode; nothing this project does is
-         * worth risking someone's .zshrc for. */
-        free(buf);
+    if (st == FILE_READ_SHORT) {
+        /* Every caller goes on to write a modified version of this content
+         * straight back over the user's actual shell startup file, so
+         * refusing to continue is the safe failure mode; nothing this
+         * project does is worth risking someone's .zshrc for. */
         die("failed to read %s completely (got %zu of %ld bytes) -- refusing to risk "
             "overwriting it with a truncated copy",
             path, n, size);
     }
-    buf[n] = '\0';
     return buf;
 }
 
@@ -179,7 +168,7 @@ static char *read_file_or_empty(const char *path) {
  * mid-line inside unrelated content (a comment, a string, a command) that
  * happens to contain the same bytes -- which could then make PATH setup
  * or uninstall treat content shimback never wrote as its own managed
- * block, and edit or delete it (see review.md). */
+ * block, and edit or delete it. */
 static const char *find_marker_line(const char *content, const char *marker) {
     size_t marker_len = strlen(marker);
     const char *p = content;
@@ -656,22 +645,24 @@ static bool resolve_mise_integration(MiseIntegrationMode mode) {
  * present) for most directories, except that shim_bin_dir() (see paths.c)
  * is always "<data dir>/shimback/bin" and can change between invocations if
  * $XDG_DATA_HOME/$HOME changes -- when `dir` is one, any existing entry
- * that's also one (there should be at most one) is replaced instead, so a
- * changed shim directory doesn't leave a stale, dead entry behind in PATH
- * forever. Anything else already present (e.g. install's own bin dir)
- * doesn't match that shape and is left alone. Shared by every shell's
- * ensure-path logic so they all treat a changed shim dir the same way. */
+ * that's also one (there should be at most one) is removed and `dir` is
+ * appended like any new directory, so a changed shim directory doesn't
+ * leave a stale, dead entry behind in PATH forever. The removal keeps the
+ * remaining entries in their order, which is PATH precedence. Anything
+ * else already present (e.g. install's own bin dir) doesn't match that
+ * shape and is left alone. Shared by every shell's ensure-path logic so
+ * they all treat a changed shim dir the same way. */
 static void merge_dir_into(StrVec *dirs, const char *dir) {
     if (ends_with(dir, "/shimback/bin")) {
-        for (size_t i = 0; i < dirs->count;) {
+        size_t kept = 0;
+        for (size_t i = 0; i < dirs->count; i++) {
             if (ends_with(dirs->items[i], "/shimback/bin") && strcmp(dirs->items[i], dir) != 0) {
                 free(dirs->items[i]);
-                dirs->items[i] = dirs->items[dirs->count - 1];
-                dirs->count--;
             } else {
-                i++;
+                dirs->items[kept++] = dirs->items[i];
             }
         }
+        dirs->count = kept;
     }
 
     for (size_t i = 0; i < dirs->count; i++) {
@@ -1424,7 +1415,7 @@ static bool remove_powershell(const char *tag) {
 }
 
 /* cmd.exe's AutoRun executes only the *first line* of its registry value --
- * confirmed by testing (see windows-port.md Phase 5): an embedded newline
+ * confirmed by testing: an embedded newline
  * is NOT a further command the way a batch file's lines are, so the whole
  * managed block has to be one single line, its commands chained with '&'.
  * That also rules out `rem` as a marker: REM consumes the rest of the
@@ -1485,8 +1476,8 @@ static bool find_autorun_segment(const char *content, const char *tag, const cha
  * just ends the quoted region early), so a '"' in --prefix or a shim
  * directory would let arbitrary extra commands be appended to this line
  * and run on every new cmd.exe session -- the same class of injection
- * append_sh_squoted/append_ps_squoted close for the POSIX/PowerShell cases
- * (see review.md), just with no in-band escape available here to
+ * append_sh_squoted/append_ps_squoted close for the POSIX/PowerShell cases,
+ * just with no in-band escape available here to
  * neutralize it with instead. */
 static void build_cmd_body(DynBuf *body, const StrVec *dirs) {
     for (size_t i = 0; i < dirs->count; i++) {
@@ -1781,7 +1772,7 @@ bool shell_ensure_path_tagged(ShellKind kind, const char *dir, const char *tag, 
 
 bool shell_ensure_path(ShellKind kind, const char *dir, bool verbose,
                         MiseIntegrationMode mise_mode) {
-    return shell_ensure_path_tagged(kind, dir, DEFAULT_TAG, verbose, mise_mode);
+    return shell_ensure_path_tagged(kind, dir, SHELL_BLOCK_TAG, verbose, mise_mode);
 }
 
 bool shell_remove_path_tagged(ShellKind kind, const char *tag) {

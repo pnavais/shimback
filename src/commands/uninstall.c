@@ -18,15 +18,6 @@
 #include "../shell.h"
 #include "../util.h"
 
-/* The single tag every command shares (add/init/install all merge their
- * directory into the same block -- see shell.c). "shimback-bin" was a
- * separate tag install used before that merge existed; removing it too is
- * a harmless no-op once install has migrated someone off it, and a real
- * cleanup for anyone who upgrades straight to `uninstall --full` without
- * ever re-running install first. */
-#define SHIM_DIR_TAG "shimback"
-#define LEGACY_INSTALL_TAG "shimback-bin"
-
 static const char *USAGE = "usage: shimback uninstall [--prefix <dir>] [--full]\n";
 
 /* Same idea as looks_like_shimback_binary (paths.c), but for the man page: no need
@@ -56,8 +47,8 @@ static bool looks_like_shimback_man_page(const char *path) {
  * user or another tool in this directory despite the convention).
  *
  * This isn't an inconsistency between the dangling and live-foreign
- * cases, even though they end up treated oppositely by default (see
- * review.md) -- a live symlink can be positively checked against
+ * cases, even though they end up treated oppositely by default --
+ * a live symlink can be positively checked against
  * something concrete (its target's own bytes), giving real evidence
  * either way; a dangling one has no target left to check at all, so
  * there is no equivalent way to positively prove it *isn't* shimback's.
@@ -83,8 +74,8 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
      * add/remove/doctor fix -- without this, uninstall could scan and
      * remove symlinks while one of those was mid-operation, acting on
      * state none of them individually ever saw and, worse, deleting the
-     * lock file itself (below) out from under an active holder (see
-     * review.md). Best-effort: uninstall's whole design already accepts
+     * lock file itself (below) out from under an active holder.
+     * Best-effort: uninstall's whole design already accepts
      * a partial/imperfect cleanup over a hard failure, so a lock it
      * can't acquire is a warning, not a reason to abort. */
     int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
@@ -98,8 +89,7 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
     for (char **e = entries; *e; e++) {
         char *entry_path = path_join(shim_dir, *e);
 #ifdef _WIN32
-        /* No "dangling" concept for a hard link (see windows-port.md
-         * Phase 3 -- as long as this entry's own link exists, its file
+        /* No "dangling" concept for a hard link (as long as this entry's own link exists, its file
          * data is alive regardless of self_exe's own path) -- an entry is
          * either recognizably ours or it isn't, nothing in between. Not
          * warning about a non-matching entry here (unlike the POSIX
@@ -150,8 +140,8 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
      * unlinking the lock file here leaves an unavoidably narrow window
      * where a fresh shim_dir_lock_acquire() elsewhere could open/lock a
      * brand new inode at the same path before this unlink() runs,
-     * ending up with no real mutual exclusion against whatever raced in
-     * (see review.md). Making that fully airtight would mean never
+     * ending up with no real mutual exclusion against whatever raced in.
+     * Making that fully airtight would mean never
      * deleting the lock file at all, and teaching every directory-
      * emptiness assumption elsewhere to tolerate it permanently --
      * disproportionate for how narrow this window actually is (a
@@ -265,8 +255,8 @@ static bool path_block_present(void) {
     StrVec dirs;
     strvec_init(&dirs);
     for (size_t i = 0; i < kind_count; i++) {
-        shell_read_block_dirs(kinds[i], SHIM_DIR_TAG, &dirs);
-        shell_read_block_dirs(kinds[i], LEGACY_INSTALL_TAG, &dirs);
+        shell_read_block_dirs(kinds[i], SHELL_BLOCK_TAG, &dirs);
+        shell_read_block_dirs(kinds[i], SHELL_LEGACY_BLOCK_TAG, &dirs);
     }
     bool present = dirs.count > 0;
     strvec_free(&dirs);
@@ -284,8 +274,11 @@ static void remove_path_blocks(void) {
     ShellKind kinds[3];
     size_t kind_count = shell_all_kinds(kinds);
     for (size_t i = 0; i < kind_count; i++) {
-        shell_remove_path_tagged(kinds[i], SHIM_DIR_TAG);
-        shell_remove_path_tagged(kinds[i], LEGACY_INSTALL_TAG);
+        shell_remove_path_tagged(kinds[i], SHELL_BLOCK_TAG);
+        /* A no-op once install has migrated someone off the legacy block;
+         * a real cleanup for anyone who upgrades straight to `uninstall
+         * --full` without ever re-running install first. */
+        shell_remove_path_tagged(kinds[i], SHELL_LEGACY_BLOCK_TAG);
     }
 }
 

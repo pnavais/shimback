@@ -9,10 +9,55 @@
 #include "util.h"
 #include "version.h"
 
-static const char *const KNOWN_COMMANDS[] = {
-    "add", "remove", "rm", "init", "list", "ls", "doctor", "install", "uninstall",
-    "edit", "info", "update", "export",
+#ifdef _WIN32
+/* edit.c is excluded from the Windows build entirely
+ * (wordexp() has no Windows equivalent,
+ * and the fallback-editor chain needs a real PATH-search-first redesign,
+ * not a mechanical port). */
+static int cmd_edit_unsupported(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    die("edit: not yet implemented on Windows");
+}
+#define CMD_EDIT cmd_edit_unsupported
+#else
+#define CMD_EDIT cmd_edit
+#endif
+
+/* Every subcommand, with its optional alias -- the one list dispatch,
+ * help lookup and "did you mean" suggestions all read. */
+typedef struct {
+    const char *name;
+    const char *alias;
+    int (*run)(int argc, char **argv);
+} Command;
+
+static const Command COMMANDS[] = {
+    {"add", NULL, cmd_add},
+    {"remove", "rm", cmd_remove},
+    {"init", NULL, cmd_init},
+    {"list", "ls", cmd_list},
+    {"doctor", NULL, cmd_doctor},
+    {"install", NULL, cmd_install},
+    {"uninstall", NULL, cmd_uninstall},
+    {"edit", NULL, CMD_EDIT},
+    {"info", NULL, cmd_info},
+    {"update", NULL, cmd_update},
+    {"export", NULL, cmd_export},
 };
+
+#define COMMAND_COUNT (sizeof(COMMANDS) / sizeof(COMMANDS[0]))
+
+/* The command named `arg`, by its name or its alias, or NULL. */
+static const Command *find_command(const char *arg) {
+    for (size_t i = 0; i < COMMAND_COUNT; i++) {
+        if (strcmp(COMMANDS[i].name, arg) == 0 ||
+            (COMMANDS[i].alias && strcmp(COMMANDS[i].alias, arg) == 0)) {
+            return &COMMANDS[i];
+        }
+    }
+    return NULL;
+}
 
 /* Renders `markup`: a span opened and closed with octal '\001' is a literal
  * (command/flag) and is colored bold green, '\002' is a placeholder value
@@ -76,7 +121,8 @@ static const CommandHelp COMMAND_HELP[] = {
         "\002<arg>\002]...\n"
         "                      [\001--policy\001 "
         "\002exit-code\002|\002heuristic\002|\002exit-code-match\002|\002route-args\002|"
-        "\002rewrite\002|\002split-args\002]\n"
+        "\002rewrite\002|\002split-args\002|\n"
+        "                      \002route-map\002|\002passthrough\002]\n"
         "                      [\001--error-pattern\001 \002<p>\002]... [\001--exit-code\001 "
         "\002<code>\002]...\n"
         "                      [\001--route-arg\001 \002<arg>\002]... "
@@ -84,18 +130,20 @@ static const CommandHelp COMMAND_HELP[] = {
         "                      [\001--split-source-arg\001 \002<arg>\002]... "
         "[\001--split-fallback-arg\001 \002<arg>\002]...\n"
         "                      [\001--rewrite\001 \002<from>\002=\002<to>\002]... "
-        "[\001--diagnostic\001] [\001--force\001] [\001-v\001|\001--verbose\001]\n"
+        "[\001--route\001 \002<match>\002=\002<command>\002]...\n"
+        "                      [\001--diagnostic\001] [\001--force\001] [\001-v\001|\001--verbose\001]\n"
         "                      [\001--capture-timeout\001 \002<ms>\002] "
         "[\001--capture-limit\001 \002<size>\002] [\001--split-config\001]\n",
 
         "  \001add\001       Create or update a shim named <name>, running \002<source>\002 "
         "first and\n"
         "            transparently retrying \002<fallback>\002 depending on the policy --\n"
-        "            see README.md for all six.\n"
+        "            see README.md for all eight.\n"
         "\n"
         "              \001--policy rewrite\001 is different from the rest: it never falls\n"
         "              back, just rewrites matched \001--rewrite\001 arguments before running\n"
-        "              source every time, and \001--fallback\001 is optional for it.\n"
+        "              source every time, and \001--fallback\001 is optional for it (as for\n"
+        "              \001--policy route-map\001, which runs one of its \001--route\001 commands).\n"
         "\n"
         "              \001--source-arg\001/\001--fallback-arg\001 attach fixed, baked-in arguments\n"
         "              to whichever runs, independent of policy, so a shim can also\n"
@@ -297,14 +345,13 @@ static const CommandHelp COMMAND_HELP[] = {
 /* Maps an alias to the COMMAND_HELP entry that documents it -- both `rm`
  * and `remove` (same for `ls`/`list`) show identical help, matching
  * cli_run()'s own dispatch below. */
-static const CommandHelp *find_command_help(const char *name) {
-    if (strcmp(name, "rm") == 0) {
-        name = "remove";
-    } else if (strcmp(name, "ls") == 0) {
-        name = "list";
+static const CommandHelp *find_command_help(const char *arg) {
+    const Command *cmd = find_command(arg);
+    if (!cmd) {
+        return NULL;
     }
     for (size_t i = 0; i < COMMAND_HELP_COUNT; i++) {
-        if (strcmp(COMMAND_HELP[i].name, name) == 0) {
+        if (strcmp(COMMAND_HELP[i].name, cmd->name) == 0) {
             return &COMMAND_HELP[i];
         }
     }
@@ -389,51 +436,21 @@ int cli_run(int argc, char **argv) {
         return 0;
     }
 
-    if (strcmp(argv[1], "add") == 0) {
-        return cmd_add(argc - 1, argv + 1);
-    }
-    if (strcmp(argv[1], "remove") == 0 || strcmp(argv[1], "rm") == 0) {
-        return cmd_remove(argc - 1, argv + 1);
-    }
-    if (strcmp(argv[1], "init") == 0) {
-        return cmd_init(argc - 1, argv + 1);
-    }
-    if (strcmp(argv[1], "list") == 0 || strcmp(argv[1], "ls") == 0) {
-        return cmd_list(argc - 1, argv + 1);
-    }
-    if (strcmp(argv[1], "doctor") == 0) {
-        return cmd_doctor(argc - 1, argv + 1);
-    }
-    if (strcmp(argv[1], "install") == 0) {
-        return cmd_install(argc - 1, argv + 1);
-    }
-    if (strcmp(argv[1], "uninstall") == 0) {
-        return cmd_uninstall(argc - 1, argv + 1);
-    }
-    if (strcmp(argv[1], "edit") == 0) {
-#ifdef _WIN32
-        /* edit.c is excluded from the Windows build entirely -- see
-         * windows-port.md's Phase 0 notes (wordexp() has no Windows
-         * equivalent, and the fallback-editor chain needs a real
-         * PATH-search-first redesign, not a mechanical port). */
-        die("edit: not yet implemented on Windows (see windows-port.md)");
-#else
-        return cmd_edit(argc - 1, argv + 1);
-#endif
-    }
-    if (strcmp(argv[1], "info") == 0) {
-        return cmd_info(argc - 1, argv + 1);
-    }
-    if (strcmp(argv[1], "update") == 0) {
-        return cmd_update(argc - 1, argv + 1);
-    }
-    if (strcmp(argv[1], "export") == 0) {
-        return cmd_export(argc - 1, argv + 1);
+    const Command *cmd = find_command(argv[1]);
+    if (cmd) {
+        return cmd->run(argc - 1, argv + 1);
     }
 
-    fprintf(stderr, "shimback: unknown command '%s'\n", argv[1]);
-    char *suggestion = fuzzy_suggest(argv[1], KNOWN_COMMANDS,
-                                      sizeof(KNOWN_COMMANDS) / sizeof(KNOWN_COMMANDS[0]));
+    warn("unknown command '%s'", argv[1]);
+    const char *candidates[2 * COMMAND_COUNT];
+    size_t candidate_count = 0;
+    for (size_t i = 0; i < COMMAND_COUNT; i++) {
+        candidates[candidate_count++] = COMMANDS[i].name;
+        if (COMMANDS[i].alias) {
+            candidates[candidate_count++] = COMMANDS[i].alias;
+        }
+    }
+    char *suggestion = fuzzy_suggest(argv[1], candidates, candidate_count);
     if (suggestion) {
         print_suggestion_hint(suggestion);
         free(suggestion);

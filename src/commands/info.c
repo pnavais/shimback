@@ -64,7 +64,7 @@ static const char *markup_escape(char c) {
     }
 }
 
-static void pf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void pf(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
 
 static void pf(const char *fmt, ...) {
     DynBuf f;
@@ -257,16 +257,6 @@ static const char *policy_summary(Policy p) {
     return "";
 }
 
-static bool policy_uses_fallback(Policy p) {
-    return p != POLICY_REWRITE && p != POLICY_ROUTE_MAP;
-}
-
-/* Policies that ever run the source as a hidden, captured trial run. */
-static bool policy_uses_trial_run(Policy p) {
-    return p == POLICY_EXIT_CODE || p == POLICY_HEURISTIC || p == POLICY_EXIT_CODE_MATCH ||
-           p == POLICY_SPLIT_ARGS;
-}
-
 /* ---- symlink / PATH ------------------------------------------------------ */
 
 static bool same_dir(const char *a, const char *b) {
@@ -289,7 +279,7 @@ static void print_symlink(const char *link_path, const char *self_exe) {
     /* A Windows shim is a hard link, not a symlink -- there's no separate
      * "raw unresolved target" to read at all (unlike a symlink, a hard
      * link just *is* the same file, so "dead"/"missing" as concepts don't
-     * carry over the same way either -- see windows-port.md Phase 3).
+     * carry over the same way either).
      * looks_like_shimback_binary() (which already checks
      * is_executable_file internally) is both the existence and validity
      * check in one, mirroring check_symlink's identical Windows branch in
@@ -312,6 +302,7 @@ static void print_symlink(const char *link_path, const char *self_exe) {
      * return any one of its several linked names, not necessarily
      * self_exe's own), and that's more machinery than this cosmetic
      * distinction is worth right now. */
+    (void)self_exe;
     pf("  " TAG_OK "\n");
     label("");
     pf(M_DIM "(hard link to a shimback binary)" M_RESET "\n");
@@ -954,7 +945,8 @@ static void print_flow(const View *v, const char *shim_dir) {
 
 int cmd_info(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "shimback: info: missing shim name\n%s", USAGE);
+        warn("info: missing shim name");
+        fprintf(stderr, "%s", USAGE);
         return 1;
     }
     if (argc > 2) {
@@ -989,7 +981,7 @@ int cmd_info(int argc, char **argv) {
 
     if (src == SHIM_SOURCE_ORPHAN) {
         if (access(link_path, F_OK) != 0) {
-            fprintf(stderr, "shimback: info: no shim configured for '%s'\n", name);
+            warn("info: no shim configured for '%s'", name);
             size_t count = 0;
             char **names = collect_all_shim_names(&cfg, &count);
             if (count > 0) {

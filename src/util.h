@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 #define ANSI_RESET "\033[0m"
 #define ANSI_BOLD "\033[1m"
@@ -53,31 +54,36 @@ bool stderr_is_color(void);
  * still colors the body text on top of this). */
 #define ANSI_PREFIX ANSI_BLUE
 
+/* printf-style format checking for this project's variadic output
+ * helpers: argument `fmt_idx` is the format string, and the values to
+ * check against it start at argument `first_arg`. */
+#define SHIMBACK_PRINTF(fmt_idx, first_arg) __attribute__((format(printf, fmt_idx, first_arg)))
+
 /* Prints "shimback: <msg>" to stdout -- the stdout counterpart to warn(),
  * for ordinary success/info messages (e.g. "removed ..."), not just
  * errors/warnings. */
-void info(const char *fmt, ...);
+void info(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
 
 /* Prints <msg> to stdout, colored ANSI_YELLOW (warn color) when stdout is
  * a color terminal, with no "shimback:" prefix -- for a standalone
  * recommended next step (e.g. "Restart your shell ... for the PATH
  * change to take effect."), set apart on its own line from whatever
  * info()/warn() lines led up to it. */
-void recommend(const char *fmt, ...);
+void recommend(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
 
 /* Prints "shimback: <msg>" to stderr and exits with status 1. Never returns.
  * Reserved for unrecoverable CLI/validation errors -- never call this from
  * dispatch's success/fallback paths, which have their own precise exit codes. */
-void die(const char *fmt, ...);
+_Noreturn void die(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
 
 /* Prints "shimback: <msg>" to stderr. Does not exit. */
-void warn(const char *fmt, ...);
+void warn(const char *fmt, ...) SHIMBACK_PRINTF(1, 2);
 
 /* Like warn(), but the message body is also wrapped in `color` (an ANSI_*
  * string) when stderr is a color terminal -- for the few user-facing
  * conditions (e.g. "already installed") worth standing out further than
  * the "shimback:" prefix every warn() already gets. */
-void warn_colored(const char *color, const char *fmt, ...);
+void warn_colored(const char *color, const char *fmt, ...) SHIMBACK_PRINTF(2, 3);
 
 /* Allocation wrappers that die() on OOM, so call sites never need to check. */
 void *xmalloc(size_t size);
@@ -129,6 +135,30 @@ const char *str_casestr(const char *haystack, const char *needle);
  * no-op-shim check and in dispatch's matching runtime shortcut. */
 bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count);
 
+/* Reads the answer to a "[y/N]" prompt the caller just printed (flushing
+ * stdout first): true only for an answer starting with 'y' or 'Y'. On EOF
+ * (non-interactive stdin, Ctrl+D) prints a newline to end the prompt's
+ * line, returns false, and sets *eof if `eof` is non-NULL. */
+bool read_yes_no(bool *eof);
+
+typedef enum {
+    FILE_READ_OK,
+    FILE_READ_SEEK_FAILED, /* the size couldn't be determined; errno is set */
+    FILE_READ_SHORT,       /* an I/O error, or the file changed size mid-read */
+} FileReadStatus;
+
+/* Reads all of the already-open `f` into a newly allocated, NUL-terminated
+ * buffer and closes `f`. On FILE_READ_OK sets *out and *out_len (not
+ * counting the NUL). Otherwise *out is untouched; for FILE_READ_SHORT,
+ * *out_len and *expected_len hold the bytes read and the size expected.
+ * A short read is never passed off as the whole file: callers write
+ * modified versions of these files back, so a truncated read could
+ * truncate the real file. */
+FileReadStatus read_open_file(FILE *f, char **out, size_t *out_len, long *expected_len);
+
+/* Frees each of the `count` strings in `a`, then `a` itself. */
+void str_array_free(char **a, size_t count);
+
 /* Parses a human-friendly byte size: a non-negative integer optionally
  * followed by a case-insensitive unit suffix, with no whitespace in
  * between -- "B" (or no suffix at all) for plain bytes, "K"/"KB" for
@@ -139,5 +169,14 @@ bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count
  * unrecognized suffix, or a value that would overflow size_t once
  * multiplied out. */
 bool parse_size_bytes(const char *s, size_t *out);
+
+/* Strictly parses a non-negative integer field: rejects empty input,
+ * trailing garbage, an out-of-range value, and a negative one. Unlike a
+ * bare strtol() call, "nope" (or "-5", or "99999999999999999999") is
+ * never silently accepted as 0 (or some wrapped/truncated value) -- for a
+ * field like capture_timeout_ms, which directly drives dispatch behavior
+ * (0 means "cut over to live output immediately"), silently misparsing a
+ * typo would change behavior without ever surfacing as an error. */
+bool parse_nonneg_int(const char *s, int *out);
 
 #endif /* SHIMBACK_UTIL_H */

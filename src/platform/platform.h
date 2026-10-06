@@ -236,8 +236,8 @@ void plat_enable_vt_output(void);
  * normal, valid outcome (nothing found here / leave this entry alone),
  * not an error, so returning false lets list/doctor/add/remove/uninstall
  * run cleanly today reporting zero shims rather than crashing -- the
- * right degraded behavior until Phase 3 (windows-port.md) adds a real
- * hard-link-aware check (file-index comparison against self_exe_path()). */
+ * right degraded behavior: shim-directory scans use is_shim_dir_entry
+ * (paths.c), which recognizes hard links by content instead. */
 bool plat_path_is_symlink(const char *path);
 
 /* Resolves `path` to a canonical, absolute form -- the existing symlink
@@ -252,15 +252,14 @@ char *plat_realpath(const char *path);
 /* Creates a shim link at `link_path` sharing the same underlying file as
  * `target` (POSIX: symlink() -- link_path becomes a *path reference* to
  * target; Windows: CreateHardLinkW -- link_path becomes a second name for
- * the *same file data*, no path reference involved at all -- see
- * windows-port.md's "why hard links, not symlinks" discussion up top).
+ * the *same file data*, no path reference involved at all).
  * `target` should already be an absolute, canonical path. Returns false
  * on failure (including, on Windows, if `link_path` and `target` aren't
  * on the same volume -- hard links can't cross volumes; callers surface
  * this as a clear error rather than a generic one where practical). */
 bool plat_link_create(const char *target, const char *link_path);
 
-/* --- Shell/PATH integration (Phase 5) -------------------------------- */
+/* --- Shell/PATH integration -------------------------------- */
 
 /* The current user's "Documents" special folder (Windows:
  * SHGetKnownFolderPath(FOLDERID_Documents) -- the same folder PowerShell

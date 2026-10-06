@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "paths.h"
 #include "platform/platform.h"
 #include "util.h"
 
@@ -691,6 +692,92 @@ static void test_missing_file_is_empty_config(void) {
     config_free(&cfg);
 }
 
+static void write_text_file(const char *path, const char *text) {
+    FILE *f = plat_fopen(path, "wb");
+    fwrite(text, 1, strlen(text), f);
+    fclose(f);
+}
+
+/* Error messages must name the physical line, blank lines included --
+ * render_config itself writes a blank line before every section. */
+static void test_error_line_numbers(void) {
+    char *path = make_temp_path("lineno");
+    Config cfg;
+    char errbuf[256];
+
+    write_text_file(path, "version = 1\n\n[shims.sed]\n\nfallback = \"/usr/bin/sed\"\n\n"
+                          "this is not a key value pair\n");
+    ConfigStatus st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "malformed line after blank lines is rejected");
+    check_str_eq("config_load counts blank lines", "line 7: expected 'key = value'", errbuf);
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    write_text_file(path, "version = 1\r\n\r\n[shims.sed]\r\n\r\nbogus\r\n");
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check_str_eq("config_load counts blank CRLF lines", "line 5: expected 'key = value'", errbuf);
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    write_text_file(path, "version = 1\n\n[shims.sed]\npolicy = \"nope\"\n");
+    st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check_str_eq("unknown policy lists every policy",
+                 "line 4: 'policy' must be \"exit-code\", \"heuristic\", \"exit-code-match\", "
+                 "\"route-args\", \"rewrite\", \"split-args\", \"route-map\", or \"passthrough\"",
+                 errbuf);
+    if (st == CONFIG_OK) {
+        config_free(&cfg);
+    }
+
+    write_text_file(path, "fallback = \"/usr/bin/sed\"\n\n\nbogus\n");
+    ShimEntry entry;
+    memset(&entry, 0, sizeof(entry));
+    st = config_load_split(path, &entry, errbuf, sizeof(errbuf));
+    check(st == CONFIG_ERR_PARSE, "malformed split-file line after blank lines is rejected");
+    check_str_eq("config_load_split counts blank lines", "line 4: expected 'key = value'", errbuf);
+    shim_entry_free(&entry);
+
+    remove(path);
+    free(path);
+}
+
+/* An escaped backslash right before a closing quote must not be taken for
+ * an escaped quote by the comment stripper. */
+static void test_comment_after_escaped_backslash(void) {
+    char *path = make_temp_path("escbs");
+    Config cfg;
+    char errbuf[256];
+
+    write_text_file(path, "version = 1\n\n[shims.sed]\nfallback = \"C:\\\\\" # trailing note\n"
+                          "rewrite_from = [\"C:\\\\\", \"#hash\"]\nrewrite_to = [\"a\", \"b\"]\n"
+                          "source = \"/bin/sed\"\npolicy = \"rewrite\"\n");
+    ConfigStatus st = config_load(path, &cfg, errbuf, sizeof(errbuf));
+    check(st == CONFIG_OK, "value ending in an escaped backslash, then a comment, parses");
+    if (st == CONFIG_OK) {
+        check_str_eq("escaped trailing backslash is unescaped", "C:\\", cfg.shims[0].fallback);
+        check(cfg.shims[0].rewrite_from_count == 2, "array after an escaped backslash keeps both items");
+        if (cfg.shims[0].rewrite_from_count == 2) {
+            check_str_eq("'#' inside a later quoted item is not a comment", "#hash",
+                         cfg.shims[0].rewrite_from[1]);
+        }
+        config_free(&cfg);
+    } else {
+        fprintf(stderr, "  (error was: %s)\n", errbuf);
+    }
+
+    remove(path);
+    free(path);
+}
+
+/* A root path always exists; mkdir_p must report success for it, not try
+ * to create it (or an empty name left after stripping its separator). */
+static void test_mkdir_p_root(void) {
+    check(mkdir_p("/"), "mkdir_p(\"/\") succeeds");
+    check(mkdir_p("//"), "mkdir_p(\"//\") succeeds");
+}
+
 static void test_parse_size_bytes(void) {
     size_t v;
 
@@ -735,6 +822,9 @@ int main(void) {
     test_round_trip();
     test_literal_parse();
     test_validation_errors();
+    test_error_line_numbers();
+    test_comment_after_escaped_backslash();
+    test_mkdir_p_root();
     test_parse_size_bytes();
     test_missing_file_is_empty_config();
 

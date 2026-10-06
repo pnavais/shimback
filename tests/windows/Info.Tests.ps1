@@ -37,6 +37,43 @@ Describe "info" {
         $r.StdOut | Should -Match "no problems noticed"
     }
 
+    It "finds a split config next to the shimback binary (backslash exe path)" {
+        $a = @("add", "binsplit", "-s", $PS, "-f", $PS, "--split-config")
+        foreach ($x in $PrimaryArgs) { $a += @("--source-arg", $x) }
+        foreach ($x in $FallbackArgs) { $a += @("--fallback-arg", $x) }
+        Invoke-Shimback $a | Out-Null
+
+        # GetModuleFileNameW reports the exe path with backslashes; the
+        # binary-dir location must still be its real directory, not ".".
+        $altBin = Join-Path $Sandbox.Root "altbin"
+        New-Item -ItemType Directory -Force -Path $altBin | Out-Null
+        $altExe = Join-Path $altBin "shimback.exe"
+        Copy-Item (Get-ShimbackExe) $altExe
+        $cfgDir = Split-Path (Get-ConfigFile $Sandbox)
+        Move-Item (Join-Path $cfgDir "binsplit-config.toml") (Join-Path $altBin "binsplit-config.toml")
+
+        $r = Invoke-Exe $altExe @("info", "binsplit")
+        $r.StdOut | Should -Match "a split config file"
+        $r.StdOut | Should -Match ([regex]::Escape("altbin"))
+    }
+
+    It "exports to the root of a drive (mkdir_p on a drive root)" {
+        # A throwaway drive letter mapped onto the sandbox, so the test
+        # writes to a drive root without touching a real one.
+        $letter = [char[]]('PQRSTUVWXYZ') | Where-Object { -not (Test-Path "$($_):\") } | Select-Object -First 1
+        if (-not $letter) { Set-ItResult -Skipped -Because "no free drive letter"; return }
+        $rootDir = Join-Path $Sandbox.Root "driveroot"
+        New-Item -ItemType Directory -Force -Path $rootDir | Out-Null
+        subst "$($letter):" $rootDir
+        try {
+            $r = Invoke-Shimback @("export", "-o", "$($letter):\", "-y")
+            $r.ExitCode | Should -Be 0
+            @(Get-ChildItem $rootDir -Filter "*.sz").Count | Should -Be 1
+        } finally {
+            subst "$($letter):" /d
+        }
+    }
+
     It "shows the passthrough policy's own summary and rejects diagnostic in its output" {
         $a = @("add", "pttool", "-s", $PS, "-f", $PS, "--policy", "passthrough")
         foreach ($x in $PrimaryArgs) { $a += @("--source-arg", $x) }

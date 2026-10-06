@@ -99,9 +99,19 @@ char *canonicalize(const char *path);
  * (macOS: _NSGetExecutablePath; Linux: /proc/self/exe). */
 char *self_exe_path(void);
 
-/* The directory portion of `path` (everything before the last '/'), or "."
- * if `path` has no '/'. Newly allocated. */
+/* The directory portion of `path` (everything before the last path
+ * separator, see is_path_sep), or "." if `path` has none. Newly allocated. */
 char *dir_of(const char *path);
+
+/* The final component of `path`: a pointer just past its last path
+ * separator, or `path` itself if it has none. Not allocated. */
+const char *path_basename(const char *path);
+
+/* '/' everywhere; also '\' on Windows. */
+bool is_path_sep(char c);
+
+/* True if `path` exists and is a directory (following symlinks). */
+bool path_is_dir(const char *path);
 
 bool is_executable_file(const char *path);
 
@@ -136,7 +146,7 @@ bool is_shim_dir_entry(const char *entry_path);
  * directory (POSIX: `name` itself, unchanged; Windows: `name` + ".exe" --
  * cmd.exe/PowerShell only resolve a bare command name against
  * PATHEXT-listed extensions, so an extension-less shim would be invisible
- * to normal invocation there; see windows-port.md Phase 3). Newly
+ * to normal invocation there). Newly
  * allocated. */
 char *shim_file_name(const char *name);
 
@@ -178,7 +188,7 @@ void format_link_create_error(char *buf, size_t bufcap, const char *cmd_prefix,
  * (`target`) -- a hard link (plat_link_create()) by default, falling back
  * to a plain copy (copy_executable()) specifically when that fails with
  * EXDEV (Windows only: a hard link can't cross drives, but a copy has no
- * such restriction -- see windows-port.md Phase 6's addendum). Prints a
+ * such restriction). Prints a
  * `warn_colored()` notice when the fallback is used, since a copy doesn't
  * share disk space with shimback's binary the way a link does and won't
  * automatically reflect a later `shimback update` either -- and, since

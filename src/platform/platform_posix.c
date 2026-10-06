@@ -40,7 +40,7 @@
  * POSIX process-management primitive (needs pid_t, which doesn't exist on
  * Windows at all), not a portable utility -- moved here, with an explicit
  * prototype in edit.c (its one remaining external caller, itself deferred
- * from the Windows build -- see windows-port.md), when util.h's own
+ * from the Windows build), when util.h's own
  * unconditional `pid_t` dependency turned out to make that header
  * uncompilable on Windows regardless of whether anything there actually
  * called this. */
@@ -73,7 +73,7 @@ int plat_run_inherited(const char *exe, char *const argv[]) {
     }
     if (pid == 0) {
         execv(exe, argv);
-        fprintf(stderr, "shimback: exec %s: %s\n", exe, strerror(errno));
+        warn("exec %s: %s", exe, strerror(errno));
         _exit(127);
     }
     int status = 0;
@@ -121,7 +121,7 @@ int plat_run_captured(const char *exe, char *const argv[], DynBuf *out, DynBuf *
         close(err_pipe[0]);
         close(err_pipe[1]);
         execv(exe, argv);
-        fprintf(stderr, "shimback: exec %s: %s\n", exe, strerror(errno));
+        warn("exec %s: %s", exe, strerror(errno));
         _exit(127);
     }
 
@@ -510,7 +510,7 @@ bool plat_read_stdin_byte(char *out) {
     return n == 1;
 }
 
-/* --- Shell/PATH integration (Phase 5) -------------------------------- */
+/* --- Shell/PATH integration -------------------------------- */
 /* All five of these are Windows-only concepts (a "Documents" special
  * folder, parent-process detection in lieu of $SHELL, cmd.exe's AutoRun
  * registry hook, and the HKCU\Environment\Path persistent-PATH registry

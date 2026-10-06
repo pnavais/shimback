@@ -2,7 +2,6 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,27 +11,6 @@
 #include "paths.h"
 #include "platform/platform.h"
 #include "util.h"
-
-/* Strictly parses a non-negative integer field: rejects empty input,
- * trailing garbage, an out-of-range value, and a negative one. Unlike a
- * bare strtol() call, "nope" (or "-5", or "99999999999999999999") is
- * never silently accepted as 0 (or some wrapped/truncated value) -- for a
- * field like capture_timeout_ms, which directly drives dispatch behavior
- * (0 means "cut over to live output immediately"), silently misparsing a
- * typo would change behavior without ever surfacing as an error. */
-static bool parse_nonneg_int(const char *s, int *out) {
-    if (s[0] == '\0') {
-        return false;
-    }
-    errno = 0;
-    char *end;
-    long v = strtol(s, &end, 10);
-    if (*end != '\0' || errno == ERANGE || v < 0 || v > INT_MAX) {
-        return false;
-    }
-    *out = (int)v;
-    return true;
-}
 
 void config_init(Config *cfg) {
     cfg->version = 1;
@@ -49,68 +27,95 @@ void config_init(Config *cfg) {
     cfg->mise_integration = false;
 }
 
+/* Everything about each policy that's a fixed property of the policy
+ * itself, in enum order. */
+static const struct {
+    const char *name;
+    const char *color; /* see policy_color */
+    const char *description;
+    bool uses_fallback;
+    bool uses_trial_run;
+} POLICY_INFO[POLICY__COUNT] = {
+    [POLICY_EXIT_CODE] = {"exit-code", NULL,
+                          "Fall back whenever source exits non-zero (the default).", true, true},
+    [POLICY_HEURISTIC] = {"heuristic", ANSI_YELLOW,
+                          "Fall back only when source's stderr matches a configured error "
+                          "pattern.",
+                          true, true},
+    [POLICY_EXIT_CODE_MATCH] = {"exit-code-match", ANSI_MAGENTA,
+                                "Fall back only when source exits with one of the configured "
+                                "codes.",
+                                true, true},
+    [POLICY_ROUTE_ARGS] = {"route-args", ANSI_CYAN,
+                           "Pick source or fallback up front, based on the invocation's "
+                           "arguments.",
+                           true, false},
+    [POLICY_REWRITE] = {"rewrite", ANSI_GREEN,
+                        "Always run source, rewriting matched arguments first; no fallback used.",
+                        false, false},
+    [POLICY_SPLIT_ARGS] = {"split-args", ANSI_RED,
+                           "Pick source or fallback up front, from each side's own "
+                           "most-discriminating args.",
+                           true, true},
+    [POLICY_ROUTE_MAP] = {"route-map", ANSI_BLUE,
+                          "Route to any number of other commands, based on the invocation's "
+                          "arguments.",
+                          false, false},
+    [POLICY_PASSTHROUGH] = {"passthrough", ANSI_BOLD ANSI_MAGENTA,
+                            "Like exit-code, but never hides source's output -- no diagnostic "
+                            "or capture limits.",
+                            true, false},
+};
+
+/* An out-of-range value reads as the default policy. */
+static Policy valid_policy(Policy p) {
+    return (unsigned)p < POLICY__COUNT ? p : POLICY_EXIT_CODE;
+}
+
 const char *policy_to_string(Policy p) {
-    switch (p) {
-        case POLICY_HEURISTIC: return "heuristic";
-        case POLICY_EXIT_CODE_MATCH: return "exit-code-match";
-        case POLICY_ROUTE_ARGS: return "route-args";
-        case POLICY_REWRITE: return "rewrite";
-        case POLICY_SPLIT_ARGS: return "split-args";
-        case POLICY_ROUTE_MAP: return "route-map";
-        case POLICY_PASSTHROUGH: return "passthrough";
-        case POLICY_EXIT_CODE:
-        default: return "exit-code";
-    }
+    return POLICY_INFO[valid_policy(p)].name;
 }
 
 bool policy_from_string(const char *s, Policy *out) {
-    if (strcmp(s, "exit-code") == 0) {
-        *out = POLICY_EXIT_CODE;
-        return true;
-    }
-    if (strcmp(s, "heuristic") == 0) {
-        *out = POLICY_HEURISTIC;
-        return true;
-    }
-    if (strcmp(s, "exit-code-match") == 0) {
-        *out = POLICY_EXIT_CODE_MATCH;
-        return true;
-    }
-    if (strcmp(s, "route-args") == 0) {
-        *out = POLICY_ROUTE_ARGS;
-        return true;
-    }
-    if (strcmp(s, "rewrite") == 0) {
-        *out = POLICY_REWRITE;
-        return true;
-    }
-    if (strcmp(s, "split-args") == 0) {
-        *out = POLICY_SPLIT_ARGS;
-        return true;
-    }
-    if (strcmp(s, "route-map") == 0) {
-        *out = POLICY_ROUTE_MAP;
-        return true;
-    }
-    if (strcmp(s, "passthrough") == 0) {
-        *out = POLICY_PASSTHROUGH;
-        return true;
+    for (int i = 0; i < POLICY__COUNT; i++) {
+        if (strcmp(s, POLICY_INFO[i].name) == 0) {
+            *out = (Policy)i;
+            return true;
+        }
     }
     return false;
 }
 
 const char *policy_color(Policy p) {
-    switch (p) {
-        case POLICY_HEURISTIC: return ANSI_YELLOW;
-        case POLICY_EXIT_CODE_MATCH: return ANSI_MAGENTA;
-        case POLICY_ROUTE_ARGS: return ANSI_CYAN;
-        case POLICY_REWRITE: return ANSI_GREEN;
-        case POLICY_SPLIT_ARGS: return ANSI_RED;
-        case POLICY_ROUTE_MAP: return ANSI_BLUE;
-        case POLICY_PASSTHROUGH: return ANSI_BOLD ANSI_MAGENTA;
-        case POLICY_EXIT_CODE:
-        default: return NULL;
+    return POLICY_INFO[valid_policy(p)].color;
+}
+
+const char *policy_description(Policy p) {
+    return POLICY_INFO[valid_policy(p)].description;
+}
+
+bool policy_uses_fallback(Policy p) {
+    return POLICY_INFO[valid_policy(p)].uses_fallback;
+}
+
+bool policy_uses_trial_run(Policy p) {
+    return POLICY_INFO[valid_policy(p)].uses_trial_run;
+}
+
+char *policy_names_list(void) {
+    DynBuf buf;
+    dynbuf_init(&buf);
+    for (int i = 0; i < POLICY__COUNT; i++) {
+        if (i > 0) {
+            dynbuf_append_str(&buf, i == POLICY__COUNT - 1 ? ", or " : ", ");
+        }
+        dynbuf_append_char(&buf, '"');
+        dynbuf_append_str(&buf, POLICY_INFO[i].name);
+        dynbuf_append_char(&buf, '"');
     }
+    char *result = xstrdup(dynbuf_cstr(&buf));
+    dynbuf_free(&buf);
+    return result;
 }
 
 ShimEntry *config_find(Config *cfg, const char *name) {
@@ -137,7 +142,6 @@ size_t config_upsert(Config *cfg, const char *name) {
     memset(entry, 0, sizeof(*entry));
     entry->name = xstrdup(name);
     entry->policy = POLICY_EXIT_CODE;
-    entry->diagnostic = false;
     return cfg->count++;
 }
 
@@ -154,51 +158,27 @@ bool config_remove(Config *cfg, const char *name) {
     return false;
 }
 
+void route_entry_free(RouteEntry *route) {
+    free(route->match);
+    free(route->command);
+    str_array_free(route->args, route->arg_count);
+}
+
 void shim_entry_free(ShimEntry *entry) {
     free(entry->name);
     free(entry->source);
     free(entry->fallback);
-    for (size_t i = 0; i < entry->source_arg_count; i++) {
-        free(entry->source_args[i]);
-    }
-    free(entry->source_args);
-    for (size_t i = 0; i < entry->fallback_arg_count; i++) {
-        free(entry->fallback_args[i]);
-    }
-    free(entry->fallback_args);
-    for (size_t i = 0; i < entry->error_pattern_count; i++) {
-        free(entry->error_patterns[i]);
-    }
-    free(entry->error_patterns);
+    str_array_free(entry->source_args, entry->source_arg_count);
+    str_array_free(entry->fallback_args, entry->fallback_arg_count);
+    str_array_free(entry->error_patterns, entry->error_pattern_count);
     free(entry->exit_codes);
-    for (size_t i = 0; i < entry->route_arg_count; i++) {
-        free(entry->route_args[i]);
-    }
-    free(entry->route_args);
-    for (size_t i = 0; i < entry->source_route_arg_count; i++) {
-        free(entry->source_route_args[i]);
-    }
-    free(entry->source_route_args);
-    for (size_t i = 0; i < entry->fallback_route_arg_count; i++) {
-        free(entry->fallback_route_args[i]);
-    }
-    free(entry->fallback_route_args);
-    for (size_t i = 0; i < entry->rewrite_from_count; i++) {
-        free(entry->rewrite_from[i]);
-    }
-    free(entry->rewrite_from);
-    for (size_t i = 0; i < entry->rewrite_to_count; i++) {
-        free(entry->rewrite_to[i]);
-    }
-    free(entry->rewrite_to);
+    str_array_free(entry->route_args, entry->route_arg_count);
+    str_array_free(entry->source_route_args, entry->source_route_arg_count);
+    str_array_free(entry->fallback_route_args, entry->fallback_route_arg_count);
+    str_array_free(entry->rewrite_from, entry->rewrite_from_count);
+    str_array_free(entry->rewrite_to, entry->rewrite_to_count);
     for (size_t i = 0; i < entry->route_count; i++) {
-        RouteEntry *route = &entry->routes[i];
-        free(route->match);
-        free(route->command);
-        for (size_t j = 0; j < route->arg_count; j++) {
-            free(route->args[j]);
-        }
-        free(route->args);
+        route_entry_free(&entry->routes[i]);
     }
     free(entry->routes);
     memset(entry, 0, sizeof(*entry));
@@ -220,16 +200,14 @@ void config_free(Config *cfg) {
 
 /* ---- Parsing ---- */
 
-static void trim(char **start, char *end_hint) {
-    /* end_hint points just past the last meaningful char (a NUL or similar);
-     * trims leading/trailing ASCII whitespace in place by adjusting *start
-     * and writing a new NUL. */
+/* Trims leading/trailing ASCII whitespace in place by adjusting *start
+ * and writing a new NUL. */
+static void trim(char **start) {
     char *s = *start;
     while (*s != '\0' && isspace((unsigned char)*s)) {
         s++;
     }
     char *e = s + strlen(s);
-    (void)end_hint;
     while (e > s && isspace((unsigned char)e[-1])) {
         e--;
     }
@@ -237,17 +215,71 @@ static void trim(char **start, char *end_hint) {
     *start = s;
 }
 
-/* Truncates `line` at the first '#' that occurs outside a quoted string. */
+/* Splits off the next line of a NUL-terminated buffer in place: writes a
+ * NUL over its '\n', advances *cursor past it, and returns the line, or
+ * NULL once the buffer is exhausted. Unlike strtok_r, empty lines are
+ * returned too, so a line counter stays in step with the physical file. */
+static char *next_line(char **cursor) {
+    char *line = *cursor;
+    if (line == NULL) {
+        return NULL;
+    }
+    char *nl = strchr(line, '\n');
+    if (nl) {
+        *nl = '\0';
+        *cursor = nl + 1;
+    } else {
+        *cursor = NULL;
+    }
+    return line;
+}
+
+/* Truncates `line` at the first '#' that occurs outside a quoted string.
+ * Inside quotes a backslash escapes the next character, matching
+ * parse_quoted_string, so "C:\\" ends at its last quote. */
 static void strip_trailing_comment(char *line) {
     bool in_quotes = false;
     for (char *p = line; *p != '\0'; p++) {
-        if (*p == '"' && (p == line || p[-1] != '\\')) {
+        if (in_quotes && *p == '\\' && p[1] != '\0') {
+            p++;
+        } else if (*p == '"') {
             in_quotes = !in_quotes;
         } else if (*p == '#' && !in_quotes) {
             *p = '\0';
             return;
         }
     }
+}
+
+/* The next line of `*cursor` (see next_line) with its comment stripped and
+ * whitespace trimmed, skipping blank ones; counts every physical line read
+ * into *line_no. NULL once the buffer is exhausted. */
+static char *next_content_line(char **cursor, int *line_no) {
+    char *line;
+    while ((line = next_line(cursor)) != NULL) {
+        (*line_no)++;
+        strip_trailing_comment(line);
+        trim(&line);
+        if (*line != '\0') {
+            return line;
+        }
+    }
+    return NULL;
+}
+
+/* Splits a `key = value` line in place at its first '=', trimming both
+ * sides. False if there is no '='. */
+static bool split_key_value(char *line, char **key, char **value) {
+    char *eq = strchr(line, '=');
+    if (!eq) {
+        return false;
+    }
+    *eq = '\0';
+    *key = line;
+    *value = eq + 1;
+    trim(key);
+    trim(value);
+    return true;
 }
 
 /* Parses a quoted string starting at *cursor (which must point at the
@@ -406,36 +438,20 @@ static bool parse_int_array(const char **cursor, int **out, size_t *out_count) {
  * and ENOENT-handling before calling this. */
 static ConfigStatus read_file_into_buffer(FILE *f, const char *path, char **out, char *errbuf,
                                            size_t errbuf_size) {
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, plat_strerror(errno));
-        return CONFIG_ERR_IO;
+    size_t n = 0;
+    long size = 0;
+    switch (read_open_file(f, out, &n, &size)) {
+        case FILE_READ_OK:
+            return CONFIG_OK;
+        case FILE_READ_SEEK_FAILED:
+            snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, plat_strerror(errno));
+            return CONFIG_ERR_IO;
+        case FILE_READ_SHORT:
+        default:
+            snprintf(errbuf, errbuf_size, "cannot read %s: incomplete read (got %zu of %ld bytes)",
+                     path, n, size);
+            return CONFIG_ERR_IO;
     }
-    long size = ftell(f);
-    if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, plat_strerror(errno));
-        return CONFIG_ERR_IO;
-    }
-    char *contents = xmalloc((size_t)size + 1);
-    size_t n = fread(contents, 1, (size_t)size, f);
-    bool read_error = ferror(f) || n != (size_t)size;
-    fclose(f);
-    if (read_error) {
-        /* A short read here means either a genuine I/O error or the file
-         * changing size underneath us between the ftell() above and this
-         * fread() -- either way, treating whatever partial bytes came
-         * through as "the whole file" would let a subsequent save quietly
-         * rewrite the file down to just that truncated prefix, discarding
-         * every entry after it. Fail instead of guessing. */
-        free(contents);
-        snprintf(errbuf, errbuf_size, "cannot read %s: incomplete read (got %zu of %ld bytes)",
-                 path, n, size);
-        return CONFIG_ERR_IO;
-    }
-    contents[n] = '\0';
-    *out = contents;
-    return CONFIG_OK;
 }
 
 /* After a value's own syntax (a quoted string, an array, ...) has already
@@ -446,7 +462,7 @@ static ConfigStatus read_file_into_buffer(FILE *f, const char *path, char **out,
  * `fallback = "/bin/echo" garbage` is silently accepted with the trailing
  * garbage simply ignored -- and then silently dropped for good the next
  * time shimback rewrites the file, hiding what was actually a malformed
- * line instead of rejecting it (see review.md). */
+ * line instead of rejecting it. */
 static bool no_trailing_garbage(const char *cursor) {
     skip_ws(&cursor);
     return *cursor == '\0';
@@ -457,63 +473,77 @@ static bool no_trailing_garbage(const char *cursor) {
  * per-[shims.x]-line handling and config_load_split (a split file's every
  * line is one of these, with no section header involved) so the two can
  * never drift apart on what a shim's fields mean. */
+/* `key = "..."`: replaces *dst with the parsed string. */
+static ConfigStatus parse_str_field(const char *value_str, char **dst, const char *key,
+                                    int line_no, char *errbuf, size_t errbuf_size) {
+    const char *cursor = value_str;
+    char *v = parse_quoted_string(&cursor);
+    if (!v || !no_trailing_garbage(cursor)) {
+        free(v);
+        snprintf(errbuf, errbuf_size, "line %d: expected a string for '%s'", line_no, key);
+        return CONFIG_ERR_PARSE;
+    }
+    free(*dst);
+    *dst = v;
+    return CONFIG_OK;
+}
+
+/* `key = ["a", ...]`: replaces the array at *dst (of *dst_count items). */
+static ConfigStatus parse_str_array_field(const char *value_str, char ***dst,
+                                          size_t *dst_count, const char *key, int line_no,
+                                          char *errbuf, size_t errbuf_size) {
+    const char *cursor = value_str;
+    StrVec vec;
+    strvec_init(&vec);
+    if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
+        strvec_free(&vec);
+        snprintf(errbuf, errbuf_size, "line %d: malformed '%s' array", line_no, key);
+        return CONFIG_ERR_PARSE;
+    }
+    str_array_free(*dst, *dst_count);
+    *dst = vec.items;
+    *dst_count = vec.count;
+    return CONFIG_OK;
+}
+
+/* `key = true|false`. */
+static ConfigStatus parse_bool_field(const char *value_str, bool *dst, const char *key,
+                                     int line_no, char *errbuf, size_t errbuf_size) {
+    if (strcmp(value_str, "true") == 0) {
+        *dst = true;
+    } else if (strcmp(value_str, "false") == 0) {
+        *dst = false;
+    } else {
+        snprintf(errbuf, errbuf_size, "line %d: '%s' must be true or false", line_no, key);
+        return CONFIG_ERR_PARSE;
+    }
+    return CONFIG_OK;
+}
+
 static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, char *value_str,
                                             int line_no, char *errbuf, size_t errbuf_size) {
     const char *cursor = value_str;
 
     if (strcmp(key, "source") == 0) {
-        char *v = parse_quoted_string(&cursor);
-        if (!v || !no_trailing_garbage(cursor)) {
-            free(v);
-            snprintf(errbuf, errbuf_size, "line %d: expected a string for 'source'", line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        free(entry->source);
-        entry->source = v;
+        return parse_str_field(value_str, &entry->source, key, line_no, errbuf,
+                               errbuf_size);
     } else if (strcmp(key, "fallback") == 0) {
-        char *v = parse_quoted_string(&cursor);
-        if (!v || !no_trailing_garbage(cursor)) {
-            free(v);
-            snprintf(errbuf, errbuf_size, "line %d: expected a string for 'fallback'", line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        free(entry->fallback);
-        entry->fallback = v;
+        return parse_str_field(value_str, &entry->fallback, key, line_no, errbuf,
+                               errbuf_size);
     } else if (strcmp(key, "source_args") == 0) {
-        StrVec vec;
-        strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
-            strvec_free(&vec);
-            snprintf(errbuf, errbuf_size, "line %d: malformed 'source_args' array", line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        for (size_t i = 0; i < entry->source_arg_count; i++) {
-            free(entry->source_args[i]);
-        }
-        free(entry->source_args);
-        entry->source_args = vec.items;
-        entry->source_arg_count = vec.count;
+        return parse_str_array_field(value_str, &entry->source_args,
+                                     &entry->source_arg_count, key, line_no, errbuf,
+                                     errbuf_size);
     } else if (strcmp(key, "fallback_args") == 0) {
-        StrVec vec;
-        strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
-            strvec_free(&vec);
-            snprintf(errbuf, errbuf_size, "line %d: malformed 'fallback_args' array", line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        for (size_t i = 0; i < entry->fallback_arg_count; i++) {
-            free(entry->fallback_args[i]);
-        }
-        free(entry->fallback_args);
-        entry->fallback_args = vec.items;
-        entry->fallback_arg_count = vec.count;
+        return parse_str_array_field(value_str, &entry->fallback_args,
+                                     &entry->fallback_arg_count, key, line_no, errbuf,
+                                     errbuf_size);
     } else if (strcmp(key, "policy") == 0) {
         char *v = parse_quoted_string(&cursor);
         if (!v || !no_trailing_garbage(cursor) || !policy_from_string(v, &entry->policy)) {
-            snprintf(errbuf, errbuf_size,
-                     "line %d: 'policy' must be \"exit-code\", \"heuristic\", "
-                     "\"exit-code-match\", \"route-args\", or \"rewrite\"",
-                     line_no);
+            char *names = policy_names_list();
+            snprintf(errbuf, errbuf_size, "line %d: 'policy' must be %s", line_no, names);
+            free(names);
             free(v);
             return CONFIG_ERR_PARSE;
         }
@@ -532,81 +562,27 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
         entry->exit_codes = items;
         entry->exit_code_count = count;
     } else if (strcmp(key, "error_patterns") == 0) {
-        StrVec vec;
-        strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
-            strvec_free(&vec);
-            snprintf(errbuf, errbuf_size, "line %d: malformed 'error_patterns' array", line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        for (size_t i = 0; i < entry->error_pattern_count; i++) {
-            free(entry->error_patterns[i]);
-        }
-        free(entry->error_patterns);
-        entry->error_patterns = vec.items;
-        entry->error_pattern_count = vec.count;
+        return parse_str_array_field(value_str, &entry->error_patterns,
+                                     &entry->error_pattern_count, key, line_no, errbuf,
+                                     errbuf_size);
     } else if (strcmp(key, "route_args") == 0) {
-        StrVec vec;
-        strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
-            strvec_free(&vec);
-            snprintf(errbuf, errbuf_size, "line %d: malformed 'route_args' array", line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        for (size_t i = 0; i < entry->route_arg_count; i++) {
-            free(entry->route_args[i]);
-        }
-        free(entry->route_args);
-        entry->route_args = vec.items;
-        entry->route_arg_count = vec.count;
+        return parse_str_array_field(value_str, &entry->route_args,
+                                     &entry->route_arg_count, key, line_no, errbuf,
+                                     errbuf_size);
     } else if (strcmp(key, "source_route_args") == 0) {
-        StrVec vec;
-        strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
-            strvec_free(&vec);
-            snprintf(errbuf, errbuf_size, "line %d: malformed 'source_route_args' array",
-                     line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        for (size_t i = 0; i < entry->source_route_arg_count; i++) {
-            free(entry->source_route_args[i]);
-        }
-        free(entry->source_route_args);
-        entry->source_route_args = vec.items;
-        entry->source_route_arg_count = vec.count;
+        return parse_str_array_field(value_str, &entry->source_route_args,
+                                     &entry->source_route_arg_count, key, line_no, errbuf,
+                                     errbuf_size);
     } else if (strcmp(key, "fallback_route_args") == 0) {
-        StrVec vec;
-        strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
-            strvec_free(&vec);
-            snprintf(errbuf, errbuf_size, "line %d: malformed 'fallback_route_args' array",
-                     line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        for (size_t i = 0; i < entry->fallback_route_arg_count; i++) {
-            free(entry->fallback_route_args[i]);
-        }
-        free(entry->fallback_route_args);
-        entry->fallback_route_args = vec.items;
-        entry->fallback_route_arg_count = vec.count;
+        return parse_str_array_field(value_str, &entry->fallback_route_args,
+                                     &entry->fallback_route_arg_count, key, line_no, errbuf,
+                                     errbuf_size);
     } else if (strcmp(key, "diagnostic") == 0) {
-        if (strcmp(value_str, "true") == 0) {
-            entry->diagnostic = true;
-        } else if (strcmp(value_str, "false") == 0) {
-            entry->diagnostic = false;
-        } else {
-            snprintf(errbuf, errbuf_size, "line %d: 'diagnostic' must be true or false", line_no);
-            return CONFIG_ERR_PARSE;
-        }
+        return parse_bool_field(value_str, &entry->diagnostic, key, line_no, errbuf,
+                                errbuf_size);
     } else if (strcmp(key, "force") == 0) {
-        if (strcmp(value_str, "true") == 0) {
-            entry->force = true;
-        } else if (strcmp(value_str, "false") == 0) {
-            entry->force = false;
-        } else {
-            snprintf(errbuf, errbuf_size, "line %d: 'force' must be true or false", line_no);
-            return CONFIG_ERR_PARSE;
-        }
+        return parse_bool_field(value_str, &entry->force, key, line_no, errbuf,
+                                errbuf_size);
     } else if (strcmp(key, "capture_timeout_ms") == 0) {
         if (!parse_nonneg_int(value_str, &entry->capture_timeout_ms)) {
             snprintf(errbuf, errbuf_size,
@@ -629,43 +605,16 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
         entry->capture_limit_bytes = bytes;
         entry->capture_limit_set = true;
     } else if (strcmp(key, "rewrite_from") == 0) {
-        StrVec vec;
-        strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
-            strvec_free(&vec);
-            snprintf(errbuf, errbuf_size, "line %d: malformed 'rewrite_from' array", line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        for (size_t i = 0; i < entry->rewrite_from_count; i++) {
-            free(entry->rewrite_from[i]);
-        }
-        free(entry->rewrite_from);
-        entry->rewrite_from = vec.items;
-        entry->rewrite_from_count = vec.count;
+        return parse_str_array_field(value_str, &entry->rewrite_from,
+                                     &entry->rewrite_from_count, key, line_no, errbuf,
+                                     errbuf_size);
     } else if (strcmp(key, "rewrite_to") == 0) {
-        StrVec vec;
-        strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
-            strvec_free(&vec);
-            snprintf(errbuf, errbuf_size, "line %d: malformed 'rewrite_to' array", line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        for (size_t i = 0; i < entry->rewrite_to_count; i++) {
-            free(entry->rewrite_to[i]);
-        }
-        free(entry->rewrite_to);
-        entry->rewrite_to = vec.items;
-        entry->rewrite_to_count = vec.count;
+        return parse_str_array_field(value_str, &entry->rewrite_to,
+                                     &entry->rewrite_to_count, key, line_no, errbuf,
+                                     errbuf_size);
     } else if (strcmp(key, "strip_matched_args") == 0) {
-        if (strcmp(value_str, "true") == 0) {
-            entry->strip_matched_args = true;
-        } else if (strcmp(value_str, "false") == 0) {
-            entry->strip_matched_args = false;
-        } else {
-            snprintf(errbuf, errbuf_size,
-                     "line %d: 'strip_matched_args' must be true or false", line_no);
-            return CONFIG_ERR_PARSE;
-        }
+        return parse_bool_field(value_str, &entry->strip_matched_args, key, line_no, errbuf,
+                                errbuf_size);
     } else {
         warn("config: line %d: unknown key '%s' for shim '%s', ignoring", line_no, key,
              entry->name);
@@ -679,43 +628,17 @@ static ConfigStatus parse_shim_entry_field(ShimEntry *entry, const char *key, ch
  * parse_shim_entry_field above, just for a much smaller field set. */
 static ConfigStatus parse_route_field(RouteEntry *route, const char *key, char *value_str,
                                        int line_no, char *errbuf, size_t errbuf_size) {
-    const char *cursor = value_str;
-
     if (strcmp(key, "match") == 0) {
-        char *v = parse_quoted_string(&cursor);
-        if (!v || !no_trailing_garbage(cursor)) {
-            free(v);
-            snprintf(errbuf, errbuf_size, "line %d: expected a string for 'match'", line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        free(route->match);
-        route->match = v;
-    } else if (strcmp(key, "command") == 0) {
-        char *v = parse_quoted_string(&cursor);
-        if (!v || !no_trailing_garbage(cursor)) {
-            free(v);
-            snprintf(errbuf, errbuf_size, "line %d: expected a string for 'command'", line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        free(route->command);
-        route->command = v;
-    } else if (strcmp(key, "args") == 0) {
-        StrVec vec;
-        strvec_init(&vec);
-        if (!parse_string_array(&cursor, &vec) || !no_trailing_garbage(cursor)) {
-            strvec_free(&vec);
-            snprintf(errbuf, errbuf_size, "line %d: malformed 'args' array", line_no);
-            return CONFIG_ERR_PARSE;
-        }
-        for (size_t i = 0; i < route->arg_count; i++) {
-            free(route->args[i]);
-        }
-        free(route->args);
-        route->args = vec.items;
-        route->arg_count = vec.count;
-    } else {
-        warn("config: line %d: unknown key '%s' for a route, ignoring", line_no, key);
+        return parse_str_field(value_str, &route->match, key, line_no, errbuf, errbuf_size);
     }
+    if (strcmp(key, "command") == 0) {
+        return parse_str_field(value_str, &route->command, key, line_no, errbuf, errbuf_size);
+    }
+    if (strcmp(key, "args") == 0) {
+        return parse_str_array_field(value_str, &route->args, &route->arg_count, key, line_no,
+                                     errbuf, errbuf_size);
+    }
+    warn("config: line %d: unknown key '%s' for a route, ignoring", line_no, key);
     return CONFIG_OK;
 }
 
@@ -725,7 +648,7 @@ static ConfigStatus parse_route_field(RouteEntry *route, const char *key, char *
  * called directly by add.c's finish_add before writing a new/updated
  * entry to disk -- see the declaration in config.h. */
 ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t errbuf_size) {
-    if (!entry->fallback && entry->policy != POLICY_REWRITE && entry->policy != POLICY_ROUTE_MAP) {
+    if (!entry->fallback && policy_uses_fallback(entry->policy)) {
         snprintf(errbuf, errbuf_size, "shim '%s' is missing a required 'fallback'", entry->name);
         return CONFIG_ERR_VALIDATION;
     }
@@ -812,17 +735,8 @@ ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t er
         for (size_t j = i + 1; j < entry->route_count; j++) {
             const RouteEntry *a = &entry->routes[i];
             const RouteEntry *b = &entry->routes[j];
-            if (strcmp(a->command, b->command) != 0 || a->arg_count != b->arg_count) {
-                continue;
-            }
-            bool args_equal = true;
-            for (size_t k = 0; k < a->arg_count; k++) {
-                if (strcmp(a->args[k], b->args[k]) != 0) {
-                    args_equal = false;
-                    break;
-                }
-            }
-            if (args_equal) {
+            if (strcmp(a->command, b->command) == 0 &&
+                str_array_eq(a->args, a->arg_count, b->args, b->arg_count)) {
                 snprintf(errbuf, errbuf_size,
                          "shim '%s': route %zu and route %zu are identical (same command and "
                          "args) -- the second could never fire",
@@ -857,27 +771,15 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
     int line_no = 0;
     ConfigStatus status = CONFIG_OK;
 
-    char *saveptr = NULL;
-    char *line = strtok_r(contents, "\n", &saveptr);
-    while (line != NULL && status == CONFIG_OK) {
-        line_no++;
-        strip_trailing_comment(line);
-        char *trimmed = line;
-        trim(&trimmed, line + strlen(line));
-
-        if (*trimmed == '\0') {
-            line = strtok_r(NULL, "\n", &saveptr);
-            continue;
-        }
-
+    char *cursor = contents;
+    char *trimmed;
+    while (status == CONFIG_OK && (trimmed = next_content_line(&cursor, &line_no)) != NULL) {
         /* [[shims.<name>.routes]] -- an array-of-tables entry, one per
          * route of a POLICY_ROUTE_MAP shim. Checked before the plain
          * single-bracket branch below: that branch strips only one
          * trailing ']', which would otherwise leave this as
          * "[shims.<name>.routes" (leading '[' still attached) and
-         * silently misfile it as an "unknown section", not fail loudly
-         * (see review.md's history of exactly this class of silent-
-         * misparse bug for other constructs). */
+         * silently misfile it as an "unknown section", not fail loudly. */
         if (trimmed[0] == '[' && trimmed[1] == '[') {
             size_t len = strlen(trimmed);
             if (len < 4 || trimmed[len - 1] != ']' || trimmed[len - 2] != ']') {
@@ -924,7 +826,6 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             current_route_index = (ssize_t)shim->route_count;
             shim->route_count++;
 
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -949,7 +850,7 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                  * own directories entirely. A hand-edited config.toml
                  * with a name like this is exactly as malformed as one
                  * with broken section-header syntax, so it's rejected the
-                 * same way (see review.md). */
+                 * same way. */
                 if (!is_valid_shim_name(shim_name)) {
                     snprintf(errbuf, errbuf_size,
                              "line %d: invalid shim name '%s' in section header -- names may "
@@ -963,24 +864,15 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                 warn("config: line %d: unknown section [%s], ignoring", line_no, header);
                 current_index = -1;
             }
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
-        char *eq = strchr(trimmed, '=');
-        if (!eq) {
+        char *key;
+        char *value_str;
+        if (!split_key_value(trimmed, &key, &value_str)) {
             snprintf(errbuf, errbuf_size, "line %d: expected 'key = value'", line_no);
             status = CONFIG_ERR_PARSE;
             break;
-        }
-        *eq = '\0';
-        char *key = trimmed;
-        char *value_str = eq + 1;
-        trim(&key, key + strlen(key));
-        {
-            char *vs = value_str;
-            trim(&vs, vs + strlen(vs));
-            value_str = vs;
         }
 
         if (current_route_index >= 0) {
@@ -989,7 +881,6 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
             if (status != CONFIG_OK) {
                 break;
             }
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -1002,15 +893,8 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                     status = CONFIG_ERR_PARSE;
                 }
             } else if (strcmp(key, "verbose") == 0) {
-                if (strcmp(value_str, "true") == 0) {
-                    cfg->verbose = true;
-                } else if (strcmp(value_str, "false") == 0) {
-                    cfg->verbose = false;
-                } else {
-                    snprintf(errbuf, errbuf_size, "line %d: 'verbose' must be true or false",
-                             line_no);
-                    status = CONFIG_ERR_PARSE;
-                }
+                status = parse_bool_field(value_str, &cfg->verbose, key, line_no, errbuf,
+                                          errbuf_size);
             } else if (strcmp(key, "capture_timeout_ms") == 0) {
                 if (!parse_nonneg_int(value_str, &cfg->capture_timeout_ms)) {
                     snprintf(errbuf, errbuf_size,
@@ -1057,31 +941,15 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
                     cfg->backup_name_pattern = v;
                 }
             } else if (strcmp(key, "backup_override") == 0) {
-                if (strcmp(value_str, "true") == 0) {
-                    cfg->backup_override = true;
-                } else if (strcmp(value_str, "false") == 0) {
-                    cfg->backup_override = false;
-                } else {
-                    snprintf(errbuf, errbuf_size,
-                             "line %d: 'backup_override' must be true or false", line_no);
-                    status = CONFIG_ERR_PARSE;
-                }
+                status = parse_bool_field(value_str, &cfg->backup_override, key, line_no, errbuf,
+                                          errbuf_size);
             } else if (strcmp(key, "mise_integration") == 0) {
-                if (strcmp(value_str, "true") == 0) {
-                    cfg->mise_integration_set = true;
-                    cfg->mise_integration = true;
-                } else if (strcmp(value_str, "false") == 0) {
-                    cfg->mise_integration_set = true;
-                    cfg->mise_integration = false;
-                } else {
-                    snprintf(errbuf, errbuf_size,
-                             "line %d: 'mise_integration' must be true or false", line_no);
-                    status = CONFIG_ERR_PARSE;
-                }
+                status = parse_bool_field(value_str, &cfg->mise_integration, key, line_no,
+                                          errbuf, errbuf_size);
+                cfg->mise_integration_set = status == CONFIG_OK;
             } else {
                 warn("config: line %d: unknown top-level key '%s', ignoring", line_no, key);
             }
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -1090,8 +958,6 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
         if (status != CONFIG_OK) {
             break;
         }
-
-        line = strtok_r(NULL, "\n", &saveptr);
     }
 
     free(contents);
@@ -1127,19 +993,9 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
     ConfigStatus status = CONFIG_OK;
     ssize_t current_route_index = -1; /* -1 = not inside a [[routes]] block */
 
-    char *saveptr = NULL;
-    char *line = strtok_r(contents, "\n", &saveptr);
-    while (line != NULL && status == CONFIG_OK) {
-        line_no++;
-        strip_trailing_comment(line);
-        char *trimmed = line;
-        trim(&trimmed, line + strlen(line));
-
-        if (*trimmed == '\0') {
-            line = strtok_r(NULL, "\n", &saveptr);
-            continue;
-        }
-
+    char *cursor = contents;
+    char *trimmed;
+    while (status == CONFIG_OK && (trimmed = next_content_line(&cursor, &line_no)) != NULL) {
         /* A split file has no [shims.<name>] section to qualify a route
          * block with (see config_save_split), so its own routes use bare
          * [[routes]] instead of [[shims.<name>.routes]]. */
@@ -1149,7 +1005,6 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
             memset(&entry->routes[entry->route_count], 0, sizeof(RouteEntry));
             current_route_index = (ssize_t)entry->route_count;
             entry->route_count++;
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -1163,20 +1018,12 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
             break;
         }
 
-        char *eq = strchr(trimmed, '=');
-        if (!eq) {
+        char *key;
+        char *value_str;
+        if (!split_key_value(trimmed, &key, &value_str)) {
             snprintf(errbuf, errbuf_size, "line %d: expected 'key = value'", line_no);
             status = CONFIG_ERR_PARSE;
             break;
-        }
-        *eq = '\0';
-        char *key = trimmed;
-        char *value_str = eq + 1;
-        trim(&key, key + strlen(key));
-        {
-            char *vs = value_str;
-            trim(&vs, vs + strlen(vs));
-            value_str = vs;
         }
 
         if (current_route_index >= 0) {
@@ -1185,7 +1032,6 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
             if (status != CONFIG_OK) {
                 break;
             }
-            line = strtok_r(NULL, "\n", &saveptr);
             continue;
         }
 
@@ -1193,8 +1039,6 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
         if (status != CONFIG_OK) {
             break;
         }
-
-        line = strtok_r(NULL, "\n", &saveptr);
     }
 
     free(contents);
@@ -1234,142 +1078,87 @@ static void append_escaped_string(DynBuf *out, const char *s) {
  * once a `[[...]]` array-of-tables block is open, any subsequent bare
  * `key = value` line belongs to *that* table, not back to the shim itself
  * -- so nothing from this function can follow them. */
+/* `key = "value"` -- nothing when `value` is NULL. */
+static void append_str_line(DynBuf *out, const char *key, const char *value) {
+    if (!value) {
+        return;
+    }
+    dynbuf_append_str(out, key);
+    dynbuf_append_str(out, " = ");
+    append_escaped_string(out, value);
+    dynbuf_append_char(out, '\n');
+}
+
+/* `key = ["a", "b"]` -- nothing when the array is empty. */
+static void append_str_array_line(DynBuf *out, const char *key, char *const *items,
+                                  size_t count) {
+    if (count == 0) {
+        return;
+    }
+    dynbuf_append_str(out, key);
+    dynbuf_append_str(out, " = [");
+    for (size_t j = 0; j < count; j++) {
+        if (j > 0) {
+            dynbuf_append_str(out, ", ");
+        }
+        append_escaped_string(out, items[j]);
+    }
+    dynbuf_append_str(out, "]\n");
+}
+
 static void render_shim_entry_body(const ShimEntry *entry, DynBuf *out,
                                     const char *route_header_prefix) {
     char line[64];
-    {
-        if (entry->source) {
-            dynbuf_append_str(out, "source = ");
-            append_escaped_string(out, entry->source);
-            dynbuf_append_char(out, '\n');
-        }
-        if (entry->source_arg_count > 0) {
-            dynbuf_append_str(out, "source_args = [");
-            for (size_t j = 0; j < entry->source_arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->source_args[j]);
+    append_str_line(out, "source", entry->source);
+    append_str_array_line(out, "source_args", entry->source_args, entry->source_arg_count);
+
+    append_str_line(out, "fallback", entry->fallback);
+    append_str_array_line(out, "fallback_args", entry->fallback_args, entry->fallback_arg_count);
+
+    append_str_line(out, "policy", policy_to_string(entry->policy));
+
+    append_str_array_line(out, "error_patterns", entry->error_patterns,
+                          entry->error_pattern_count);
+
+    if (entry->exit_code_count > 0) {
+        dynbuf_append_str(out, "exit_codes = [");
+        for (size_t j = 0; j < entry->exit_code_count; j++) {
+            if (j > 0) {
+                dynbuf_append_str(out, ", ");
             }
-            dynbuf_append_str(out, "]\n");
+            char numbuf[16];
+            snprintf(numbuf, sizeof(numbuf), "%d", entry->exit_codes[j]);
+            dynbuf_append_str(out, numbuf);
         }
+        dynbuf_append_str(out, "]\n");
+    }
 
-        if (entry->fallback) {
-            dynbuf_append_str(out, "fallback = ");
-            append_escaped_string(out, entry->fallback);
-            dynbuf_append_char(out, '\n');
-        }
-        if (entry->fallback_arg_count > 0) {
-            dynbuf_append_str(out, "fallback_args = [");
-            for (size_t j = 0; j < entry->fallback_arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->fallback_args[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
+    append_str_array_line(out, "route_args", entry->route_args, entry->route_arg_count);
+    append_str_array_line(out, "source_route_args", entry->source_route_args,
+                          entry->source_route_arg_count);
+    append_str_array_line(out, "fallback_route_args", entry->fallback_route_args,
+                          entry->fallback_route_arg_count);
 
-        dynbuf_append_str(out, "policy = ");
-        append_escaped_string(out, policy_to_string(entry->policy));
-        dynbuf_append_char(out, '\n');
+    if (entry->strip_matched_args) {
+        dynbuf_append_str(out, "strip_matched_args = true\n");
+    }
 
-        if (entry->error_pattern_count > 0) {
-            dynbuf_append_str(out, "error_patterns = [");
-            for (size_t j = 0; j < entry->error_pattern_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->error_patterns[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
+    append_str_array_line(out, "rewrite_from", entry->rewrite_from, entry->rewrite_from_count);
+    append_str_array_line(out, "rewrite_to", entry->rewrite_to, entry->rewrite_to_count);
 
-        if (entry->exit_code_count > 0) {
-            dynbuf_append_str(out, "exit_codes = [");
-            for (size_t j = 0; j < entry->exit_code_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                char numbuf[16];
-                snprintf(numbuf, sizeof(numbuf), "%d", entry->exit_codes[j]);
-                dynbuf_append_str(out, numbuf);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-
-        if (entry->route_arg_count > 0) {
-            dynbuf_append_str(out, "route_args = [");
-            for (size_t j = 0; j < entry->route_arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->route_args[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-
-        if (entry->source_route_arg_count > 0) {
-            dynbuf_append_str(out, "source_route_args = [");
-            for (size_t j = 0; j < entry->source_route_arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->source_route_args[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-
-        if (entry->fallback_route_arg_count > 0) {
-            dynbuf_append_str(out, "fallback_route_args = [");
-            for (size_t j = 0; j < entry->fallback_route_arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->fallback_route_args[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-
-        if (entry->strip_matched_args) {
-            dynbuf_append_str(out, "strip_matched_args = true\n");
-        }
-
-        if (entry->rewrite_from_count > 0) {
-            dynbuf_append_str(out, "rewrite_from = [");
-            for (size_t j = 0; j < entry->rewrite_from_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->rewrite_from[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-        if (entry->rewrite_to_count > 0) {
-            dynbuf_append_str(out, "rewrite_to = [");
-            for (size_t j = 0; j < entry->rewrite_to_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, entry->rewrite_to[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
-
-        if (entry->diagnostic) {
-            dynbuf_append_str(out, "diagnostic = true\n");
-        }
-        if (entry->force) {
-            dynbuf_append_str(out, "force = true\n");
-        }
-        if (entry->capture_timeout_set) {
-            snprintf(line, sizeof(line), "capture_timeout_ms = %d\n", entry->capture_timeout_ms);
-            dynbuf_append_str(out, line);
-        }
-        if (entry->capture_limit_set) {
-            snprintf(line, sizeof(line), "capture_limit = \"%zu\"\n", entry->capture_limit_bytes);
-            dynbuf_append_str(out, line);
-        }
+    if (entry->diagnostic) {
+        dynbuf_append_str(out, "diagnostic = true\n");
+    }
+    if (entry->force) {
+        dynbuf_append_str(out, "force = true\n");
+    }
+    if (entry->capture_timeout_set) {
+        snprintf(line, sizeof(line), "capture_timeout_ms = %d\n", entry->capture_timeout_ms);
+        dynbuf_append_str(out, line);
+    }
+    if (entry->capture_limit_set) {
+        snprintf(line, sizeof(line), "capture_limit = \"%zu\"\n", entry->capture_limit_bytes);
+        dynbuf_append_str(out, line);
     }
 
     for (size_t i = 0; i < entry->route_count; i++) {
@@ -1383,24 +1172,9 @@ static void render_shim_entry_body(const ShimEntry *entry, DynBuf *out,
         }
         dynbuf_append_str(out, "routes]]\n");
 
-        dynbuf_append_str(out, "match = ");
-        append_escaped_string(out, route->match);
-        dynbuf_append_char(out, '\n');
-
-        dynbuf_append_str(out, "command = ");
-        append_escaped_string(out, route->command);
-        dynbuf_append_char(out, '\n');
-
-        if (route->arg_count > 0) {
-            dynbuf_append_str(out, "args = [");
-            for (size_t j = 0; j < route->arg_count; j++) {
-                if (j > 0) {
-                    dynbuf_append_str(out, ", ");
-                }
-                append_escaped_string(out, route->args[j]);
-            }
-            dynbuf_append_str(out, "]\n");
-        }
+        append_str_line(out, "match", route->match);
+        append_str_line(out, "command", route->command);
+        append_str_array_line(out, "args", route->args, route->arg_count);
     }
 }
 
@@ -1419,16 +1193,8 @@ static void render_config(const Config *cfg, DynBuf *out) {
         snprintf(line, sizeof(line), "capture_limit = \"%zu\"\n", cfg->capture_limit_bytes);
         dynbuf_append_str(out, line);
     }
-    if (cfg->backup_dir) {
-        dynbuf_append_str(out, "backup_dir = ");
-        append_escaped_string(out, cfg->backup_dir);
-        dynbuf_append_char(out, '\n');
-    }
-    if (cfg->backup_name_pattern) {
-        dynbuf_append_str(out, "backup_name = ");
-        append_escaped_string(out, cfg->backup_name_pattern);
-        dynbuf_append_char(out, '\n');
-    }
+    append_str_line(out, "backup_dir", cfg->backup_dir);
+    append_str_line(out, "backup_name", cfg->backup_name_pattern);
     if (cfg->backup_override) {
         dynbuf_append_str(out, "backup_override = true\n");
     }
@@ -1447,75 +1213,54 @@ static void render_config(const Config *cfg, DynBuf *out) {
     }
 }
 
-ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size_t errbuf_size) {
-    char *dir = xstrdup(path);
-    char *slash = strrchr(dir, '/');
-    if (slash) {
-        *slash = '\0';
-        if (!mkdir_p(dir)) {
-            snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, plat_strerror(errno));
-            free(dir);
-            return CONFIG_ERR_IO;
-        }
+/* Writes rendered config text to `path` (creating its directory first) and
+ * frees `out`. 0600: a config file -- config.toml or a split file --
+ * controls which executables a shim actually runs, so it's owner-only
+ * rather than the world-readable 0644 generated shell files get, enforced
+ * on every save (see write_file_atomic, paths.c), not just at first
+ * creation, so it's self-healing even if something else ever leaves the
+ * file at a weaker mode. */
+static ConfigStatus write_config_text(const char *path, DynBuf *out, char *errbuf,
+                                      size_t errbuf_size) {
+    char *dir = dir_of(path);
+    bool dir_ok = mkdir_p(dir);
+    if (!dir_ok) {
+        snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, plat_strerror(errno));
     }
     free(dir);
+    if (!dir_ok) {
+        dynbuf_free(out);
+        return CONFIG_ERR_IO;
+    }
 
-    DynBuf out;
-    dynbuf_init(&out);
-    render_config(cfg, &out);
-
-    /* 0600: config.toml controls which executables a shim actually runs,
-     * so it's owner-only rather than the world-readable 0644 generated
-     * shell files get -- enforced on every save (see write_file_atomic,
-     * paths.c), not just at first creation, so it's self-healing even if
-     * something else ever leaves the file at a weaker mode. */
-    bool ok = write_file_atomic(path, out.data, out.len, 0600);
-    dynbuf_free(&out);
-
+    bool ok = write_file_atomic(path, out->data, out->len, 0600);
+    dynbuf_free(out);
     if (!ok) {
         snprintf(errbuf, errbuf_size, "cannot write %s: %s", path, plat_strerror(errno));
         return CONFIG_ERR_IO;
     }
-
     return CONFIG_OK;
+}
+
+ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size_t errbuf_size) {
+    DynBuf out;
+    dynbuf_init(&out);
+    render_config(cfg, &out);
+    return write_config_text(path, &out, errbuf, errbuf_size);
 }
 
 ConfigStatus config_save_split(const ShimEntry *entry, const char *path, char *errbuf,
                                 size_t errbuf_size) {
-    char *dir = xstrdup(path);
-    char *slash = strrchr(dir, '/');
-    if (slash) {
-        *slash = '\0';
-        if (!mkdir_p(dir)) {
-            snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, plat_strerror(errno));
-            free(dir);
-            return CONFIG_ERR_IO;
-        }
-    }
-    free(dir);
-
     DynBuf out;
     dynbuf_init(&out);
     render_shim_entry_body(entry, &out, NULL);
-
-    /* 0600: same reasoning as config_save -- a split file is just as much
-     * "which executable does this shim actually run" as an entry inside
-     * config.toml itself. */
-    bool ok = write_file_atomic(path, out.data, out.len, 0600);
-    dynbuf_free(&out);
-
-    if (!ok) {
-        snprintf(errbuf, errbuf_size, "cannot write %s: %s", path, plat_strerror(errno));
-        return CONFIG_ERR_IO;
-    }
-
-    return CONFIG_OK;
+    return write_config_text(path, &out, errbuf, errbuf_size);
 }
 
 size_t remove_split_configs(const char *name) {
     /* Same reasoning as resolve_split_config_path(): callers sweeping
      * every name they can find (uninstall --full over list_shim_symlink_
-     * names(), in particular -- see review.md) can hand this an unsafe
+     * names(), in particular) can hand this an unsafe
      * name that was never validated by add.c/remove.c/config_load(). An
      * invalid name can never have a legitimate split file to remove, so
      * skip it (with a warning, since it's still worth knowing about)
@@ -1582,6 +1327,16 @@ ShimSource resolve_shim_entry(Config *cfg, const char *name, ShimEntry **entry,
     return SHIM_SOURCE_ORPHAN;
 }
 
+/* Appends a copy of `name` to `names` unless it's already there. */
+static void push_unique_name(char **names, size_t *count, const char *name) {
+    for (size_t j = 0; j < *count; j++) {
+        if (strcmp(names[j], name) == 0) {
+            return;
+        }
+    }
+    names[(*count)++] = xstrdup(name);
+}
+
 char **collect_all_shim_names(const Config *cfg, size_t *out_count) {
     size_t symlink_count = 0;
     char **symlink_names = list_shim_symlink_names(&symlink_count);
@@ -1596,31 +1351,13 @@ char **collect_all_shim_names(const Config *cfg, size_t *out_count) {
         names[count++] = xstrdup(cfg->shims[i].name);
     }
     for (size_t i = 0; i < symlink_count; i++) {
-        bool dup = false;
-        for (size_t j = 0; j < count; j++) {
-            if (strcmp(names[j], symlink_names[i]) == 0) {
-                dup = true;
-                break;
-            }
-        }
-        if (!dup) {
-            names[count++] = xstrdup(symlink_names[i]);
-        }
+        push_unique_name(names, &count, symlink_names[i]);
         free(symlink_names[i]);
     }
     free(symlink_names);
 
     for (size_t i = 0; i < split_count; i++) {
-        bool dup = false;
-        for (size_t j = 0; j < count; j++) {
-            if (strcmp(names[j], split_names[i]) == 0) {
-                dup = true;
-                break;
-            }
-        }
-        if (!dup) {
-            names[count++] = xstrdup(split_names[i]);
-        }
+        push_unique_name(names, &count, split_names[i]);
         free(split_names[i]);
     }
     free(split_names);
