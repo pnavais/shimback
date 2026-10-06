@@ -651,6 +651,24 @@ bool mkdir_p(const char *dir) {
         free(copy);
         return false;
     }
+    /* The root prefix: "/", or on Windows "C:" plus its separator if any. */
+    size_t root_len = 0;
+#ifdef _WIN32
+    if (len >= 2 && copy[1] == ':') {
+        root_len = 2;
+    }
+#endif
+    if (is_path_sep(copy[root_len])) {
+        root_len++;
+    }
+    /* A root always exists and can never be mkdir'd: just check it. Bare
+     * "C:" is checked as "C:/" -- see the drive-root note below. */
+    if (len <= root_len || (len == 2 && root_len == 2)) {
+        char root[4] = {copy[0], copy[1], '/', '\0'};
+        bool ok = path_is_dir(root_len == 1 ? "/" : root);
+        free(copy);
+        return ok;
+    }
     /* Strip a trailing separator so we don't try to mkdir an empty final segment. */
     if (is_path_sep(copy[len - 1])) {
         copy[len - 1] = '\0';

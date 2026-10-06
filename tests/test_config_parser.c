@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "paths.h"
 #include "platform/platform.h"
 #include "util.h"
 
@@ -770,6 +771,13 @@ static void test_comment_after_escaped_backslash(void) {
     free(path);
 }
 
+/* A root path always exists; mkdir_p must report success for it, not try
+ * to create it (or an empty name left after stripping its separator). */
+static void test_mkdir_p_root(void) {
+    check(mkdir_p("/"), "mkdir_p(\"/\") succeeds");
+    check(mkdir_p("//"), "mkdir_p(\"//\") succeeds");
+}
+
 static void test_parse_size_bytes(void) {
     size_t v;
 
@@ -816,6 +824,7 @@ int main(void) {
     test_validation_errors();
     test_error_line_numbers();
     test_comment_after_escaped_backslash();
+    test_mkdir_p_root();
     test_parse_size_bytes();
     test_missing_file_is_empty_config();
 
