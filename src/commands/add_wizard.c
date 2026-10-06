@@ -240,7 +240,7 @@ static void reset_after_policy_change(WizardState *st) {
     st->split_config_set = false;
 }
 
-static bool page_present(const WizardSeed *seed, const WizardState *st, PageId p) {
+static bool page_present(const AddRequest *seed, const WizardState *st, PageId p) {
     switch (p) {
         case PAGE_NAME: return seed->name != NULL;
         case PAGE_POLICY: return true;
@@ -250,21 +250,21 @@ static bool page_present(const WizardSeed *seed, const WizardState *st, PageId p
             return seed->fallback_arg != NULL || st->policy == POLICY_REWRITE ||
                    st->policy == POLICY_ROUTE_MAP;
         case PAGE_FALLBACK_ARGS: return true;
-        case PAGE_PATTERNS: return seed->patterns->count > 0;
+        case PAGE_PATTERNS: return seed->patterns.count > 0;
         case PAGE_EXIT_CODES: return seed->exit_code_count > 0;
-        case PAGE_ROUTE_ARGS: return seed->route_args->count > 0;
-        case PAGE_SPLIT_SOURCE_ARGS: return seed->split_source_args->count > 0;
-        case PAGE_SPLIT_FALLBACK_ARGS: return seed->split_fallback_args->count > 0;
+        case PAGE_ROUTE_ARGS: return seed->route_args.count > 0;
+        case PAGE_SPLIT_SOURCE_ARGS: return seed->split_source_args.count > 0;
+        case PAGE_SPLIT_FALLBACK_ARGS: return seed->split_fallback_args.count > 0;
         case PAGE_STRIP_MATCHED: return true;
-        case PAGE_REWRITE: return seed->rewrite_from->count > 0;
-        case PAGE_ROUTE_MAP: return seed->route_match->count > 0;
+        case PAGE_REWRITE: return seed->rewrite_from.count > 0;
+        case PAGE_ROUTE_MAP: return seed->route_match.count > 0;
         case PAGE_DIAGNOSTIC: return true;
         case PAGE_SPLIT_CONFIG: return true;
         default: return false;
     }
 }
 
-static void auto_commit_page(WizardState *st, const WizardSeed *seed, PageId p) {
+static void auto_commit_page(WizardState *st, const AddRequest *seed, PageId p) {
     switch (p) {
         case PAGE_NAME:
             st->name = xstrdup(seed->name);
@@ -280,8 +280,8 @@ static void auto_commit_page(WizardState *st, const WizardSeed *seed, PageId p) 
             st->source_set = true;
             break;
         case PAGE_SOURCE_ARGS:
-            for (size_t i = 0; i < seed->source_args->count; i++) {
-                strvec_push(&st->source_args, xstrdup(seed->source_args->items[i]));
+            for (size_t i = 0; i < seed->source_args.count; i++) {
+                strvec_push(&st->source_args, xstrdup(seed->source_args.items[i]));
             }
             st->source_args_set = true;
             break;
@@ -291,14 +291,14 @@ static void auto_commit_page(WizardState *st, const WizardSeed *seed, PageId p) 
             st->fallback_set = true;
             break;
         case PAGE_FALLBACK_ARGS:
-            for (size_t i = 0; i < seed->fallback_args->count; i++) {
-                strvec_push(&st->fallback_args, xstrdup(seed->fallback_args->items[i]));
+            for (size_t i = 0; i < seed->fallback_args.count; i++) {
+                strvec_push(&st->fallback_args, xstrdup(seed->fallback_args.items[i]));
             }
             st->fallback_args_set = true;
             break;
         case PAGE_PATTERNS:
-            for (size_t i = 0; i < seed->patterns->count; i++) {
-                strvec_push(&st->patterns, xstrdup(seed->patterns->items[i]));
+            for (size_t i = 0; i < seed->patterns.count; i++) {
+                strvec_push(&st->patterns, xstrdup(seed->patterns.items[i]));
             }
             st->patterns_set = true;
             break;
@@ -309,21 +309,21 @@ static void auto_commit_page(WizardState *st, const WizardSeed *seed, PageId p) 
             st->exit_codes_set = true;
             break;
         case PAGE_ROUTE_ARGS:
-            for (size_t i = 0; i < seed->route_args->count; i++) {
-                strvec_push(&st->route_args, xstrdup(seed->route_args->items[i]));
+            for (size_t i = 0; i < seed->route_args.count; i++) {
+                strvec_push(&st->route_args, xstrdup(seed->route_args.items[i]));
             }
             st->route_args_set = true;
             break;
         case PAGE_SPLIT_SOURCE_ARGS:
-            for (size_t i = 0; i < seed->split_source_args->count; i++) {
-                strvec_push(&st->split_source_args, xstrdup(seed->split_source_args->items[i]));
+            for (size_t i = 0; i < seed->split_source_args.count; i++) {
+                strvec_push(&st->split_source_args, xstrdup(seed->split_source_args.items[i]));
             }
             st->split_source_args_set = true;
             break;
         case PAGE_SPLIT_FALLBACK_ARGS:
-            for (size_t i = 0; i < seed->split_fallback_args->count; i++) {
+            for (size_t i = 0; i < seed->split_fallback_args.count; i++) {
                 strvec_push(&st->split_fallback_args,
-                             xstrdup(seed->split_fallback_args->items[i]));
+                             xstrdup(seed->split_fallback_args.items[i]));
             }
             st->split_fallback_args_set = true;
             break;
@@ -332,16 +332,16 @@ static void auto_commit_page(WizardState *st, const WizardSeed *seed, PageId p) 
             st->strip_matched_set = true;
             break;
         case PAGE_REWRITE:
-            for (size_t i = 0; i < seed->rewrite_from->count; i++) {
-                strvec_push(&st->rewrite_from, xstrdup(seed->rewrite_from->items[i]));
-                strvec_push(&st->rewrite_to, xstrdup(seed->rewrite_to->items[i]));
+            for (size_t i = 0; i < seed->rewrite_from.count; i++) {
+                strvec_push(&st->rewrite_from, xstrdup(seed->rewrite_from.items[i]));
+                strvec_push(&st->rewrite_to, xstrdup(seed->rewrite_to.items[i]));
             }
             st->rewrite_set = true;
             break;
         case PAGE_ROUTE_MAP:
-            for (size_t i = 0; i < seed->route_match->count; i++) {
-                strvec_push(&st->route_match, xstrdup(seed->route_match->items[i]));
-                strvec_push(&st->route_command, xstrdup(seed->route_command->items[i]));
+            for (size_t i = 0; i < seed->route_match.count; i++) {
+                strvec_push(&st->route_match, xstrdup(seed->route_match.items[i]));
+                strvec_push(&st->route_command, xstrdup(seed->route_command.items[i]));
             }
             st->route_map_set = true;
             break;
@@ -363,7 +363,7 @@ static void auto_commit_page(WizardState *st, const WizardSeed *seed, PageId p) 
  * one that isn't -- that becomes the wizard's initial live/interactive
  * page. Everything auto-committed remains reachable (and editable) via the
  * Left arrow. */
-static void pre_seed(WizardState *st, const WizardSeed *seed, History *hist) {
+static void pre_seed(WizardState *st, const AddRequest *seed, History *hist) {
     PageId p = PAGE_NAME;
     for (;;) {
         if (!page_present(seed, st, p)) {
@@ -686,7 +686,7 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
 
 /* ---- main loop ---- */
 
-bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
+bool run_add_wizard(const AddRequest *seed, AddRequest *out) {
     WizardState st = {0};
     strvec_init(&st.source_args);
     strvec_init(&st.fallback_args);
@@ -1201,6 +1201,7 @@ bool run_add_wizard(const WizardSeed *seed, WizardResult *out) {
         return false;
     }
 
+    *out = *seed;
     out->name = st.name;
     out->source_arg = st.source_arg;
     out->source_args = st.source_args;

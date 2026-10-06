@@ -6,41 +6,14 @@
 #include "../config.h"
 #include "../util.h"
 
-/* Whatever `add`'s own CLI-flag parsing already collected before it found
- * something required missing -- the wizard is seeded with this so it can
- * skip straight past any page whose data is already known (see
- * run_add_wizard), while still letting the user revisit and edit it via the
- * Left arrow. NULL/0/false means "not given". */
+/* Everything one `add` needs: filled from the command line by cmd_add,
+ * completed by the wizard when something required is missing, then
+ * consumed by finish_add. NULL/0/false/empty means "not given". */
 typedef struct {
     const char *name;
-    const char *source_arg;
-    StrVec *source_args;
-    const char *fallback_arg;
-    StrVec *fallback_args;
-    Policy policy; /* whatever cmd_add already resolved (default POLICY_EXIT_CODE) */
-    StrVec *patterns;
-    int *exit_codes;
-    size_t exit_code_count;
-    StrVec *route_args;
-    bool strip_matched_args;
-    StrVec *split_source_args;
-    StrVec *split_fallback_args;
-    StrVec *rewrite_from;
-    StrVec *rewrite_to;
-    StrVec *route_match;   /* parallel to route_command: route_match->items[i] is the
-                             * trigger for route_command->items[i] -- see POLICY_ROUTE_MAP */
-    StrVec *route_command;
-    bool diagnostic;
-    bool split_config;
-} WizardSeed;
-
-/* Mirrors the same set of fields cmd_add's shared "finish" tail expects.
- * Everything is owned by the caller once returned. */
-typedef struct {
-    char *name;
-    char *source_arg;   /* raw string as typed/accepted, or NULL for "auto" */
+    const char *source_arg;   /* raw string as typed/accepted, or NULL for "auto" */
     StrVec source_args;
-    char *fallback_arg; /* raw string as typed/accepted, or NULL (POLICY_REWRITE only) */
+    const char *fallback_arg; /* raw string as typed/accepted, or NULL (POLICY_REWRITE only) */
     StrVec fallback_args;
     Policy policy;
     StrVec patterns;
@@ -52,18 +25,28 @@ typedef struct {
     StrVec split_fallback_args;
     StrVec rewrite_from;
     StrVec rewrite_to;
-    StrVec route_match;   /* parallel to route_command -- see WizardSeed */
+    StrVec route_match;   /* parallel to route_command: route_match.items[i] is the
+                           * trigger for route_command.items[i] -- see POLICY_ROUTE_MAP */
     StrVec route_command;
     bool diagnostic;
+    bool force;
+    bool verbose;
+    bool capture_timeout_set;
+    int capture_timeout_ms;
+    bool capture_limit_set;
+    size_t capture_limit_bytes;
     bool split_config;
-} WizardResult;
+} AddRequest;
 
-/* Runs the interactive "add" wizard, pre-seeded from `seed`. Caller must
- * have already confirmed tui_supported(). Returns true and fills `*out`
- * (caller owns everything in it) if the user completed every page; returns
- * false, leaving `*out` untouched and nothing written to disk, if aborted
- * via Esc/Ctrl-C. */
-bool run_add_wizard(const WizardSeed *seed, WizardResult *out);
+/* Runs the interactive "add" wizard, pre-seeded from `seed` (it skips
+ * straight past any page whose data is already known, while still letting
+ * the user revisit and edit it via the Left arrow). Caller must have
+ * already confirmed tui_supported(). Returns true and fills `*out` -- a
+ * copy of `seed` with every field the wizard asks about replaced by the
+ * user's answers, newly allocated -- if the user completed every page;
+ * returns false, leaving `*out` untouched and nothing written to disk, if
+ * aborted via Esc/Ctrl-C. */
+bool run_add_wizard(const AddRequest *seed, AddRequest *out);
 
 /* is_valid_shim_name lives in paths.h now (config.c's config_load needs
  * it too, to validate a [shims.<name>] section header the same way --
