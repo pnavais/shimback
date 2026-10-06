@@ -145,6 +145,11 @@ shimback info <name>
 shimback --help | --version
 ```
 
+Output is colored only when it goes to a terminal and
+[`NO_COLOR`](https://no-color.org/) isn't set. `CLICOLOR_FORCE=1` turns
+color on even when output is piped or captured (`NO_COLOR` still wins); the
+installers use it so `install`'s output keeps its colors.
+
 `--help` (and the usage printed on a missing/unknown command) uses styled,
 colored help when stdout is a terminal and `NO_COLOR` isn't set: section
 headers bold yellow, commands and flags bold green,

@@ -60,4 +60,17 @@ fi
 assert_contains "bogus --help: still reports the unknown command" \
     "$(cat "$SANDBOX/err")" "unknown command 'bogus'"
 
+# --- color: off when piped, forced on by CLICOLOR_FORCE, NO_COLOR wins ---
+ESC="$(printf '\033')"
+out="$(unset NO_COLOR CLICOLOR_FORCE; "$SHIMBACK" --help)"
+assert_not_contains "--help piped: no color" "$out" "$ESC["
+out="$(unset NO_COLOR; CLICOLOR_FORCE=1 "$SHIMBACK" --help)"
+assert_contains "--help piped with CLICOLOR_FORCE=1: colored" "$out" "$ESC["
+out="$(unset NO_COLOR; CLICOLOR_FORCE=0 "$SHIMBACK" --help)"
+assert_not_contains "--help piped with CLICOLOR_FORCE=0: no color" "$out" "$ESC["
+out="$(CLICOLOR_FORCE=1 NO_COLOR=1 "$SHIMBACK" --help)"
+assert_not_contains "--help with NO_COLOR and CLICOLOR_FORCE: NO_COLOR wins" "$out" "$ESC["
+err="$(unset NO_COLOR; CLICOLOR_FORCE=1 "$SHIMBACK" bogus 2>&1 >/dev/null)"
+assert_contains "stderr messages honor CLICOLOR_FORCE too" "$err" "${ESC}[34mshimback:"
+
 finish

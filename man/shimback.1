@@ -995,6 +995,17 @@ nothing is ever hidden under that policy, so there is nothing for a
 diagnostic to report \(em
 .B add
 and config validation reject the combination.
+.SH ENVIRONMENT
+.TP
+.B NO_COLOR
+When set (to anything), never color output.
+.TP
+.B CLICOLOR_FORCE
+When set to anything other than
+.B 0
+(and
+.B NO_COLOR
+is unset), color output even when it isn't going to a terminal.
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/shimback/config.toml

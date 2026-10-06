@@ -153,7 +153,13 @@ main() {
 
     printf '%sInstalling%s...\n' "$cyan" "$reset"
     install_output="$tmpdir/install-output"
-    if "$bin" install "$@" >"$install_output" 2>&1; then
+    # Captured (to indent it and spot "already installed" below), so shimback
+    # can't see a terminal: CLICOLOR_FORCE keeps its colors when ours are on.
+    force_color=0
+    if use_color; then
+        force_color=1
+    fi
+    if CLICOLOR_FORCE="$force_color" "$bin" install "$@" >"$install_output" 2>&1; then
         print_indented <"$install_output"
     else
         print_indented <"$install_output"

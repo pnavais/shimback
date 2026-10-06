@@ -11,12 +11,20 @@
 
 #include "platform/platform.h"
 
+/* NO_COLOR (https://no-color.org/) always wins; otherwise CLICOLOR_FORCE
+ * (set and not "0") turns color on even when the stream isn't a terminal --
+ * e.g. the installers, which capture `install`'s output to indent it. */
+static bool color_forced(void) {
+    const char *force = plat_getenv("CLICOLOR_FORCE");
+    return force && force[0] != '\0' && strcmp(force, "0") != 0;
+}
+
 bool stdout_is_color(void) {
-    return !plat_getenv("NO_COLOR") && plat_isatty_stdout();
+    return !plat_getenv("NO_COLOR") && (color_forced() || plat_isatty_stdout());
 }
 
 bool stderr_is_color(void) {
-    return !plat_getenv("NO_COLOR") && plat_isatty_stderr();
+    return !plat_getenv("NO_COLOR") && (color_forced() || plat_isatty_stderr());
 }
 
 /* "shimback: <msg>\n" on `f`, the prefix colored when `colorize`, and the
