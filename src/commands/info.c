@@ -945,7 +945,8 @@ static void print_flow(const View *v, const char *shim_dir) {
 
 int cmd_info(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "shimback: info: missing shim name\n%s", USAGE);
+        warn("info: missing shim name");
+        fprintf(stderr, "%s", USAGE);
         return 1;
     }
     if (argc > 2) {
@@ -980,7 +981,7 @@ int cmd_info(int argc, char **argv) {
 
     if (src == SHIM_SOURCE_ORPHAN) {
         if (access(link_path, F_OK) != 0) {
-            fprintf(stderr, "shimback: info: no shim configured for '%s'\n", name);
+            warn("info: no shim configured for '%s'", name);
             size_t count = 0;
             char **names = collect_all_shim_names(&cfg, &count);
             if (count > 0) {

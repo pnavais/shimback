@@ -66,7 +66,7 @@ static char *locate_shim_config(const char *name, const char *cfg_path, bool *is
         return xstrdup(cfg_path);
     }
 
-    fprintf(stderr, "shimback: edit: no shim configured for '%s'\n", name);
+    warn("edit: no shim configured for '%s'", name);
     if (cfg.count > 0) {
         const char **candidates = xmalloc(cfg.count * sizeof(char *));
         for (size_t i = 0; i < cfg.count; i++) {
@@ -142,8 +142,8 @@ int cmd_edit(int argc, char **argv) {
             editor_argv[editor_argc] = target_path;
             editor_argv[editor_argc + 1] = NULL;
             execvp(editor_argv[0], editor_argv);
-            fprintf(stderr, "shimback: failed to run $EDITOR ('%s'): %s\n", editor_env,
-                    strerror(errno));
+            warn("failed to run $EDITOR ('%s'): %s", editor_env,
+                 strerror(errno));
             _exit(127);
         }
 

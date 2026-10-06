@@ -237,7 +237,7 @@ int plat_run_inherited(const char *exe, char *const argv[]) {
     free(wexe);
     if (!ok) {
         char *msg = win32_error_message(GetLastError());
-        fprintf(stderr, "shimback: exec %s: %s\n", exe, msg);
+        warn("exec %s: %s", exe, msg);
         free(msg);
         return 127;
     }
@@ -315,7 +315,7 @@ int plat_run_captured(const char *exe, char *const argv[], DynBuf *out, DynBuf *
         CloseHandle(out_read);
         CloseHandle(err_read);
         char *msg = win32_error_message(create_err);
-        fprintf(stderr, "shimback: exec %s: %s\n", exe, msg);
+        warn("exec %s: %s", exe, msg);
         free(msg);
         return 127;
     }

@@ -73,7 +73,7 @@ int plat_run_inherited(const char *exe, char *const argv[]) {
     }
     if (pid == 0) {
         execv(exe, argv);
-        fprintf(stderr, "shimback: exec %s: %s\n", exe, strerror(errno));
+        warn("exec %s: %s", exe, strerror(errno));
         _exit(127);
     }
     int status = 0;
@@ -121,7 +121,7 @@ int plat_run_captured(const char *exe, char *const argv[], DynBuf *out, DynBuf *
         close(err_pipe[0]);
         close(err_pipe[1]);
         execv(exe, argv);
-        fprintf(stderr, "shimback: exec %s: %s\n", exe, strerror(errno));
+        warn("exec %s: %s", exe, strerror(errno));
         _exit(127);
     }
 

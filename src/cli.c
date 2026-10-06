@@ -441,7 +441,7 @@ int cli_run(int argc, char **argv) {
         return cmd->run(argc - 1, argv + 1);
     }
 
-    fprintf(stderr, "shimback: unknown command '%s'\n", argv[1]);
+    warn("unknown command '%s'", argv[1]);
     const char *candidates[2 * COMMAND_COUNT];
     size_t candidate_count = 0;
     for (size_t i = 0; i < COMMAND_COUNT; i++) {

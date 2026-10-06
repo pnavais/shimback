@@ -172,8 +172,8 @@ static char *resolve_executable_or_report(const char *path, const char *role,
                                           const char *shim_name) {
     char *resolved = is_executable_file(path) ? canonicalize(path) : NULL;
     if (!resolved) {
-        fprintf(stderr, "shimback: %s '%s' for '%s' not found or not executable\n", role, path,
-                shim_name);
+        warn("%s '%s' for '%s' not found or not executable", role, path,
+             shim_name);
     }
     return resolved;
 }
@@ -194,15 +194,15 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     resolve_shim_entry(&cfg, shim_name, &entry, NULL);
 
     if (!entry) {
-        fprintf(stderr, "shimback: no shim configured for '%s'\n", shim_name);
+        warn("no shim configured for '%s'", shim_name);
         return 127;
     }
 
     char *resolved_source = NULL;
     if (entry->source) {
         if (!is_executable_file(entry->source)) {
-            fprintf(stderr, "shimback: source '%s' for '%s' not found or not executable\n",
-                    entry->source, shim_name);
+            warn("source '%s' for '%s' not found or not executable",
+                 entry->source, shim_name);
             return 127;
         }
         resolved_source = canonicalize(entry->source);
@@ -214,8 +214,8 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         free(self_exe);
     }
     if (!resolved_source) {
-        fprintf(stderr, "shimback: no '%s' found on PATH to use as the source command\n",
-                shim_name);
+        warn("no '%s' found on PATH to use as the source command",
+             shim_name);
         return 127;
     }
 

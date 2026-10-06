@@ -117,7 +117,7 @@ int cmd_remove(int argc, char **argv) {
         }
 
         if (!config_find(&cfg, name) && !has_split_entry) {
-            fprintf(stderr, "shimback: remove: no shim configured for '%s'\n", name);
+            warn("remove: no shim configured for '%s'", name);
             if (candidates) {
                 char *hint = fuzzy_suggest(name, candidates, cfg.count);
                 if (hint) {
