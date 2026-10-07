@@ -12,5 +12,6 @@ compile_commands.json
 .DS_Store
 review.md
 review-assessment.md
-0.2.0-ideas.md
+0.*.0-ideas.md
 simplify-suggestions.md
+.agnostic-ai/local/
