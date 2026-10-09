@@ -93,13 +93,16 @@ static void resolve_target(const char *output_arg, const char *effective_dir,
     } else if (path_is_dir(output_arg)) {
         dir = xstrdup(output_arg);
         name = xstrdup(default_name);
-    } else if (path_exists(output_arg)) {
-        split_dir_name(output_arg, &dir, &name);
     } else if (ends_with_sep(output_arg)) {
         dir = xstrdup(output_arg);
         name = xstrdup(default_name);
         needs_prompt = true;
     } else {
+        /* Also correctly handles an already-existing non-directory path
+         * (a file, or a dangling symlink): its parent must exist, so
+         * path_is_dir(dir) is already true and needs_prompt comes out
+         * false here, same as an explicit existence check would give --
+         * no separate branch needed for that case. */
         split_dir_name(output_arg, &dir, &name);
         needs_prompt = !path_is_dir(dir);
     }
@@ -196,23 +199,20 @@ static char *render_name_pattern(const char *pattern, const char *hostname,
     return result;
 }
 
+/* hostname is at most 255 bytes (plat_hostname's own buffer size) and
+ * already sanitized to [A-Za-z0-9._-], so no quote/escape can reach the
+ * TOML string; timestamp is always 15 bytes ("%Y%m%d-%H%M%S"). 512 is
+ * comfortably bounded for both plus the fixed keys/version. */
 static char *build_manifest(const char *hostname, const char *timestamp, size_t shim_count) {
-    DynBuf buf;
-    dynbuf_init(&buf);
-    dynbuf_append_str(&buf, "format_version = 1\n");
-    dynbuf_append_str(&buf, "shimback_version = \"" SHIMBACK_VERSION "\"\n");
-    dynbuf_append_str(&buf, "hostname = \"");
-    dynbuf_append_str(&buf, hostname);
-    dynbuf_append_str(&buf, "\"\n");
-    dynbuf_append_str(&buf, "exported_at = \"");
-    dynbuf_append_str(&buf, timestamp);
-    dynbuf_append_str(&buf, "\"\n");
-    char line[64];
-    snprintf(line, sizeof(line), "shim_count = %zu\n", shim_count);
-    dynbuf_append_str(&buf, line);
-    char *result = xstrdup(dynbuf_cstr(&buf));
-    dynbuf_free(&buf);
-    return result;
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+             "format_version = 1\n"
+             "shimback_version = \"" SHIMBACK_VERSION "\"\n"
+             "hostname = \"%s\"\n"
+             "exported_at = \"%s\"\n"
+             "shim_count = %zu\n",
+             hostname, timestamp, shim_count);
+    return xstrdup(buf);
 }
 
 int cmd_export(int argc, char **argv) {
@@ -260,6 +260,8 @@ int cmd_export(int argc, char **argv) {
 
     bool have_anything = config_exists;
     size_t exported_shim_count = 0;
+    char *final_path = NULL; /* set below; NULL is a no-op for cleanup's free() if we
+                               * goto cleanup before reaching that point */
 
     if (config_exists) {
         char *data;
@@ -274,16 +276,23 @@ int cmd_export(int argc, char **argv) {
     for (size_t i = 0; i < name_count; i++) {
         ShimEntry *entry = NULL;
         char *split_path = NULL;
+        /* Fully parses the split file (not just a path lookup) to decide
+         * SHIM_SOURCE_SPLIT vs. SHIM_SOURCE_CONFIG below -- and dies on a
+         * malformed one, the same way config_load dying on a malformed
+         * config.toml already would (see config.h's own doc comment on
+         * this function). That's deliberate here too: aborting the whole
+         * export on a config a human would also need to go fix is the
+         * right call for a backup tool, not a silent partial backup. */
         ShimSource src = resolve_shim_entry(&cfg, names[i], &entry, &split_path);
 
         if (src == SHIM_SOURCE_CONFIG) {
             exported_shim_count++;
         } else if (src == SHIM_SOURCE_SPLIT) {
-            have_anything = true;
-            exported_shim_count++;
             char *data;
             size_t len;
             if (read_whole_file(split_path, &data, &len)) {
+                have_anything = true;
+                exported_shim_count++;
                 char *arcname = split_config_filename(names[i]);
                 zip_writer_add_file(&zw, arcname, data, len);
                 free(arcname);
@@ -301,24 +310,14 @@ int cmd_export(int argc, char **argv) {
     if (!have_anything) {
         warn_colored(ANSI_YELLOW,
                      "export: nothing to export -- no config.toml and no shims configured");
-        zip_writer_free(&zw);
-        for (size_t i = 0; i < name_count; i++) {
-            free(names[i]);
-        }
-        free(names);
-        config_free(&cfg);
-        free(cfg_path);
-        return 0;
+        goto cleanup;
     }
 
-    const char *hostname_raw;
     char hostname_buf[256];
-    if (plat_hostname(hostname_buf, sizeof(hostname_buf))) {
-        hostname_raw = hostname_buf;
-    } else {
-        hostname_raw = "unknown-host";
+    if (!plat_hostname(hostname_buf, sizeof(hostname_buf))) {
+        snprintf(hostname_buf, sizeof(hostname_buf), "%s", "unknown-host");
     }
-    char *hostname = sanitize_for_filename(hostname_raw);
+    char *hostname = sanitize_for_filename(hostname_buf);
     char *timestamp = make_timestamp();
 
     char *manifest = build_manifest(hostname, timestamp, exported_shim_count);
@@ -334,10 +333,11 @@ int cmd_export(int argc, char **argv) {
     free(hostname);
     free(timestamp);
 
-    /* The ".sz" extension is never part of the pattern -- always appended here. */
-    char with_ext[600];
-    snprintf(with_ext, sizeof(with_ext), "%s.sz", rendered_name);
-    char *default_name = xstrdup(with_ext);
+    /* The ".sz" extension is never part of the pattern -- always appended
+     * here, into an exactly-sized allocation rather than a fixed buffer. */
+    size_t default_name_len = strlen(rendered_name) + strlen(".sz") + 1;
+    char *default_name = xmalloc(default_name_len);
+    snprintf(default_name, default_name_len, "%s.sz", rendered_name);
     free(rendered_name);
 
     char *target_dir, *target_name;
@@ -346,8 +346,8 @@ int cmd_export(int argc, char **argv) {
     free(default_name);
 
     bool effective_override = cli_override || cfg.backup_override;
-    char *final_path = effective_override ? path_join(target_dir, target_name)
-                                           : resolve_collision(target_dir, target_name);
+    final_path = effective_override ? path_join(target_dir, target_name)
+                                     : resolve_collision(target_dir, target_name);
     free(target_dir);
     free(target_name);
 
@@ -361,12 +361,10 @@ int cmd_export(int argc, char **argv) {
          colorize ? ANSI_RESET : "", exported_shim_count, exported_shim_count == 1 ? "" : "s",
          config_exists ? "config.toml included" : "no config.toml");
 
+cleanup:
     zip_writer_free(&zw);
     free(final_path);
-    for (size_t i = 0; i < name_count; i++) {
-        free(names[i]);
-    }
-    free(names);
+    str_array_free(names, name_count);
     config_free(&cfg);
     free(cfg_path);
     return 0;
