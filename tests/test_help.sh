@@ -8,7 +8,7 @@ code=$?
 assert_eq "--help: exits 0" "0" "$code"
 assert_contains "--help: has USAGE section" "$out" "USAGE:"
 assert_contains "--help: has COMMANDS section" "$out" "COMMANDS:"
-for cmd in add remove init list doctor install uninstall edit info update export; do
+for cmd in add remove init list doctor install uninstall edit info update export completions; do
     assert_contains "--help: mentions '$cmd'" "$out" "$cmd"
 done
 assert_eq "-h is the same as --help" "$out" "$("$SHIMBACK" -h)"

@@ -81,6 +81,9 @@ yourself — see [Building](#building) for the caveat on doing that
 manually. Building from source works the same way on any other platform;
 see [Building](#building) below.
 
+Once installed, grab shell completions with
+[`shimback completions <shell>`](#completions) (bash/zsh/fish/PowerShell).
+
 ## How it works
 
 1. `shimback add <name> ...` creates a symlink named `<name>` pointing at the
@@ -887,6 +890,29 @@ default for every export, whether or not `--override` is also passed.
 The archive also contains a small `manifest.toml` (shimback version, export
 timestamp, hostname, shim count) — [`list --full`](#list-alias-ls) shows
 every backup found in the effective `backup_dir`, alongside the shim table.
+
+### `completions`
+
+```sh
+shimback completions bash|zsh|fish|powershell
+```
+
+Prints a shell completion script to stdout for the given shell — you
+source/install it yourself, the same shape as `git completion`/
+`gh completion`/`kubectl completion`:
+
+```sh
+echo 'source <(shimback completions bash)' >> ~/.bashrc
+echo 'source <(shimback completions zsh)'  >> ~/.zshrc   # after your compinit call
+shimback completions fish > ~/.config/fish/completions/shimback.fish
+shimback completions powershell >> $PROFILE
+```
+
+Completes subcommand names, every subcommand's own flags, and — the one
+that actually saves real typing — configured shim names for
+[`remove`](#remove-alias-rm)/[`edit`](#edit)/[`info`](#info), looked up
+live against `config.toml`/split configs each time, not a static list
+baked in when the script was generated.
 
 ## Fallback policies
 

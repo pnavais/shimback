@@ -1,5 +1,6 @@
 #include "cli.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,20 +31,28 @@ typedef struct {
     const char *name;
     const char *alias;
     int (*run)(int argc, char **argv);
+    bool hidden; /* excluded from print_usage()'s COMMANDS: list and the
+                  * fuzzy-suggest candidate list -- still dispatches
+                  * normally through find_command(), just never offered
+                  * or documented. For __complete-names, a plumbing
+                  * subcommand completion scripts shell out to, not
+                  * something a user should type or get suggested. */
 } Command;
 
 static const Command COMMANDS[] = {
-    {"add", NULL, cmd_add},
-    {"remove", "rm", cmd_remove},
-    {"init", NULL, cmd_init},
-    {"list", "ls", cmd_list},
-    {"doctor", NULL, cmd_doctor},
-    {"install", NULL, cmd_install},
-    {"uninstall", NULL, cmd_uninstall},
-    {"edit", NULL, CMD_EDIT},
-    {"info", NULL, cmd_info},
-    {"update", NULL, cmd_update},
-    {"export", NULL, cmd_export},
+    {"add", NULL, cmd_add, false},
+    {"remove", "rm", cmd_remove, false},
+    {"init", NULL, cmd_init, false},
+    {"list", "ls", cmd_list, false},
+    {"doctor", NULL, cmd_doctor, false},
+    {"install", NULL, cmd_install, false},
+    {"uninstall", NULL, cmd_uninstall, false},
+    {"edit", NULL, CMD_EDIT, false},
+    {"info", NULL, cmd_info, false},
+    {"update", NULL, cmd_update, false},
+    {"export", NULL, cmd_export, false},
+    {"completions", NULL, cmd_completions, false},
+    {"__complete-names", NULL, cmd_complete_names, true},
 };
 
 #define COMMAND_COUNT (sizeof(COMMANDS) / sizeof(COMMANDS[0]))
@@ -55,6 +64,39 @@ static const Command *find_command(const char *arg) {
             (COMMANDS[i].alias && strcmp(COMMANDS[i].alias, arg) == 0)) {
             return &COMMANDS[i];
         }
+    }
+    return NULL;
+}
+
+/* cli.h's own accessors -- see its doc comment. Each walks COMMANDS[],
+ * skipping hidden entries, so the index space callers see is 0, 1, ...
+ * over non-hidden commands only, with no gaps for a hidden one in
+ * between. COMMAND_COUNT is tiny (a dozen entries), so the O(n) walk per
+ * call is irrelevant even iterated in a loop by a caller. */
+const char *cli_command_name(size_t i) {
+    size_t visible = 0;
+    for (size_t idx = 0; idx < COMMAND_COUNT; idx++) {
+        if (COMMANDS[idx].hidden) {
+            continue;
+        }
+        if (visible == i) {
+            return COMMANDS[idx].name;
+        }
+        visible++;
+    }
+    return NULL;
+}
+
+const char *cli_command_alias(size_t i) {
+    size_t visible = 0;
+    for (size_t idx = 0; idx < COMMAND_COUNT; idx++) {
+        if (COMMANDS[idx].hidden) {
+            continue;
+        }
+        if (visible == i) {
+            return COMMANDS[idx].alias;
+        }
+        visible++;
     }
     return NULL;
 }
@@ -338,6 +380,20 @@ static const CommandHelp COMMAND_HELP[] = {
         "              \004e.g. shimback export -o ~/backups/ -y\004\n"
         "\n",
     },
+    {
+        "completions",
+        "  \001shimback completions\001 \002bash\002|\002zsh\002|\002fish\002|\002powershell\002\n",
+
+        "  \001completions\001 Print a shell completion script to stdout for the given shell.\n"
+        "              Completes subcommand names, every subcommand's own flags, and --\n"
+        "              the one that saves real typing -- configured shim names for\n"
+        "              \001remove\001/\001edit\001/\001info\001, looked up live. Source/install it yourself:\n"
+        "              \004e.g. echo 'source <(shimback completions bash)' >> ~/.bashrc\004\n"
+        "              \004e.g. echo 'source <(shimback completions zsh)' >> ~/.zshrc\004\n"
+        "              \004e.g. shimback completions fish > ~/.config/fish/completions/shimback.fish\004\n"
+        "              \004e.g. shimback completions powershell >> $PROFILE\004\n"
+        "\n",
+    },
 };
 
 #define COMMAND_HELP_COUNT (sizeof(COMMAND_HELP) / sizeof(COMMAND_HELP[0]))
@@ -445,6 +501,9 @@ int cli_run(int argc, char **argv) {
     const char *candidates[2 * COMMAND_COUNT];
     size_t candidate_count = 0;
     for (size_t i = 0; i < COMMAND_COUNT; i++) {
+        if (COMMANDS[i].hidden) {
+            continue;
+        }
         candidates[candidate_count++] = COMMANDS[i].name;
         if (COMMANDS[i].alias) {
             candidates[candidate_count++] = COMMANDS[i].alias;

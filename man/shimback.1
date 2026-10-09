@@ -1,4 +1,4 @@
-.TH SHIMBACK 1 "2026-09-29" "shimback 0.2.0" "User Commands"
+.TH SHIMBACK 1 "2026-10-09" "shimback 0.3.0" "User Commands"
 .SH NAME
 shimback \- run a primary command, transparently fall back to another
 .SH SYNOPSIS
@@ -49,6 +49,9 @@ shimback \- run a primary command, transparently fall back to another
 .br
 .B shimback export
 [\fB\-o\fR|\fB\-\-output\fR \fIpath\fR] [\fB\-y\fR|\fB\-\-yes\fR] [\fB\-\-override\fR]
+.br
+.B shimback completions
+\fIbash\fR|\fIzsh\fR|\fIfish\fR|\fIpowershell\fR
 .br
 .B shimback \-\-help
 |
@@ -792,6 +795,33 @@ shimback export \-o ~/backups/ \-y
 .fi
 .RE
 .RE
+.TP
+.BI "completions " bash | zsh | fish | powershell
+Print a shell completion script to stdout for the given shell. Source or
+install it yourself \(em the same shape as
+.BR git (1)'s
+or
+.BR gh (1)'s
+own
+.B completion
+subcommand:
+.RS
+.PP
+.nf
+echo 'source <(shimback completions bash)' >> ~/.bashrc
+echo 'source <(shimback completions zsh)'  >> ~/.zshrc
+shimback completions fish > ~/.config/fish/completions/shimback.fish
+shimback completions powershell >> $PROFILE
+.fi
+.RE
+.IP
+Completes subcommand names, every subcommand's own flags, and \(em the
+one that actually saves real typing \(em configured shim names for
+.BR remove / edit / info ,
+looked up live against
+.I config.toml
+and split config files each time, not a static list baked in when the
+script was generated.
 .SH POLICIES
 .TP
 .B exit\-code
