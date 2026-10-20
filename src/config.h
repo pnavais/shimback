@@ -257,6 +257,11 @@ ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t er
  * never blocks a save. */
 void warn_route_overlaps(const ShimEntry *entry);
 
+/* Same non-fatal, add.c-only heuristic as warn_route_overlaps, for
+ * POLICY_REWRITE's rewrite_from/rewrite_to pairs instead of route-map's
+ * routes. */
+void warn_rewrite_overlaps(const ShimEntry *entry);
+
 /* Parses a "split config" file: the same per-shim keys a [shims.<name>]
  * table in config.toml would have, but as bare `key = value` lines with no
  * section header at all (the filename itself, "<name>-config.toml", is

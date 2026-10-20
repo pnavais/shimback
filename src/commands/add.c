@@ -443,6 +443,7 @@ static int finish_add(AddRequest *req) {
         die("add: %s", errbuf);
     }
     warn_route_overlaps(entry);
+    warn_rewrite_overlaps(entry);
 
     /* --verbose only ever turns this invocation's verbosity *on*; the
      * config's own `verbose` default is what controls it when the flag

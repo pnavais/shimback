@@ -205,6 +205,44 @@ SPSTRIPTOOL="$(shim_path spstriptool)"
 out="$("$SPSTRIPTOOL" -1 keep-me)"
 assert_eq "split-args strip: source ran without its matched route arg" "ECHO_RAN:keep-me" "$out"
 
+# --- split-args: --split-source-arg/--split-fallback-arg also accept glob
+# patterns, same subset as route-map/route-args. No declaration-order
+# tie-break test here -- a side's own "fully matches" check has no single
+# winner to pick among its own patterns, just existence. ---
+"$SHIMBACK" add spglobtool -s "$FAKE_ECHO" -f "$FAKE_FALLBACK" --policy split-args \
+    --split-source-arg "--v*" --split-fallback-arg -9 >/dev/null
+SPGLOBTOOL="$(shim_path spglobtool)"
+out="$("$SPGLOBTOOL" --v8)"
+assert_contains "split-args glob prefix: source's glob is satisfied, source wins" "$out" \
+    "ECHO_RAN"
+out="$("$SPGLOBTOOL" --other)"
+assert_contains "split-args glob prefix: unrelated flag satisfies neither side, source runs" \
+    "$out" "ECHO_RAN"
+
+"$SHIMBACK" add spqtool -s "$FAKE_ECHO" -f "$FAKE_FALLBACK" --policy split-args \
+    --split-source-arg "--v?" --split-fallback-arg -9 >/dev/null
+SPQTOOL="$(shim_path spqtool)"
+out="$("$SPQTOOL" --v8)"
+assert_contains "split-args glob '?': satisfied by --v8" "$out" "ECHO_RAN"
+
+"$SHIMBACK" add spctool -s "$FAKE_ECHO" -f "$FAKE_FALLBACK" --policy split-args \
+    --split-source-arg "--v[0-9]" --split-fallback-arg -9 >/dev/null
+SPCTOOL="$(shim_path spctool)"
+out="$("$SPCTOOL" --v5)"
+assert_contains "split-args glob '[0-9]': satisfied by --v5" "$out" "ECHO_RAN"
+out="$("$SPCTOOL" --va)"
+assert_contains "split-args glob '[0-9]': --va satisfies neither side, source runs" "$out" \
+    "ECHO_RAN"
+
+# --- split-args: --strip-matched-args with a glob pattern strips every
+# matching token, not just the one that triggered the side ---
+"$SHIMBACK" add spglobstriptool -s "$FAKE_ECHO" -f "$FAKE_FALLBACK" --policy split-args \
+    --split-source-arg "--v*" --split-fallback-arg -9 --strip-matched-args >/dev/null
+SPGLOBSTRIPTOOL="$(shim_path spglobstriptool)"
+out="$("$SPGLOBSTRIPTOOL" --v8 --verbose keep-me)"
+assert_eq "split-args glob strip: every token matching the pattern is stripped" \
+    "ECHO_RAN:keep-me" "$out"
+
 # --- split-args: source_args/fallback_args (baked-in) apply to whichever
 # side actually wins ---
 "$SHIMBACK" add spextra -s "$FAKE_ECHO" -f "$FAKE_FALLBACK" --policy split-args \
@@ -275,6 +313,91 @@ code=$?
 assert_eq "rewrite: source's real exit code surfaces directly (no capture, no retry)" "9" "$code"
 
 assert_contains "rewrite: list shows no fallback configured" "$("$SHIMBACK" list)" "none"
+
+# --- rewrite: <from> also accepts glob patterns, same subset as
+# route-map/route-args/split-args ---
+"$SHIMBACK" add rwglobtool -s "$FAKE_FALLBACK" --policy rewrite --rewrite "--v*=--version" \
+    >/dev/null
+RWGLOBTOOL="$(shim_path rwglobtool)"
+out="$("$RWGLOBTOOL" --v8)"
+assert_eq "rewrite glob prefix: --v8 rewritten to --version" "FALLBACK_RAN:--version" "$out"
+out="$("$RWGLOBTOOL" --other)"
+assert_eq "rewrite glob prefix: unrelated flag passes through unchanged" \
+    "FALLBACK_RAN:--other" "$out"
+
+"$SHIMBACK" add rwqtool -s "$FAKE_FALLBACK" --policy rewrite --rewrite "--v?=--version" \
+    >/dev/null
+RWQTOOL="$(shim_path rwqtool)"
+out="$("$RWQTOOL" --v8)"
+assert_eq "rewrite glob '?': --v8 rewritten to --version" "FALLBACK_RAN:--version" "$out"
+
+"$SHIMBACK" add rwctool -s "$FAKE_FALLBACK" --policy rewrite --rewrite "--v[0-9]=--version" \
+    >/dev/null
+RWCTOOL="$(shim_path rwctool)"
+out="$("$RWCTOOL" --v5)"
+assert_eq "rewrite glob '[0-9]': --v5 rewritten to --version" "FALLBACK_RAN:--version" "$out"
+out="$("$RWCTOOL" --va)"
+assert_eq "rewrite glob '[0-9]': --va doesn't match, passes through unchanged" \
+    "FALLBACK_RAN:--va" "$out"
+
+# --- rewrite: exact-literal-beats-glob -- the glob rule is declared
+# *first*, to actually prove declaration order doesn't decide this ---
+"$SHIMBACK" add rwspec -s "$FAKE_FALLBACK" --policy rewrite \
+    --rewrite "--v*=--generic" --rewrite "--v8=--specific" >/dev/null
+RWSPEC="$(shim_path rwspec)"
+out="$("$RWSPEC" --v8)"
+assert_eq "rewrite specificity: an exact literal match wins over an earlier-declared glob" \
+    "FALLBACK_RAN:--specific" "$out"
+out="$("$RWSPEC" --v9)"
+assert_eq "rewrite specificity: a non-literal-matching token still falls through to the glob" \
+    "FALLBACK_RAN:--generic" "$out"
+
+# --- rewrite: glob-vs-glob -- neither rule is a literal, so the first
+# declared wins ---
+"$SHIMBACK" add rwtie -s "$FAKE_FALLBACK" --policy rewrite \
+    --rewrite "--v*=--first" --rewrite "*8=--second" >/dev/null
+RWTIE="$(shim_path rwtie)"
+out="$("$RWTIE" --v8)"
+assert_eq "rewrite glob-vs-glob tie-break: the first-declared glob rule wins" \
+    "FALLBACK_RAN:--first" "$out"
+
+# --- rewrite: two rules with an identical (from, to) pair are rejected,
+# and nothing is written to disk -- the second could never fire ---
+"$SHIMBACK" add rwdupe -s "$FAKE_FALLBACK" --policy rewrite \
+    --rewrite "--v8=--version" --rewrite "--v8=--version" >/dev/null 2>"$SANDBOX/err"
+code=$?
+if [ "$code" -eq 0 ]; then
+    fail "add with two identical rewrite rules should have failed"
+fi
+assert_contains "rewrite duplicate rule: error names the problem" "$(cat "$SANDBOX/err")" \
+    "could never fire"
+assert_not_contains "rewrite duplicate rule: nothing written to config" \
+    "$("$SHIMBACK" list)" "rwdupe"
+
+# --- rewrite: add-time overlap warning, non-fatal, never blocks the save ---
+out="$("$SHIMBACK" add rwoverlapwarn -s "$FAKE_FALLBACK" --policy rewrite \
+    --rewrite "--v*=--generic" --rewrite "--ve*=--extra" 2>&1)"
+code=$?
+assert_eq "rewrite overlap warning: add still succeeds" "0" "$code"
+assert_contains "rewrite overlap warning: list shows the shim was saved" "$("$SHIMBACK" list)" \
+    "rwoverlapwarn"
+assert_contains "rewrite overlap warning: stderr warns about the overlapping rules" "$out" \
+    "could both match the same argument"
+
+out="$("$SHIMBACK" add rwoverlapdup -s "$FAKE_FALLBACK" --policy rewrite \
+    --rewrite "--v8=--generic" --rewrite "--v8=--specific" 2>&1)"
+code=$?
+assert_eq "rewrite overlap warning (identical from, different to): add still succeeds" "0" \
+    "$code"
+assert_contains "rewrite overlap warning (identical from, different to): warns" "$out" \
+    "could both match the same argument"
+
+out="$("$SHIMBACK" add rwoverlapok -s "$FAKE_FALLBACK" --policy rewrite \
+    --rewrite "--v8=--specific" --rewrite "--v*=--generic" 2>&1)"
+code=$?
+assert_eq "rewrite overlap warning (literal + glob): add succeeds" "0" "$code"
+assert_not_contains "rewrite overlap warning (literal + glob): never flagged -- deterministic by design" \
+    "$out" "could both match the same argument"
 
 # --- rewrite without --rewrite is rejected at add time ---
 "$SHIMBACK" add badrewrite -s "$FAKE_FALLBACK" --policy rewrite >/dev/null 2>"$SANDBOX/err"

@@ -634,7 +634,9 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
         case PAGE_REWRITE:
             bar_line(colorize,
                      "Rewrite rules, as <from>=<to> (at least one required; blank line to "
-                     "finish once you have one):");
+                     "finish once you have one). <from> is a literal argument or a glob "
+                     "pattern (*, ?, [...]); when more than one rule matches, an exact match "
+                     "always wins over a glob one, regardless of order:");
             for (size_t i = 0; i < st->rewrite_from.count; i++) {
                 bar_line(colorize, "  %zu. %s=%s", i + 1, st->rewrite_from.items[i],
                          st->rewrite_to.items[i]);

@@ -745,6 +745,24 @@ ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t er
             }
         }
     }
+    /* Two rewrite rules with the same (from, to) pair are the same kind of
+     * unreachable duplication as two identical route-map routes above:
+     * whichever is declared first always wins (build_rewritten_argv breaks
+     * on its first match), so the second could never fire. rewrite_from_count
+     * == rewrite_to_count is already guaranteed by the check above this
+     * function's entry. */
+    for (size_t i = 0; i < entry->rewrite_from_count; i++) {
+        for (size_t j = i + 1; j < entry->rewrite_from_count; j++) {
+            if (strcmp(entry->rewrite_from[i], entry->rewrite_from[j]) == 0 &&
+                strcmp(entry->rewrite_to[i], entry->rewrite_to[j]) == 0) {
+                snprintf(errbuf, errbuf_size,
+                         "shim '%s': rewrite rule %zu and rewrite rule %zu are identical -- "
+                         "the second could never fire",
+                         entry->name, i + 1, j + 1);
+                return CONFIG_ERR_VALIDATION;
+            }
+        }
+    }
     return CONFIG_OK;
 }
 
@@ -799,6 +817,30 @@ void warn_route_overlaps(const ShimEntry *entry) {
                  "same argument -- whichever is declared first would always win; double-check "
                  "this is intentional",
                  entry->name, i + 1, a->match, j + 1, b->match);
+        }
+    }
+}
+
+/* Same non-fatal, add.c-only heuristic as warn_route_overlaps above, for
+ * POLICY_REWRITE's rewrite_from/rewrite_to pairs instead of route-map's
+ * routes -- reuses routes_might_overlap as-is, since it already operates
+ * on two plain pattern strings. A pair identical in (from, to) is already
+ * a hard rejection from validate_shim_entry above, so it never reaches
+ * here; a pair with the same (literal or overlapping) from but a
+ * different to is exactly the ambiguity worth flagging. */
+void warn_rewrite_overlaps(const ShimEntry *entry) {
+    if (entry->policy != POLICY_REWRITE) {
+        return;
+    }
+    for (size_t i = 0; i < entry->rewrite_from_count; i++) {
+        for (size_t j = i + 1; j < entry->rewrite_from_count; j++) {
+            if (!routes_might_overlap(entry->rewrite_from[i], entry->rewrite_from[j])) {
+                continue;
+            }
+            warn("add: shim '%s': rewrite rule %zu ('%s') and rewrite rule %zu ('%s') could "
+                 "both match the same argument -- whichever is declared first would always "
+                 "win; double-check this is intentional",
+                 entry->name, i + 1, entry->rewrite_from[i], j + 1, entry->rewrite_from[j]);
         }
     }
 }

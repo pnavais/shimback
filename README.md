@@ -1009,6 +1009,15 @@ baked in when the script was generated.
   one that goes through the normal captured trial run. `--strip-matched-args`
   works the same way it does for `route-args`, removing whichever side's
   own args actually matched before forwarding the rest.
+  Each `--split-source-arg` / `--split-fallback-arg` value is a literal
+  argument or a glob pattern — `*` (any sequence, including none), `?` (any
+  single character), and `[...]`/`[!...]`/`[^...]` character classes (with
+  `-` ranges and negation), the same shell-glob subset `route-args` uses. A
+  side's pattern counts as present when *some* invocation argument matches
+  it, so `--split-source-arg --v*` is satisfied by `--verbose` or `--v8`
+  alike. Unlike `route-map`, there is no single winner to pick here, so
+  overlapping patterns never trigger a specificity rule. A literal `*`, `?`,
+  or `[` is written as a one-member class: `[*]`, `[?]`, `[[]`.
 - **`rewrite`**: not a fallback-on-failure policy either, and unlike every
   other policy, **`-f`/`--fallback` is optional and never used** — this is
   an alias/argument-macro mechanism, not a retry mechanism. Each
@@ -1026,6 +1035,18 @@ baked in when the script was generated.
   forwarded arguments (e.g. `--rewrite "backup=-c -z -f backup.tar.gz"`);
   an empty `<to>` (e.g. `--rewrite "-v="`) just drops the matched argument.
   Arguments that don't match any rule pass through unchanged.
+
+  Each `<from>` is a literal argument or a glob pattern — `*` (any sequence,
+  including none), `?` (any single character), and `[...]`/`[!...]`/
+  `[^...]` character classes (with `-` ranges and negation), the same
+  shell-glob subset `route-map` uses. A literal `*`, `?`, or `[` is written
+  as a one-member class: `[*]`, `[?]`, `[[]`. When more than one rule's
+  `<from>` matches the same argument, **an exact, literal match always wins
+  over a wildcard one, regardless of declaration order**; among two or more
+  wildcard matches, the first one declared wins. `add` prints a non-fatal
+  warning (it still saves the config) when two rules' `<from>` patterns look
+  like they could plausibly both match the same argument, as a nudge to
+  double-check that's intentional.
 - **`route-map`**: `route-args` generalized from a single fallback to any
   number of them. Like `rewrite`, **`-f`/`--fallback` is optional and
   never used**. Each `--route <match>=<command>` rule (repeatable) is

@@ -613,7 +613,8 @@ static void print_policy_settings(const View *v) {
             break;
         case POLICY_REWRITE:
             label("rewrite rules");
-            pf(M_DIM "(each argument that equals <from> is replaced with <to>)" M_RESET "\n");
+            pf(M_DIM "(each argument matching <from> is replaced with <to>; an exact match "
+                      "always wins over a glob one, regardless of order)" M_RESET "\n");
             for (size_t i = 0; i < e->rewrite_from_count; i++) {
                 indent();
                 pf(M_YELLOW "%s" M_RESET " -> ", e->rewrite_from[i]);
@@ -883,7 +884,8 @@ static void print_flow(const View *v, const char *shim_dir) {
             break;
         }
         case POLICY_REWRITE: {
-            pf("  rewrite each argument that equals a rule's <from>:\n");
+            pf("  rewrite each argument matching a rule's <from> (an exact match always wins\n"
+               "  over a glob one, regardless of order):\n");
             size_t w = max_len((const char *const *)e->rewrite_from, e->rewrite_from_count);
             for (size_t i = 0; i < e->rewrite_from_count; i++) {
                 pf(RAIL "    " M_YELLOW "%-*s" M_RESET " " M_DIM "->" M_RESET " ", (int)w,

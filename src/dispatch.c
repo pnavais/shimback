@@ -46,11 +46,15 @@ static char **build_argv(const char *name, char *const *extra, size_t extra_coun
 
 /* Builds the argv for a POLICY_REWRITE shim: argv[0] is `shim_name`,
  * followed by entry->source_args (fixed, baked-in arguments -- see
- * build_argv), then each of argv[1..argc), checked for an exact match
- * against entry->rewrite_from and, on a match, replaced by the
- * corresponding entry->rewrite_to value, split on spaces into one or more
- * tokens (so "-l -a -h" becomes three arguments, while "-ltrah" stays one;
- * an empty replacement drops the argument entirely). Anything that doesn't
+ * build_argv), then each of argv[1..argc), checked against entry->
+ * rewrite_from (a literal token or a glob pattern -- see route_pattern_match
+ * in util.h) and, on a match, replaced by the corresponding entry->
+ * rewrite_to value, split on spaces into one or more tokens (so "-l -a -h"
+ * becomes three arguments, while "-ltrah" stays one; an empty replacement
+ * drops the argument entirely). When more than one rule matches the same
+ * argument, an exact-literal rule always wins over a glob one regardless of
+ * declaration order, same specificity rule as route-map/route-args; among
+ * two or more glob matches, the first declared wins. Anything that doesn't
  * match passes through unchanged. source_args itself is never subject to
  * rewriting -- it's fixed, not part of what the user typed. NULL-terminated,
  * as execv expects. Caller frees the returned array itself (its elements
@@ -75,9 +79,15 @@ static char **build_rewritten_argv(const ShimEntry *entry, const char *shim_name
     for (int i = 1; i < argc; i++) {
         const char *replacement = NULL;
         for (size_t j = 0; j < entry->rewrite_from_count; j++) {
-            if (strcmp(argv[i], entry->rewrite_from[j]) == 0) {
+            if (!route_pattern_match(entry->rewrite_from[j], argv[i])) {
+                continue;
+            }
+            if (is_literal_pattern(entry->rewrite_from[j])) {
                 replacement = entry->rewrite_to[j];
-                break;
+                break; /* an exact match always wins; nothing beats it */
+            }
+            if (!replacement) {
+                replacement = entry->rewrite_to[j]; /* first glob match in declaration order */
             }
         }
         if (!replacement) {
@@ -114,13 +124,11 @@ static char **build_rewritten_argv(const ShimEntry *entry, const char *shim_name
  * token matching anything in `to_strip` is removed, not just the one token
  * that triggered the route -- e.g. a route-map route matched via "--v*"
  * also strips a later, unrelated "--verbose" token, a deliberate, documented
- * property of choosing a broad pattern (see README). `use_glob` selects
- * route_pattern_match() over plain strcmp(); split-args passes false, since
- * its source_route_args/fallback_route_args stay exact-literal-only.
- * NULL-terminated, as execv expects. */
+ * property of choosing a broad pattern (see README). NULL-terminated, as
+ * execv expects. */
 static char **strip_matching_argv(const char *shim_name, char *const *extra, size_t extra_count,
-                                   char *const *to_strip, size_t to_strip_count, bool use_glob,
-                                   int argc, char **argv) {
+                                   char *const *to_strip, size_t to_strip_count, int argc,
+                                   char **argv) {
     char **filtered = xmalloc((size_t)((size_t)argc + extra_count + 1) * sizeof(char *));
     int fi = 0;
     filtered[fi++] = (char *)shim_name;
@@ -130,9 +138,7 @@ static char **strip_matching_argv(const char *shim_name, char *const *extra, siz
     for (int i = 1; i < argc; i++) {
         bool matched = false;
         for (size_t j = 0; j < to_strip_count; j++) {
-            bool hit = use_glob ? route_pattern_match(to_strip[j], argv[i])
-                                 : (strcmp(argv[i], to_strip[j]) == 0);
-            if (hit) {
+            if (route_pattern_match(to_strip[j], argv[i])) {
                 matched = true;
                 break;
             }
@@ -145,17 +151,24 @@ static char **strip_matching_argv(const char *shim_name, char *const *extra, siz
     return filtered;
 }
 
-/* True if every one of `route_args` appears somewhere in argv[1..argc) --
- * POLICY_SPLIT_ARGS's notion of a side "fully matching" the invocation. An
- * empty `route_args` trivially "matches" anything, which is why add/config
- * validation requires at least one entry on both sides for this policy --
- * a side with nothing configured could otherwise never lose. */
+/* True if every one of `route_args` (each a literal token or a glob
+ * pattern) is satisfied by some argument in argv[1..argc) --
+ * POLICY_SPLIT_ARGS's notion of a side "fully matching" the invocation.
+ * Unlike route-map/route-args, there's no single winner to pick among
+ * multiple candidates here -- each configured entry just needs *some*
+ * matching token to exist, and the same token may satisfy more than one
+ * entry (already true today with literal duplicates; no different with
+ * overlapping glob patterns) -- so no literal-vs-wildcard specificity rule
+ * applies. An empty `route_args` trivially "matches" anything, which is
+ * why add/config validation requires at least one entry on both sides for
+ * this policy -- a side with nothing configured could otherwise never
+ * lose. */
 static bool route_args_fully_present(char *const *route_args, size_t route_arg_count, int argc,
                                       char **argv) {
     for (size_t j = 0; j < route_arg_count; j++) {
         bool found = false;
         for (int i = 1; i < argc; i++) {
-            if (strcmp(argv[i], route_args[j]) == 0) {
+            if (route_pattern_match(route_args[j], argv[i])) {
                 found = true;
                 break;
             }
@@ -291,7 +304,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         char **route_argv = build_argv(shim_name, extra, extra_count, argc, argv);
         if (matched_route && entry->strip_matched_args) {
             char **filtered = strip_matching_argv(shim_name, extra, extra_count,
-                                                   &matched_route->match, 1, true, argc, argv);
+                                                   &matched_route->match, 1, argc, argv);
             free(route_argv);
             route_argv = filtered;
         }
@@ -366,7 +379,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         char **filtered = NULL;
         if (entry->strip_matched_args) {
             filtered = strip_matching_argv(shim_name, extra, extra_count, entry->route_args,
-                                            entry->route_arg_count, true, argc, argv);
+                                            entry->route_arg_count, argc, argv);
             route_argv = filtered;
         }
 
@@ -410,7 +423,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
             char **filtered = NULL;
             if (entry->strip_matched_args) {
                 filtered = strip_matching_argv(shim_name, extra, extra_count, matched_route_args,
-                                                matched_route_arg_count, false, argc, argv);
+                                                matched_route_arg_count, argc, argv);
                 split_argv = filtered;
             }
 
