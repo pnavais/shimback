@@ -881,6 +881,43 @@ static void test_route_pattern_match(void) {
     check(!route_pattern_match("x", ""), "route_pattern_match: non-empty pattern rejects empty token");
 }
 
+static void test_pattern_found_in(void) {
+    /* Literal pattern embedded in a larger haystack, with unrelated text
+     * on both sides. */
+    check(pattern_found_in("illegal option", "fake_primary: illegal option -- x"),
+          "pattern_found_in: literal found mid-haystack (case-sensitive -- case-folding is the caller's job, see str_lower_dup)");
+    check(!pattern_found_in("nope", "fake_primary: illegal option -- x"),
+          "pattern_found_in: literal not present anywhere");
+
+    /* Pattern equal to the whole haystack, and longer than it. */
+    check(pattern_found_in("exact", "exact"), "pattern_found_in: pattern equals whole haystack");
+    check(!pattern_found_in("this pattern is too long", "short"),
+          "pattern_found_in: pattern longer than haystack fails");
+
+    /* '*' against an empty haystack. */
+    check(pattern_found_in("*", ""), "pattern_found_in: '*' matches an empty haystack");
+    check(!pattern_found_in("x", ""), "pattern_found_in: non-empty pattern rejects empty haystack");
+
+    /* Glob patterns found as a SUBSTRING (not just whole-string, which
+     * route_pattern_match's own tests already cover). */
+    check(pattern_found_in("--v*", "running with --v8 now"),
+          "pattern_found_in: '*' prefix pattern found as a substring");
+    check(pattern_found_in("err-?-code", "prefix err-5-code suffix"),
+          "pattern_found_in: '?' pattern found as a substring");
+    check(pattern_found_in("err[0-9]", "prefix err5 suffix"),
+          "pattern_found_in: '[0-9]' class pattern found as a substring");
+    check(!pattern_found_in("err[0-9]", "prefix errX suffix"),
+          "pattern_found_in: '[0-9]' class pattern absent as a substring");
+
+    /* A '*' whose mandatory trailing literal is never satisfied before
+     * the haystack runs out -- must fail, not succeed just because '*'
+     * can match zero characters. */
+    check(!pattern_found_in("ab*cd", "ab"),
+          "pattern_found_in: trailing literal after '*' never found -- fails");
+    check(pattern_found_in("ab*cd", "xx ab123cd xx"),
+          "pattern_found_in: trailing literal after '*' found -- matches");
+}
+
 int main(void) {
     test_round_trip();
     test_literal_parse();
@@ -890,6 +927,7 @@ int main(void) {
     test_mkdir_p_root();
     test_parse_size_bytes();
     test_route_pattern_match();
+    test_pattern_found_in();
     test_missing_file_is_empty_config();
 
     if (failures > 0) {

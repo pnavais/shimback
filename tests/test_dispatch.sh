@@ -39,6 +39,36 @@ assert_eq "heuristic no-match: source's real stdout surfaces" "partial-out" "$ou
 assert_eq "heuristic no-match: source's real stderr surfaces" "totally different error" "$(cat "$SANDBOX/err")"
 assert_not_contains "heuristic no-match: fallback did not run" "$out" "FALLBACK_RAN"
 
+# --- heuristic: error_patterns accept glob patterns too, matched as a
+# substring of stderr (not a whole-line match) ---
+"$SHIMBACK" add hglob -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy heuristic --error-pattern "unrecognized option '*'" >/dev/null
+HGLOB="$(shim_path hglob)"
+
+out="$(FAKE_EXIT_CODE=1 FAKE_STDERR="prog: unrecognized option '--foo', try --help" "$HGLOB" --foo 2>"$SANDBOX/err")"
+assert_contains "heuristic glob '*': matched as a substring of a longer stderr line" "$out" \
+    "FALLBACK_RAN:--foo"
+
+"$SHIMBACK" add hclass -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy heuristic --error-pattern "exit [0-9]: fatal" >/dev/null
+HCLASS="$(shim_path hclass)"
+
+out="$(FAKE_EXIT_CODE=1 FAKE_STDERR="prefix exit 7: fatal suffix" "$HCLASS" 2>"$SANDBOX/err")"
+assert_contains "heuristic glob '[0-9]': matched as a substring" "$out" "FALLBACK_RAN"
+out="$(FAKE_EXIT_CODE=1 FAKE_STDERR="prefix exit X: fatal suffix" "$HCLASS" 2>"$SANDBOX/err")"
+assert_not_contains "heuristic glob '[0-9]': non-member rejected" "$out" "FALLBACK_RAN"
+
+# --- heuristic: case-insensitivity still holds for a glob pattern, not
+# just a plain literal (regression for the fold-case-outside-the-matcher
+# design -- see str_lower_dup) ---
+"$SHIMBACK" add hcase -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy heuristic --error-pattern "INVALID *" >/dev/null
+HCASE="$(shim_path hcase)"
+
+out="$(FAKE_EXIT_CODE=1 FAKE_STDERR="prefix invalid argument suffix" "$HCASE" 2>"$SANDBOX/err")"
+assert_contains "heuristic glob case-insensitivity: uppercase pattern matches lowercase stderr" \
+    "$out" "FALLBACK_RAN"
+
 # --- exit-code-match policy ---
 "$SHIMBACK" add xtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
     --policy exit-code-match --exit-code 42 --exit-code 43 >/dev/null

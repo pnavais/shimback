@@ -225,25 +225,6 @@ void strvec_free(StrVec *v) {
     v->cap = 0;
 }
 
-const char *str_casestr(const char *haystack, const char *needle) {
-    if (*needle == '\0') {
-        return haystack;
-    }
-    for (const char *h = haystack; *h != '\0'; h++) {
-        const char *hp = h;
-        const char *np = needle;
-        while (*hp != '\0' && *np != '\0' &&
-               tolower((unsigned char)*hp) == tolower((unsigned char)*np)) {
-            hp++;
-            np++;
-        }
-        if (*np == '\0') {
-            return h;
-        }
-    }
-    return NULL;
-}
-
 bool is_literal_pattern(const char *pattern) {
     return strpbrk(pattern, "*?[") == NULL;
 }
@@ -377,6 +358,90 @@ void glob_literal_prefix_suffix(const char *pattern, size_t *prefix_len, size_t 
             i++;
         }
     }
+}
+
+/* Like route_pattern_match, but succeeds the moment `pattern` is fully
+ * consumed, regardless of how much of `text` is left over -- i.e. "does
+ * `pattern` match some PREFIX of `text`," not the whole of it. This is
+ * the building block pattern_found_in uses to ask "does `pattern` occur
+ * somewhere in `text`," by trying every starting offset -- the same
+ * O(n)-outer-loop, early-mismatch-bailout shape a naive substring search
+ * already has, just with the inner character comparison replaced by a
+ * full glob match. */
+static bool pattern_match_prefix(const char *pattern, const char *text) {
+    const char *p = pattern;
+    const char *t = text;
+    const char *star_p = NULL;
+    const char *star_t = NULL;
+
+    while (*t != '\0') {
+        if (*p == '\0') {
+            return true;
+        }
+        if (*p == '?') {
+            p++;
+            t++;
+            continue;
+        }
+        if (*p == '[') {
+            const char *class_end = glob_class_end(p);
+            if (class_end != NULL) {
+                if (glob_class_matches(p, class_end, *t)) {
+                    p = class_end + 1;
+                    t++;
+                    continue;
+                }
+            } else if (*p == *t) {
+                p++;
+                t++;
+                continue;
+            }
+        } else if (*p == '*') {
+            star_p = p++;
+            star_t = t;
+            continue;
+        } else if (*p == *t) {
+            p++;
+            t++;
+            continue;
+        }
+
+        if (star_p == NULL) {
+            return false;
+        }
+        p = star_p + 1;
+        t = ++star_t;
+    }
+    while (*p == '*') {
+        p++;
+    }
+    return *p == '\0';
+}
+
+bool pattern_found_in(const char *pattern, const char *haystack) {
+    for (const char *h = haystack;; h++) {
+        if (pattern_match_prefix(pattern, h)) {
+            return true;
+        }
+        if (*h == '\0') {
+            return false;
+        }
+    }
+}
+
+/* A lowercased copy of `s`, byte-wise (same tolower() idiom as the rest of
+ * this file uses elsewhere) -- lets heuristic's error-pattern matching
+ * stay case-insensitive by folding both sides once before a single
+ * case-sensitive pattern_found_in call, instead of needing a second,
+ * case-folding variant of the glob matcher itself. Caller frees. */
+char *str_lower_dup(const char *s) {
+    size_t len = strlen(s);
+    char *out = xmalloc(len + 1);
+    for (size_t i = 0; i < len; i++) {
+        out[i] = (char)tolower((unsigned char)s[i]);
+    }
+    out[len] = '\0';
+    return out;
 }
 
 bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count) {

@@ -828,10 +828,33 @@ script was generated.
 (the default) Fall back whenever the source command exits non\-zero.
 .TP
 .B heuristic
-Only fall back when the source's stderr matches one of the shim's
+Only fall back when the source's stderr contains one of the shim's
 configured
 .B \-\-error\-pattern
-values (case\-insensitive substring match). Requires at least one
+values, matched case\-insensitively as a
+.I substring search
+anywhere in the captured output. Each value is a literal substring or a
+glob pattern \(em
+.BR * ,
+.BR ? ,
+and
+.I [...]/[!...]/[^...]
+character classes (with
+.B \-
+ranges and negation), the same subset
+.BR route\-map 's
+own
+.I match
+uses \(em so e.g.
+.RI "\(dqunrecognized option '*'\(dq"
+matches that phrase anywhere in stderr regardless of which flag name
+fills in the
+.BR * .
+A literal
+.BR * ", " ? ", or " [
+is written as a one\-member class:
+.IR [*] ", " [?] ", " [[] .
+Requires at least one
 .BR \-\-error\-pattern .
 .TP
 .B exit\-code\-match

@@ -123,10 +123,6 @@ void strvec_init(StrVec *v);
 void strvec_push(StrVec *v, char *owned_str);
 void strvec_free(StrVec *v);
 
-/* Case-insensitive substring search, hand-rolled to avoid relying on
- * strcasestr's availability/feature-test-macro quirks across platforms. */
-const char *str_casestr(const char *haystack, const char *needle);
-
 /* True if `pattern` contains none of the glob metacharacters '*', '?', '['
  * -- i.e. route_pattern_match on it degenerates to an exact strcmp. An
  * unterminated '[' (one with no matching ']') is still reported as
@@ -159,6 +155,19 @@ bool route_pattern_match(const char *pattern, const char *token);
  * warning heuristic (see config.h's warn_route_overlaps) to cheaply test
  * whether two glob patterns could plausibly both match some token. */
 void glob_literal_prefix_suffix(const char *pattern, size_t *prefix_len, size_t *suffix_start);
+
+/* True if `pattern` (the same glob subset as route_pattern_match) matches
+ * some contiguous substring of `haystack` -- the heuristic policy's
+ * error_patterns use this, in place of the exact-substring-only search a
+ * plain strstr/strcasestr would give. Matching is byte-wise and
+ * case-sensitive, same as route_pattern_match -- callers wanting
+ * case-insensitive search (heuristic does, to preserve its existing
+ * behavior) fold case themselves first via str_lower_dup, rather than this
+ * function having its own case-folding variant of the matcher. */
+bool pattern_found_in(const char *pattern, const char *haystack);
+
+/* A newly allocated, byte-wise-lowercased copy of `s`; caller frees. */
+char *str_lower_dup(const char *s);
 
 /* True if both arrays have the same length and, pairwise, byte-identical
  * strings in the same order -- used to tell "source and fallback are truly

@@ -920,11 +920,12 @@ baked in when the script was generated.
 
 - **`exit-code`** (the default): fall back whenever the source command
   exits non-zero.
-- **`heuristic`**: only fall back when the source's stderr matches one of
-  the shim's configured `--error-pattern` values (case-insensitive
-  substring match) — useful when a non-zero exit can mean several different
-  things and you only want to retry on a specific kind of failure (e.g. an
-  argument-style mismatch between GNU and BSD tools):
+- **`heuristic`**: only fall back when the source's stderr contains one of
+  the shim's configured `--error-pattern` values, matched case-insensitively
+  as a **substring search** anywhere in the captured output — useful when a
+  non-zero exit can mean several different things and you only want to
+  retry on a specific kind of failure (e.g. an argument-style mismatch
+  between GNU and BSD tools):
 
   ```sh
   shimback add sed -f /usr/bin/sed \
@@ -933,9 +934,15 @@ baked in when the script was generated.
       --error-pattern "illegal option"
   ```
 
-  If the source fails and its stderr doesn't match any pattern, that's
-  treated as a genuine failure: the real stdout/stderr and exit code are
-  surfaced normally, and the fallback is **not** run.
+  Each `--error-pattern` value is a literal substring or a glob pattern —
+  the same `*`/`?`/`[...]`/`[!...]`/`[^...]` subset `route-map`/`route-args`/
+  `rewrite`/`split-args` already use (and the same `[*]`/`[?]`/`[[]`
+  literal-escaping idiom, no backslash escaping) — so e.g.
+  `--error-pattern "unrecognized option '*'"` matches that phrase anywhere
+  in stderr regardless of which flag name fills in the `*`. If the source
+  fails and its stderr doesn't match any pattern, that's treated as a
+  genuine failure: the real stdout/stderr and exit code are surfaced
+  normally, and the fallback is **not** run.
 - **`exit-code-match`**: like `heuristic`, but keyed on the source's exact
   exit code instead of its stderr text — only fall back when it exits with
   one of the shim's configured `--exit-code` values (repeatable, each

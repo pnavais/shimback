@@ -507,13 +507,17 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         }
     } else {
         should_fallback = false;
-        const char *stderr_text = dynbuf_cstr(&err);
+        char *stderr_lower = str_lower_dup(dynbuf_cstr(&err));
         for (size_t i = 0; i < entry->error_pattern_count; i++) {
-            if (str_casestr(stderr_text, entry->error_patterns[i]) != NULL) {
+            char *pattern_lower = str_lower_dup(entry->error_patterns[i]);
+            bool hit = pattern_found_in(pattern_lower, stderr_lower);
+            free(pattern_lower);
+            if (hit) {
                 should_fallback = true;
                 break;
             }
         }
+        free(stderr_lower);
     }
 
     if (should_fallback) {

@@ -583,7 +583,8 @@ static void print_policy_settings(const View *v) {
             break;
         case POLICY_HEURISTIC:
             label("error patterns");
-            pf(M_DIM "(case-insensitive substrings of the source's stderr)" M_RESET "\n");
+            pf(M_DIM "(case-insensitive substrings, or glob patterns, of the source's stderr)"
+                      M_RESET "\n");
             for (size_t i = 0; i < e->error_pattern_count; i++) {
                 indent();
                 pf(M_YELLOW "\"%s\"" M_RESET "\n", e->error_patterns[i]);
