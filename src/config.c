@@ -748,6 +748,61 @@ ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t er
     return CONFIG_OK;
 }
 
+/* Cheap, approximate test for whether two route match patterns could both
+ * fire on some argument -- see warn_route_overlaps below for what this
+ * does and doesn't claim to catch. */
+static bool routes_might_overlap(const char *a, const char *b) {
+    bool a_lit = is_literal_pattern(a);
+    bool b_lit = is_literal_pattern(b);
+    if (a_lit && b_lit) {
+        return strcmp(a, b) == 0;
+    }
+    if (a_lit != b_lit) {
+        /* Deterministic by dispatch_run's literal-beats-wildcard rule --
+         * combining a literal with a wildcard is the whole point of doing
+         * so, not a mistake. */
+        return false;
+    }
+
+    size_t a_prefix, a_suffix_start, b_prefix, b_suffix_start;
+    glob_literal_prefix_suffix(a, &a_prefix, &a_suffix_start);
+    glob_literal_prefix_suffix(b, &b_prefix, &b_suffix_start);
+
+    size_t pn = a_prefix < b_prefix ? a_prefix : b_prefix;
+    if (pn > 0 && memcmp(a, b, pn) == 0) {
+        return true;
+    }
+    size_t a_len = strlen(a);
+    size_t b_len = strlen(b);
+    size_t a_suf_len = a_len - a_suffix_start;
+    size_t b_suf_len = b_len - b_suffix_start;
+    size_t sn = a_suf_len < b_suf_len ? a_suf_len : b_suf_len;
+    return sn > 0 && memcmp(a + a_len - sn, b + b_len - sn, sn) == 0;
+}
+
+void warn_route_overlaps(const ShimEntry *entry) {
+    if (entry->policy != POLICY_ROUTE_MAP) {
+        return;
+    }
+    for (size_t i = 0; i < entry->route_count; i++) {
+        for (size_t j = i + 1; j < entry->route_count; j++) {
+            const RouteEntry *a = &entry->routes[i];
+            const RouteEntry *b = &entry->routes[j];
+            /* A pair identical in (command, args) is already a hard
+             * rejection from validate_shim_entry above -- add.c dies on
+             * that before this function is ever reached, so no redundant
+             * guard is needed here. */
+            if (!routes_might_overlap(a->match, b->match)) {
+                continue;
+            }
+            warn("add: shim '%s': route %zu ('%s') and route %zu ('%s') could both match the "
+                 "same argument -- whichever is declared first would always win; double-check "
+                 "this is intentional",
+                 entry->name, i + 1, a->match, j + 1, b->match);
+        }
+    }
+}
+
 ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t errbuf_size) {
     config_init(cfg);
 

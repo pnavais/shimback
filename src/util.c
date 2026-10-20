@@ -244,6 +244,141 @@ const char *str_casestr(const char *haystack, const char *needle) {
     return NULL;
 }
 
+bool is_literal_pattern(const char *pattern) {
+    return strpbrk(pattern, "*?[") == NULL;
+}
+
+/* If `p` points at an unescaped '[' that opens a *terminated* bracket
+ * expression (a matching ']' exists before the pattern's end), returns a
+ * pointer to that closing ']'. Otherwise NULL, in which case the caller
+ * treats the '[' as an ordinary literal character. A ']' that is the
+ * first content character (right after '[', or right after '[!'/'[^') is
+ * itself a literal member, not the closing bracket -- standard glob(7)
+ * convention, which is what lets "[]abc]" match ']', 'a', 'b', or 'c'. */
+static const char *glob_class_end(const char *p) {
+    const char *scan = p + 1;
+    if (*scan == '!' || *scan == '^') {
+        scan++;
+    }
+    if (*scan == ']') {
+        scan++;
+    }
+    while (*scan != '\0' && *scan != ']') {
+        scan++;
+    }
+    return (*scan == ']') ? scan : NULL;
+}
+
+/* Tests `c` against the bracket expression delimited by `p` ('[') and
+ * `class_end` (its ']', from glob_class_end) -- "[!...]"/"[^...]" negate;
+ * "a-z"-style ranges are supported; anything else inside is a literal
+ * member. */
+static bool glob_class_matches(const char *p, const char *class_end, char c) {
+    const char *scan = p + 1;
+    bool negate = false;
+    if (*scan == '!' || *scan == '^') {
+        negate = true;
+        scan++;
+    }
+    bool found = false;
+    while (scan < class_end) {
+        if (scan + 2 < class_end && scan[1] == '-') {
+            unsigned char lo = (unsigned char)scan[0];
+            unsigned char hi = (unsigned char)scan[2];
+            if ((unsigned char)c >= lo && (unsigned char)c <= hi) {
+                found = true;
+            }
+            scan += 3;
+        } else {
+            if (*scan == c) {
+                found = true;
+            }
+            scan++;
+        }
+    }
+    return negate ? !found : found;
+}
+
+bool route_pattern_match(const char *pattern, const char *token) {
+    const char *p = pattern;
+    const char *t = token;
+    const char *star_p = NULL;
+    const char *star_t = NULL;
+
+    while (*t != '\0') {
+        if (*p == '?') {
+            p++;
+            t++;
+            continue;
+        }
+        if (*p == '[') {
+            const char *class_end = glob_class_end(p);
+            if (class_end != NULL) {
+                if (glob_class_matches(p, class_end, *t)) {
+                    p = class_end + 1;
+                    t++;
+                    continue;
+                }
+            } else if (*p == *t) {
+                p++;
+                t++;
+                continue;
+            }
+        } else if (*p == '*') {
+            star_p = p++;
+            star_t = t;
+            continue;
+        } else if (*p == *t) {
+            p++;
+            t++;
+            continue;
+        }
+
+        if (star_p == NULL) {
+            return false;
+        }
+        p = star_p + 1;
+        t = ++star_t;
+    }
+    while (*p == '*') {
+        p++;
+    }
+    return *p == '\0';
+}
+
+void glob_literal_prefix_suffix(const char *pattern, size_t *prefix_len, size_t *suffix_start) {
+    size_t len = strlen(pattern);
+    *prefix_len = len;
+    *suffix_start = len;
+    bool seen_meta = false;
+    size_t i = 0;
+    while (i < len) {
+        if (pattern[i] == '*' || pattern[i] == '?') {
+            if (!seen_meta) {
+                *prefix_len = i;
+                seen_meta = true;
+            }
+            *suffix_start = i + 1;
+            i++;
+        } else if (pattern[i] == '[') {
+            const char *class_end = glob_class_end(pattern + i);
+            if (class_end != NULL) {
+                if (!seen_meta) {
+                    *prefix_len = i;
+                    seen_meta = true;
+                }
+                size_t end_idx = (size_t)(class_end - pattern);
+                *suffix_start = end_idx + 1;
+                i = end_idx + 1;
+            } else {
+                i++;
+            }
+        } else {
+            i++;
+        }
+    }
+}
+
 bool str_array_eq(char *const *a, size_t a_count, char *const *b, size_t b_count) {
     if (a_count != b_count) {
         return false;

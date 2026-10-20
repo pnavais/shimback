@@ -622,7 +622,8 @@ static void print_policy_settings(const View *v) {
             break;
         case POLICY_ROUTE_MAP: {
             label("routes");
-            pf(M_DIM "(checked in order; the first match wins)" M_RESET "\n");
+            pf(M_DIM "(an exact match always wins over a glob one, regardless of order)"
+                      M_RESET "\n");
             size_t mw = 0;
             for (size_t i = 0; i < e->route_count; i++) {
                 size_t l = strlen(e->routes[i].match);
@@ -911,7 +912,9 @@ static void print_flow(const View *v, const char *shim_dir) {
             break;
         }
         case POLICY_ROUTE_MAP: {
-            pf("  find the first route whose match equals one of the arguments:\n");
+            pf("  find the most specific route whose match (literal or glob pattern) matches "
+               "one\n  of the arguments -- an exact match always wins over a glob one, "
+               "regardless of\n  order:\n");
             pf(RAIL "\n");
             size_t w = strlen("(no match)");
             for (size_t i = 0; i < e->route_count; i++) {

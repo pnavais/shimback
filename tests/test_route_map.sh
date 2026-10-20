@@ -121,6 +121,92 @@ assert_eq "route args: still applied at dispatch after re-add" \
 assert_not_contains "route args: dropped when the route's command changes" \
     "$(cat "$(config_file)")" "--enable-preview"
 
+# --- glob patterns: prefix, suffix, middle, '?', and '[...]' ---
+"$SHIMBACK" add globprefix -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v*=$FAKE_FALLBACK" >/dev/null
+GLOBPREFIX="$(shim_path globprefix)"
+out="$("$GLOBPREFIX" --v8)"
+assert_contains "glob prefix '--v*': matches --v8" "$out" "FALLBACK_RAN"
+out="$("$GLOBPREFIX" --v25)"
+assert_contains "glob prefix '--v*': matches --v25 too" "$out" "FALLBACK_RAN"
+out="$("$GLOBPREFIX" --other 2>"$SANDBOX/err")"
+assert_not_contains "glob prefix '--v*': does not match unrelated flag" "$out" "FALLBACK_RAN"
+
+"$SHIMBACK" add globsuffix -s "$FAKE_PRIMARY" --policy route-map \
+    --route "*-legacy=$FAKE_FALLBACK" >/dev/null
+GLOBSUFFIX="$(shim_path globsuffix)"
+out="$("$GLOBSUFFIX" run-legacy)"
+assert_contains "glob suffix '*-legacy': matches run-legacy" "$out" "FALLBACK_RAN"
+
+"$SHIMBACK" add globmid -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v?8=$FAKE_FALLBACK" >/dev/null
+GLOBMID="$(shim_path globmid)"
+out="$("$GLOBMID" --vX8)"
+assert_contains "glob middle '--v?8': matches --vX8" "$out" "FALLBACK_RAN"
+out="$("$GLOBMID" --v88 2>"$SANDBOX/err")"
+assert_contains "glob middle '--v?8': matches --v88 too (any single char)" "$out" "FALLBACK_RAN"
+
+"$SHIMBACK" add globclass -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v[0-9]=$FAKE_FALLBACK" >/dev/null
+GLOBCLASS="$(shim_path globclass)"
+out="$("$GLOBCLASS" --v5)"
+assert_contains "glob class '--v[0-9]': matches --v5" "$out" "FALLBACK_RAN"
+out="$("$GLOBCLASS" --va 2>"$SANDBOX/err")"
+assert_not_contains "glob class '--v[0-9]': rejects --va" "$out" "FALLBACK_RAN"
+
+# --- exact-literal-beats-glob: the glob route is declared *first*, to
+# actually prove declaration order doesn't decide this ---
+"$SHIMBACK" add specificity -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v*=$FAKE_ECHO" --route "--v8=$FAKE_FALLBACK" >/dev/null
+SPECIFICITY="$(shim_path specificity)"
+out="$("$SPECIFICITY" --v8)"
+assert_contains "specificity: an exact literal match wins over an earlier-declared glob" "$out" \
+    "FALLBACK_RAN"
+assert_not_contains "specificity: the glob route did not run" "$out" "ECHO_RAN"
+out="$("$SPECIFICITY" --v9)"
+assert_contains "specificity: a non-literal-matching token still falls through to the glob" \
+    "$out" "ECHO_RAN"
+
+# --- glob-vs-glob: neither pattern is a literal, so the first declared wins ---
+"$SHIMBACK" add globtie -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v*=$FAKE_FALLBACK" --route "*8=$FAKE_ECHO" >/dev/null
+GLOBTIE="$(shim_path globtie)"
+out="$("$GLOBTIE" --v8)"
+assert_contains "glob-vs-glob tie-break: the first-declared glob route wins" "$out" "FALLBACK_RAN"
+assert_not_contains "glob-vs-glob tie-break: the second glob route did not run" "$out" "ECHO_RAN"
+
+# --- --strip-matched-args with a glob route strips every token matching
+# its pattern, not just the one that triggered the route ---
+"$SHIMBACK" add globstrip -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v*=$FAKE_ECHO" --strip-matched-args >/dev/null
+GLOBSTRIP="$(shim_path globstrip)"
+out="$("$GLOBSTRIP" --v8 --verbose keep-me)"
+assert_eq "strip by pattern: every token matching the glob is stripped, others survive" \
+    "ECHO_RAN:keep-me" "$out"
+
+# --- add-time overlap warning: non-fatal, never blocks the save ---
+out="$("$SHIMBACK" add overlapwarn -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v*=$FAKE_FALLBACK" --route "--ve*=$FAKE_ECHO" 2>&1)"
+code=$?
+assert_eq "overlap warning: add still succeeds" "0" "$code"
+assert_contains "overlap warning: list shows the shim was saved" "$("$SHIMBACK" list)" "overlapwarn"
+assert_contains "overlap warning: stderr warns about the overlapping routes" "$out" \
+    "could both match the same argument"
+
+out="$("$SHIMBACK" add overlapdup -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v8=$FAKE_FALLBACK" --route "--v8=$FAKE_ECHO" 2>&1)"
+code=$?
+assert_eq "overlap warning (identical literal, different command): add still succeeds" "0" "$code"
+assert_contains "overlap warning (identical literal, different command): warns" "$out" \
+    "could both match the same argument"
+
+out="$("$SHIMBACK" add overlapok -s "$FAKE_PRIMARY" --policy route-map \
+    --route "--v8=$FAKE_FALLBACK" --route "--v*=$FAKE_ECHO" 2>&1)"
+code=$?
+assert_eq "overlap warning (literal + glob): add succeeds" "0" "$code"
+assert_not_contains "overlap warning (literal + glob): never flagged -- deterministic by design" \
+    "$out" "could both match the same argument"
+
 # --- a hand-edited route missing 'match'/'command' is a controlled config
 # error, not a crash at dispatch (validated on load) ---
 printf 'version = 1\n\n[shims.badjava]\nsource = "%s"\npolicy = "route-map"\n\n[[shims.badjava.routes]]\nmatch = "--x"\n' \

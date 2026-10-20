@@ -95,6 +95,39 @@ out="$("$STRIPTOOL" special keep-me)"
 assert_contains "route-args strip: fallback ran without the matched arg" "$out" "FALLBACK_RAN:keep-me"
 assert_not_contains "route-args strip: matched arg was removed from forwarded args" "$out" "special"
 
+# --- route-args: --route-arg also accepts glob patterns, same subset as
+# route-map's own --route <match> ---
+"$SHIMBACK" add globrtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy route-args --route-arg "--v*" >/dev/null
+GLOBRTOOL="$(shim_path globrtool)"
+out="$("$GLOBRTOOL" --v8)"
+assert_contains "route-args glob prefix: matches --v8, routes to fallback" "$out" "FALLBACK_RAN"
+out="$("$GLOBRTOOL" --other)"
+assert_not_contains "route-args glob prefix: does not match unrelated flag" "$out" "FALLBACK_RAN"
+
+"$SHIMBACK" add globqtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy route-args --route-arg "--v?" >/dev/null
+GLOBQTOOL="$(shim_path globqtool)"
+out="$("$GLOBQTOOL" --v8)"
+assert_contains "route-args glob '?': matches --v8" "$out" "FALLBACK_RAN"
+
+"$SHIMBACK" add globctool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy route-args --route-arg "--v[0-9]" >/dev/null
+GLOBCTOOL="$(shim_path globctool)"
+out="$("$GLOBCTOOL" --v5)"
+assert_contains "route-args glob '[0-9]': matches --v5" "$out" "FALLBACK_RAN"
+out="$("$GLOBCTOOL" --va)"
+assert_not_contains "route-args glob '[0-9]': rejects --va" "$out" "FALLBACK_RAN"
+
+# --- route-args: --strip-matched-args with a glob --route-arg strips
+# every matching token, not just the one that triggered the route ---
+"$SHIMBACK" add globstriptool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
+    --policy route-args --route-arg "--v*" --strip-matched-args >/dev/null
+GLOBSTRIPTOOL="$(shim_path globstriptool)"
+out="$("$GLOBSTRIPTOOL" --v8 --verbose keep-me)"
+assert_eq "route-args glob strip: every token matching the pattern is stripped" \
+    "FALLBACK_RAN:keep-me" "$out"
+
 # --- route-args diagnostic opt-in only fires when routed to fallback ---
 "$SHIMBACK" add drtool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" \
     --policy route-args --route-arg "special" --diagnostic >/dev/null

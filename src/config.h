@@ -88,7 +88,9 @@ typedef enum {
  * that *is* rejected: two routes with an identical (command, args)
  * pair, which would just be dead, unreachable duplication). */
 typedef struct {
-    char *match;      /* owned; exact argv token that triggers this route */
+    char *match;      /* owned; a literal argv token or a glob pattern
+                        * (*, ?, [...]) that triggers this route -- see
+                        * route_pattern_match in util.h */
     char *command;    /* owned; resolved, absolute path -- same treatment
                         * as source/fallback (see add.c) */
     char **args;      /* owned array of owned strings; fixed args always
@@ -235,6 +237,25 @@ ConfigStatus config_save(const Config *cfg, const char *path, char *errbuf, size
  * already let `add` write a config that every other command then refused
  * to load). */
 ConfigStatus validate_shim_entry(const ShimEntry *entry, char *errbuf, size_t errbuf_size);
+
+/* Non-fatal, best-effort heuristic warning, exclusive to add.c's
+ * finish_add -- NEVER called from config_load/config_load_split (unlike
+ * validate_shim_entry, which both of those call on every load, including
+ * every single dispatch), since that would print it on every invocation
+ * of every shim rather than just at `add` time. Flags POLICY_ROUTE_MAP
+ * route pairs whose patterns could plausibly both match the same
+ * argument, when that ambiguity isn't already resolved deterministically
+ * by dispatch_run's own literal-beats-wildcard rule (see dispatch.c): two
+ * identical literal matches pointing at different commands are flagged
+ * (genuinely dead routing that validate_shim_entry's (command,args)-only
+ * duplicate check doesn't catch); a literal paired with a wildcard is
+ * never flagged, since the literal always wins by design regardless of
+ * order -- that's the point of combining them (e.g. "--v8" alongside
+ * "--v*"), not a mistake; two wildcards are flagged on a cheap,
+ * approximate prefix/suffix overlap test -- false positives and negatives
+ * are both expected and acceptable. Always warn(), never an error --
+ * never blocks a save. */
+void warn_route_overlaps(const ShimEntry *entry);
 
 /* Parses a "split config" file: the same per-shim keys a [shims.<name>]
  * table in config.toml would have, but as bare `key = value` lines with no

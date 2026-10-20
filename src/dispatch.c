@@ -106,14 +106,21 @@ static char **build_rewritten_argv(const ShimEntry *entry, const char *shim_name
 }
 
 /* Builds shim_name + `extra` (baked-in args) + (forwarded args except any
- * equal to one of `to_strip`) -- shared by POLICY_ROUTE_ARGS and
- * POLICY_SPLIT_ARGS's strip_matched_args support: whichever route args
- * actually decided where the invocation went are removed before forwarding,
- * since a program that dispatches on a flag's mere presence rarely wants to
- * also see it as a real argument. NULL-terminated, as execv expects. */
+ * matching one of `to_strip`) -- shared by POLICY_ROUTE_MAP,
+ * POLICY_ROUTE_ARGS, and POLICY_SPLIT_ARGS's strip_matched_args support:
+ * whichever route args actually decided where the invocation went are
+ * removed before forwarding, since a program that dispatches on a flag's
+ * mere presence rarely wants to also see it as a real argument. Every argv
+ * token matching anything in `to_strip` is removed, not just the one token
+ * that triggered the route -- e.g. a route-map route matched via "--v*"
+ * also strips a later, unrelated "--verbose" token, a deliberate, documented
+ * property of choosing a broad pattern (see README). `use_glob` selects
+ * route_pattern_match() over plain strcmp(); split-args passes false, since
+ * its source_route_args/fallback_route_args stay exact-literal-only.
+ * NULL-terminated, as execv expects. */
 static char **strip_matching_argv(const char *shim_name, char *const *extra, size_t extra_count,
-                                   char *const *to_strip, size_t to_strip_count, int argc,
-                                   char **argv) {
+                                   char *const *to_strip, size_t to_strip_count, bool use_glob,
+                                   int argc, char **argv) {
     char **filtered = xmalloc((size_t)((size_t)argc + extra_count + 1) * sizeof(char *));
     int fi = 0;
     filtered[fi++] = (char *)shim_name;
@@ -123,7 +130,9 @@ static char **strip_matching_argv(const char *shim_name, char *const *extra, siz
     for (int i = 1; i < argc; i++) {
         bool matched = false;
         for (size_t j = 0; j < to_strip_count; j++) {
-            if (strcmp(argv[i], to_strip[j]) == 0) {
+            bool hit = use_glob ? route_pattern_match(to_strip[j], argv[i])
+                                 : (strcmp(argv[i], to_strip[j]) == 0);
+            if (hit) {
                 matched = true;
                 break;
             }
@@ -231,22 +240,36 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     }
 
     /* route-map is the other policy that never looks at fallback (which is
-     * why it's optional for this one too, like rewrite) -- it picks the
-     * first route whose match exactly equals one of the invocation's
-     * arguments, or source if none do, then runs only that one with live/
-     * inherited stdio. Unlike route-args, a route's own command is
-     * resolved fresh here rather than upfront alongside source/fallback,
-     * since there can be any number of them and most invocations only
-     * ever need at most one resolved. */
+     * why it's optional for this one too, like rewrite) -- for each
+     * argument in turn, it finds every route whose match (a literal or a
+     * glob pattern -- see route_pattern_match in util.h) matches that
+     * argument, and picks the most specific one: an exact-literal match
+     * always wins over any wildcard match, regardless of declaration
+     * order; among two or more wildcard matches, the first one declared
+     * wins. The first argument position with any match at all decides it
+     * (later positions are never consulted); source runs if none match.
+     * Only the matched route runs, with live/inherited stdio. Unlike
+     * route-args, a route's own command is resolved fresh here rather than
+     * upfront alongside source/fallback, since there can be any number of
+     * them and most invocations only ever need at most one resolved. */
     if (entry->policy == POLICY_ROUTE_MAP) {
         const RouteEntry *matched_route = NULL;
         for (int i = 1; i < argc && !matched_route; i++) {
+            const RouteEntry *best = NULL;
             for (size_t j = 0; j < entry->route_count; j++) {
-                if (strcmp(argv[i], entry->routes[j].match) == 0) {
-                    matched_route = &entry->routes[j];
-                    break;
+                const RouteEntry *r = &entry->routes[j];
+                if (!route_pattern_match(r->match, argv[i])) {
+                    continue;
+                }
+                if (is_literal_pattern(r->match)) {
+                    best = r;
+                    break; /* an exact match always wins; nothing beats it */
+                }
+                if (!best) {
+                    best = r; /* first wildcard match in declaration order */
                 }
             }
+            matched_route = best;
         }
 
         const char *target = resolved_source;
@@ -268,7 +291,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         char **route_argv = build_argv(shim_name, extra, extra_count, argc, argv);
         if (matched_route && entry->strip_matched_args) {
             char **filtered = strip_matching_argv(shim_name, extra, extra_count,
-                                                   &matched_route->match, 1, argc, argv);
+                                                   &matched_route->match, 1, true, argc, argv);
             free(route_argv);
             route_argv = filtered;
         }
@@ -311,14 +334,29 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     }
 
     if (entry->policy == POLICY_ROUTE_ARGS) {
+        /* Same literal-beats-wildcard, first-declared-wins-among-wildcards
+         * resolution as route-map (see the comment above that block) --
+         * restructured identically for shared primitives, though with only
+         * one alternate destination (fallback) there's nothing externally
+         * observable about *which* route_args[] entry "won" beyond the
+         * plain matched/not-matched outcome. */
         bool matched = false;
         for (int i = 1; i < argc && !matched; i++) {
+            const char *best = NULL;
             for (size_t j = 0; j < entry->route_arg_count; j++) {
-                if (strcmp(argv[i], entry->route_args[j]) == 0) {
-                    matched = true;
+                const char *pat = entry->route_args[j];
+                if (!route_pattern_match(pat, argv[i])) {
+                    continue;
+                }
+                if (is_literal_pattern(pat)) {
+                    best = pat;
                     break;
                 }
+                if (!best) {
+                    best = pat;
+                }
             }
+            matched = (best != NULL);
         }
         const char *target = matched ? resolved_fallback : resolved_source;
         char *const *extra = matched ? entry->fallback_args : entry->source_args;
@@ -328,7 +366,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         char **filtered = NULL;
         if (entry->strip_matched_args) {
             filtered = strip_matching_argv(shim_name, extra, extra_count, entry->route_args,
-                                            entry->route_arg_count, argc, argv);
+                                            entry->route_arg_count, true, argc, argv);
             route_argv = filtered;
         }
 
@@ -372,7 +410,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
             char **filtered = NULL;
             if (entry->strip_matched_args) {
                 filtered = strip_matching_argv(shim_name, extra, extra_count, matched_route_args,
-                                                matched_route_arg_count, argc, argv);
+                                                matched_route_arg_count, false, argc, argv);
                 split_argv = filtered;
             }
 

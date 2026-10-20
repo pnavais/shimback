@@ -120,7 +120,7 @@ static void test_round_trip(void) {
     cfg.shims[java_idx].source = xstrdup("/opt/java17/bin/java");
     cfg.shims[java_idx].policy = POLICY_ROUTE_MAP;
     cfg.shims[java_idx].strip_matched_args = true;
-    cfg.shims[java_idx].routes = xmalloc(3 * sizeof(RouteEntry));
+    cfg.shims[java_idx].routes = xmalloc(4 * sizeof(RouteEntry));
     cfg.shims[java_idx].routes[0].match = xstrdup("--v8");
     cfg.shims[java_idx].routes[0].command = xstrdup("/opt/java8/bin/java");
     cfg.shims[java_idx].routes[0].args = NULL;
@@ -136,7 +136,14 @@ static void test_round_trip(void) {
     cfg.shims[java_idx].routes[2].args = xmalloc(1 * sizeof(char *));
     cfg.shims[java_idx].routes[2].args[0] = xstrdup("--enable-preview");
     cfg.shims[java_idx].routes[2].arg_count = 1;
-    cfg.shims[java_idx].route_count = 3;
+    /* A glob match value: confirms it round-trips through parse/serialize
+     * byte-for-byte, same as any literal match -- glob support adds no new
+     * parsing/serialization behavior, just a new runtime interpretation. */
+    cfg.shims[java_idx].routes[3].match = xstrdup("--v*");
+    cfg.shims[java_idx].routes[3].command = xstrdup("/opt/java-preview/bin/java");
+    cfg.shims[java_idx].routes[3].args = NULL;
+    cfg.shims[java_idx].routes[3].arg_count = 0;
+    cfg.shims[java_idx].route_count = 4;
 
     char *path = make_temp_path("roundtrip");
     char errbuf[256];
@@ -263,8 +270,8 @@ static void test_round_trip(void) {
         check_str_eq("java.fallback", NULL, java->fallback);
         check(java->policy == POLICY_ROUTE_MAP, "java.policy == route-map");
         check(java->strip_matched_args == true, "java.strip_matched_args == true");
-        check(java->route_count == 3, "java.route_count == 3");
-        if (java->route_count == 3) {
+        check(java->route_count == 4, "java.route_count == 4");
+        if (java->route_count == 4) {
             check_str_eq("java.routes[0].match", "--v8", java->routes[0].match);
             check_str_eq("java.routes[0].command", "/opt/java8/bin/java", java->routes[0].command);
             check(java->routes[0].arg_count == 0, "java.routes[0].arg_count == 0");
@@ -280,6 +287,10 @@ static void test_round_trip(void) {
                 check_str_eq("java.routes[2].args[0]", "--enable-preview",
                              java->routes[2].args[0]);
             }
+            check_str_eq("java.routes[3].match", "--v*", java->routes[3].match);
+            check_str_eq("java.routes[3].command", "/opt/java-preview/bin/java",
+                         java->routes[3].command);
+            check(java->routes[3].arg_count == 0, "java.routes[3].arg_count == 0");
         }
     }
 
@@ -818,6 +829,58 @@ static void test_parse_size_bytes(void) {
           "parse_size_bytes: value one past ULLONG_MAX (no suffix) rejected");
 }
 
+static void test_route_pattern_match(void) {
+    /* Literal patterns: exact strcmp semantics, case-sensitive. */
+    check(route_pattern_match("--v8", "--v8"), "route_pattern_match: literal exact match");
+    check(!route_pattern_match("--v8", "--v9"), "route_pattern_match: literal mismatch");
+    check(!route_pattern_match("--v8", "--V8"), "route_pattern_match: literal is case-sensitive");
+    check(is_literal_pattern("--v8"), "is_literal_pattern: plain string is literal");
+
+    /* '*': any sequence, including empty. */
+    check(route_pattern_match("--v*", "--v8"), "route_pattern_match: '*' prefix matches");
+    check(route_pattern_match("--v*", "--v"), "route_pattern_match: '*' matches empty suffix");
+    check(route_pattern_match("*-legacy", "foo-legacy"), "route_pattern_match: '*' suffix matches");
+    check(!route_pattern_match("--v*", "--w8"), "route_pattern_match: '*' prefix mismatch rejected");
+    check(route_pattern_match("*", ""), "route_pattern_match: bare '*' matches empty token");
+    check(route_pattern_match("*", "anything"), "route_pattern_match: bare '*' matches anything");
+    check(!is_literal_pattern("--v*"), "is_literal_pattern: '*' makes it non-literal");
+
+    /* '?': exactly one byte. */
+    check(route_pattern_match("--v?", "--v8"), "route_pattern_match: '?' matches one char");
+    check(!route_pattern_match("--v?", "--v"), "route_pattern_match: '?' fails against empty");
+    check(!route_pattern_match("--v?", "--v88"), "route_pattern_match: '?' doesn't match two chars");
+    check(!is_literal_pattern("--v?"), "is_literal_pattern: '?' makes it non-literal");
+
+    /* '[...]': character classes, ranges, negation. */
+    check(route_pattern_match("--v[08]", "--v8"), "route_pattern_match: '[08]' matches member");
+    check(!route_pattern_match("--v[08]", "--v9"), "route_pattern_match: '[08]' rejects non-member");
+    check(route_pattern_match("--v[0-9]", "--v5"), "route_pattern_match: '[0-9]' range matches");
+    check(!route_pattern_match("--v[0-9]", "--va"), "route_pattern_match: '[0-9]' range rejects");
+    check(route_pattern_match("--v[!0-9]", "--va"), "route_pattern_match: '[!...]' negation matches");
+    check(!route_pattern_match("--v[!0-9]", "--v5"), "route_pattern_match: '[!...]' negation rejects");
+    check(route_pattern_match("--v[^0-9]", "--va"), "route_pattern_match: '[^...]' negation matches");
+    check(route_pattern_match("[]abc]", "]"), "route_pattern_match: leading ']' is a literal member");
+    check(route_pattern_match("[]abc]", "a"), "route_pattern_match: '[]abc]' also matches 'a'");
+    check(!is_literal_pattern("--v[08]"), "is_literal_pattern: '[' makes it non-literal");
+
+    /* Escaping idiom: a one-member class for a literal metacharacter. */
+    check(route_pattern_match("[*]", "*"), "route_pattern_match: '[*]' matches literal '*'");
+    check(!route_pattern_match("[*]", "x"), "route_pattern_match: '[*]' rejects anything else");
+    check(route_pattern_match("[?]", "?"), "route_pattern_match: '[?]' matches literal '?'");
+    check(route_pattern_match("[[]", "["), "route_pattern_match: '[[]' matches literal '['");
+
+    /* Unterminated '[' is treated as an ordinary literal character. */
+    check(route_pattern_match("foo[bar", "foo[bar"),
+          "route_pattern_match: unterminated '[' matches literally");
+    check(!is_literal_pattern("foo[bar"),
+          "is_literal_pattern: unterminated '[' still counts as non-literal (documented quirk)");
+
+    /* Empty pattern / empty token combinations. */
+    check(route_pattern_match("", ""), "route_pattern_match: empty pattern matches empty token");
+    check(!route_pattern_match("", "x"), "route_pattern_match: empty pattern rejects non-empty token");
+    check(!route_pattern_match("x", ""), "route_pattern_match: non-empty pattern rejects empty token");
+}
+
 int main(void) {
     test_round_trip();
     test_literal_parse();
@@ -826,6 +889,7 @@ int main(void) {
     test_comment_after_escaped_backslash();
     test_mkdir_p_root();
     test_parse_size_bytes();
+    test_route_pattern_match();
     test_missing_file_is_empty_config();
 
     if (failures > 0) {

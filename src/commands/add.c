@@ -45,10 +45,13 @@ static const char *USAGE =
     "file to the shimback binary's own directory, or the shim symlink's own directory, to\n"
     "override it from there instead. Omitting --split-config on a shim that currently has\n"
     "one removes it, folding the shim back into config.toml.\n"
-    "--policy route-map generalizes route-args to any number of routes: the first --route\n"
-    "whose <match> exactly equals one of the invocation's arguments runs <command> instead\n"
-    "of source (with --strip-matched-args removing that one matched argument first, same as\n"
-    "route-args). No match runs source, exactly like route-args' own source/fallback default.\n"
+    "--policy route-map generalizes route-args to any number of routes: <match> is a literal\n"
+    "argument or a glob pattern (*, ?, [...]); the most specific --route whose <match> matches\n"
+    "one of the invocation's arguments runs <command> instead of source (an exact, literal\n"
+    "match always wins over a glob one, regardless of declaration order; ties between two\n"
+    "glob matches go to whichever is declared first), with --strip-matched-args removing\n"
+    "every argument matching that route's own <match> first, same as route-args. No match\n"
+    "runs source, exactly like route-args' own source/fallback default.\n"
     "Each route's own extra fixed arguments aren't settable from this flag -- edit the\n"
     "resulting config.toml's `args = [...]` under that route's [[shims.<name>.routes]] block.\n"
     "Re-running add keeps those args for any route whose <match> and <command> are unchanged.\n"
@@ -439,6 +442,7 @@ static int finish_add(AddRequest *req) {
     if (validate_shim_entry(entry, errbuf, sizeof(errbuf)) != CONFIG_OK) {
         die("add: %s", errbuf);
     }
+    warn_route_overlaps(entry);
 
     /* --verbose only ever turns this invocation's verbosity *on*; the
      * config's own `verbose` default is what controls it when the flag

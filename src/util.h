@@ -127,6 +127,39 @@ void strvec_free(StrVec *v);
  * strcasestr's availability/feature-test-macro quirks across platforms. */
 const char *str_casestr(const char *haystack, const char *needle);
 
+/* True if `pattern` contains none of the glob metacharacters '*', '?', '['
+ * -- i.e. route_pattern_match on it degenerates to an exact strcmp. An
+ * unterminated '[' (one with no matching ']') is still reported as
+ * non-literal even though it matches like one; this only affects which
+ * side of a specificity rule such a pattern is filed under, never the
+ * correctness of the match itself. */
+bool is_literal_pattern(const char *pattern);
+
+/* Shell-glob-style match of `token` against `pattern`: '*' matches any
+ * sequence of bytes (including none), '?' matches exactly one byte, and
+ * '[...]'/'[!...]'/'[^...]' is a bracket character class (with '-' ranges
+ * and negation), same subset as glob(7). No backslash escaping -- a
+ * literal '*', '?', or '[' is written as a one-member class ('[*]', '[?]',
+ * '[[]'), which falls out of the bracket-class handling for free; TOML
+ * already consumes a bare '\' at parse time, and introducing escaping on
+ * top of that risks silently reinterpreting an existing hand-written
+ * match/route_arg value. Matching is byte-wise and case-sensitive, with no
+ * locale or path semantics -- '*'/'?' cross any byte, argv tokens aren't
+ * paths. Hand-rolled (rather than libc fnmatch()) so behavior is
+ * identical on every platform shimback builds for, including Windows,
+ * which has no fnmatch at all. */
+bool route_pattern_match(const char *pattern, const char *token);
+
+/* Splits `pattern` into its longest fixed literal prefix (before the first
+ * '*'/'?'/bracket class) and the start offset of its longest fixed
+ * literal suffix (after the last one) -- *prefix_len and *suffix_start are
+ * both byte offsets into `pattern`. For a fully literal pattern,
+ * *prefix_len == *suffix_start == strlen(pattern) (prefix is the whole
+ * string, suffix is empty). Used only by the add-time route-overlap
+ * warning heuristic (see config.h's warn_route_overlaps) to cheaply test
+ * whether two glob patterns could plausibly both match some token. */
+void glob_literal_prefix_suffix(const char *pattern, size_t *prefix_len, size_t *suffix_start);
+
 /* True if both arrays have the same length and, pairwise, byte-identical
  * strings in the same order -- used to tell "source and fallback are truly
  * indistinguishable" (same resolved binary, same extra arguments) apart

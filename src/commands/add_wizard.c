@@ -644,8 +644,10 @@ static void render_page(const WizardState *st, const History *hist, size_t hist_
         case PAGE_ROUTE_MAP:
             bar_line(colorize,
                      "Routes, as <match>=<command> (at least one required; blank line to "
-                     "finish once you have one). The first route whose <match> equals one of "
-                     "the invocation's arguments runs <command> instead of source:");
+                     "finish once you have one). <match> is a literal argument or a glob "
+                     "pattern (*, ?, [...]); the most specific route whose <match> matches one "
+                     "of the invocation's arguments runs <command> instead of source -- an "
+                     "exact match always wins over a glob one, regardless of order:");
             for (size_t i = 0; i < st->route_match.count; i++) {
                 bar_line(colorize, "  %zu. %s=%s", i + 1, st->route_match.items[i],
                          st->route_command.items[i]);

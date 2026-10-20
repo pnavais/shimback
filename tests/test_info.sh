@@ -91,8 +91,8 @@ assert_contains "info route-map: shows a route's own args" "$out" "with args: --
 assert_contains "info route-map: diagram folds the route's args into its command line" "$out" \
     "--enable-preview <args>"
 assert_contains "info route-map: diagram has the no-match default" "$out" "(no match)"
-assert_contains "info route-map: says the first match wins" "$out" \
-    "the first match wins"
+assert_contains "info route-map: says an exact match wins over a glob one" "$out" \
+    "an exact match always wins over a glob one"
 
 # --- per-shim capture overrides are attributed to the shim ---
 "$SHIMBACK" add captool -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" --capture-timeout 500 \

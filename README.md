@@ -788,7 +788,7 @@ Commands
   fallback       none (not used by this policy)
 
 Policy settings
-  routes         (checked in order; the first match wins)
+  routes         (an exact match always wins over a glob one, regardless of order)
                  1. --v8      -> /opt/java8/bin/java [ok]
                  2. --v25     -> /opt/java25/bin/java [ok]
                  3. --preview -> /opt/java25/bin/java [ok]
@@ -810,7 +810,9 @@ Flow
   shimback  policy: route-map
     |
     v
-  find the first route whose match equals one of the arguments:
+  find the most specific route whose match (literal or glob pattern) matches one
+  of the arguments -- an exact match always wins over a glob one, regardless of
+  order:
     |
     +-- --v8       --> /opt/java8/bin/java <args>
     +-- --v25      --> /opt/java25/bin/java <args>
@@ -949,8 +951,8 @@ baked in when the script was generated.
   as-is, with the fallback **not** run.
 - **`route-args`**: not a fallback-on-failure policy at all. Instead of
   running the source and reacting to how it went, `shimback` looks at the
-  invocation's arguments *before running anything*: if any of them exactly
-  match one of the shim's configured `--route-arg` values, it runs the
+  invocation's arguments *before running anything*: if any of them match
+  one of the shim's configured `--route-arg` values, it runs the
   **fallback**; otherwise it runs the **source**. Only the chosen one ever
   runs, directly, with live/inherited stdio (no invisible trial run, no
   captured output, no retry if it fails) — useful for a command whose
@@ -963,9 +965,22 @@ baked in when the script was generated.
   ```
 
   Running `cools` normally runs `ls`; running `cools x` runs `eza x`
-  instead. Pass `--strip-matched-args` to drop the matched argument(s)
-  before forwarding the rest — with it set, `cools x` above would run
-  `eza` with no arguments at all.
+  instead. Pass `--strip-matched-args` to drop every argument matching one
+  of the configured `--route-arg` values before forwarding the rest — with
+  it set, `cools x` above would run `eza` with no arguments at all.
+
+  Each `--route-arg` value is a literal argument or a glob pattern — `*`
+  (any sequence, including none), `?` (any single character), and
+  `[...]`/`[!...]`/`[^...]` character classes (with `-` ranges and
+  negation), the same shell-glob subset `route-map`'s own `--route <match>`
+  uses (see below for the full rule, including how ties between multiple
+  matching values resolve — with only one alternate destination here, that
+  rule only ever affects *whether* fallback runs, never *which* value "won").
+  A literal `*`, `?`, or `[` is written as a one-member class: `[*]`, `[?]`,
+  `[[]`. `--strip-matched-args` removes every argument matching *any*
+  configured `--route-arg` pattern, not just the one that triggered the
+  route — so a broad pattern like `--v*` would also strip an unrelated
+  `--verbose` argument if one was present.
 - **`split-args`**: also decides up front from the arguments alone rather
   than reacting to failure, but two-sided: source and fallback each get
   their *own* set of discriminating args (`--split-source-arg` /
@@ -1014,10 +1029,10 @@ baked in when the script was generated.
 - **`route-map`**: `route-args` generalized from a single fallback to any
   number of them. Like `rewrite`, **`-f`/`--fallback` is optional and
   never used**. Each `--route <match>=<command>` rule (repeatable) is
-  checked, in order, against the invocation's arguments; the first one
-  whose `<match>` exactly equals one of them runs `<command>` instead of
-  the **source**, live/inherited, no capture, no retry. No match at all
-  runs the source, exactly like `route-args`' own no-match case. Unlike
+  checked against the invocation's arguments; the most specific one whose
+  `<match>` matches one of them runs `<command>` instead of the
+  **source**, live/inherited, no capture, no retry. No match at all runs
+  the source, exactly like `route-args`' own no-match case. Unlike
   `route-args`, the same command can appear in more than one route — the
   motivating case is a version-selecting shim:
 
@@ -1029,9 +1044,27 @@ baked in when the script was generated.
   ```
 
   Running `java` normally runs `java17`; `java --v8 Foo.java` runs `java8`
-  instead; `java --v25 Foo.java` runs `java25` instead. `--strip-matched-args`
-  works the same way it does for `route-args`, removing whichever route's
-  matched token before forwarding the rest. A route can also carry its own
+  instead; `java --v25 Foo.java` runs `java25` instead.
+
+  `<match>` is a literal argument or a glob pattern — `*` (any sequence,
+  including none), `?` (any single character), and `[...]`/`[!...]`/
+  `[^...]` character classes (with `-` ranges and negation). A literal `*`,
+  `?`, or `[` is written as a one-member class: `[*]`, `[?]`, `[[]`. When
+  more than one route's `<match>` matches the same argument, **an exact,
+  literal match always wins over a wildcard one, regardless of declaration
+  order**; among two or more wildcard matches, the first one declared
+  wins. So `--route "--v8=..." --route "--v*=..."` always routes a literal
+  `--v8` to the first rule even if `--v*` were declared first — the whole
+  point of combining a literal with a broader pattern is to carve out an
+  exception, not to create an ambiguity. `add` prints a non-fatal warning
+  (it still saves the config) when two routes' patterns look like they
+  could plausibly both match the same argument, as a nudge to double-check
+  that's intentional.
+
+  `--strip-matched-args` removes every argument matching the winning
+  route's own `<match>` pattern, not just the one argument that triggered
+  it — so a route matched via `--v*` would also strip an unrelated
+  `--verbose` argument if one was present. A route can also carry its own
   fixed arguments — not settable via `--route` itself (its `<match>=<command>`
   shape has no room for a third field without ambiguous shell quoting), but
   editable directly in `config.toml`'s `args = [...]` under that route's
