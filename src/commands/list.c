@@ -12,7 +12,7 @@
 #include "../platform/platform.h"
 #include "../util.h"
 
-static const char *USAGE = "usage: shimback list [--full]\n";
+static const char *USAGE = "usage: shimback list [--full] [<pattern>]\n";
 
 /* Prints `text`, optionally wrapped in `color`, then pads with spaces up to
  * `width` -- padding is based on the plain text length, since padding to
@@ -247,8 +247,12 @@ int cmd_list(int argc, char **argv) {
                 return 1;
         }
     }
+    const char *filter = NULL;
     if (optind < argc) {
-        die("list: unexpected argument '%s'", argv[optind]);
+        filter = argv[optind];
+        if (optind + 1 < argc) {
+            die("list: unexpected argument '%s'", argv[optind + 1]);
+        }
     }
 
     char *cfg_path = config_file_path();
@@ -262,8 +266,27 @@ int cmd_list(int argc, char **argv) {
     size_t name_count = 0;
     char **names = collect_all_shim_names(&cfg, &name_count);
 
+    /* Filtered in place before anything below ever sees `names` -- every
+     * downstream pass (column widths, orphan handling, the table loop
+     * itself) stays unaware a filter was even applied. */
+    if (filter) {
+        size_t kept = 0;
+        for (size_t i = 0; i < name_count; i++) {
+            if (route_pattern_match(filter, names[i])) {
+                names[kept++] = names[i];
+            } else {
+                free(names[i]);
+            }
+        }
+        name_count = kept;
+    }
+
     if (name_count == 0) {
-        printf("No shims configured.\n");
+        if (filter) {
+            printf("No shims match '%s'.\n", filter);
+        } else {
+            printf("No shims configured.\n");
+        }
         if (full) {
             print_backups_section(&cfg, stdout_is_color());
         }

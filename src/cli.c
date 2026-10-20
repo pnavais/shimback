@@ -245,13 +245,15 @@ static const CommandHelp COMMAND_HELP[] = {
     },
     {
         "list",
-        "  \001shimback list\001 [\001--full\001] (alias: \001ls\001)\n",
+        "  \001shimback list\001 [\001--full\001] [\001<pattern>\001] (alias: \001ls\001)\n",
 
         "  \001list\001      List every shim (config.toml- or split-config-backed, plus any\n"
         "            orphan -- see \001doctor\001) as a table: name, source, fallback, policy,\n"
         "            and diagnostic flag. Also available as \001ls\001. \001--full\001 also prints\n"
-        "            each shim's policy-specific configuration.\n"
-        "              \004e.g. shimback list --full\004\n"
+        "            each shim's policy-specific configuration. An optional \001<pattern>\001\n"
+        "            narrows the table to names matching it -- a literal name or a glob\n"
+        "            (*, ?, [...]), same as route-map's own match values.\n"
+        "              \004e.g. shimback ls --full 'j*'\004\n"
         "\n",
     },
     {

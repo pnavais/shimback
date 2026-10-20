@@ -138,7 +138,7 @@ shimback add <name> [-s <source>] [--source-arg <arg>]...
                      [--capture-timeout <ms>] [--capture-limit <size>] [--split-config]
 shimback remove [-y] <name>
 shimback init
-shimback list [--full]
+shimback list [--full] [<pattern>]
 shimback doctor [fix [-y|--yes]]
 shimback install [--prefix <dir>] [--force] [--shell <shell>[,<shell>]... | --all]
 shimback update [--check]
@@ -436,10 +436,21 @@ shimback list
 ```
 
 Prints every shim's name, source (or `auto`), fallback, policy, and
-diagnostic flag as a column-aligned table. The fallback column shows just
-its binary name, not the full path -- `--full` (below) prints the full
-path back out, alongside everything else the compact columns leave out.
-This includes a
+diagnostic flag as a column-aligned table. An optional trailing
+`<pattern>` narrows the table to matching names -- a literal name or a
+glob (`*`, `?`, `[...]`/`[!...]`/`[^...]`), the same subset `route-map`'s
+own `--route <match>` uses:
+
+```sh
+shimback ls 'j*'       # every name starting with j
+shimback ls java       # only the exact name java
+```
+
+It can appear before or after `--full`. No match at all prints
+`No shims match '<pattern>'.` rather than the table. The fallback column
+shows just its binary name, not the full path -- `--full` (below) prints
+the full path back out, alongside everything else the compact columns
+leave out. This includes a
 [split-config](#splitting-a-shims-config-into-its-own-file) shim exactly
 like a config.toml one (its own file's path shown as a `config:` line
 under `--full`, so you always know exactly where it currently lives),

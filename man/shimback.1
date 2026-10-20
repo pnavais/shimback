@@ -370,14 +370,27 @@ shimback init
 .RE
 .RE
 .TP
-.BI "list [" \-\-full "]"
+.BI "list [" \-\-full "] [" pattern "]"
 List every configured shim as a table: name, source (or
 .IR auto ),
 fallback, policy, and diagnostic flag. Also available as
 .BR ls .
 Colored when stdout is a terminal and
 .B NO_COLOR
-is unset.
+is unset. An optional trailing
+.I pattern
+narrows the table to matching names \(em a literal name or a glob
+.RB ( * ", " ? ", " [...]/[!...]/[^...] ),
+the same subset
+.BR route\-map 's
+own
+.B \-\-route
+.I match
+uses, and may appear before or after
+.BR \-\-full .
+No match at all prints
+.RI "No shims match '" pattern "'."
+rather than the table.
 .IP
 .B \-\-full
 also prints, as extra indented lines right under each shim's row,
