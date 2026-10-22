@@ -145,6 +145,9 @@ shimback update [--check]
 shimback uninstall [--prefix <dir>] [--full]
 shimback edit [<name>]
 shimback info <name>
+shimback export [-o|--output <path>] [-y|--yes] [--override]
+shimback import <archive> [-y|--yes] [--replace] [--dry-run]
+shimback completions bash|zsh|fish|powershell
 shimback --help | --version
 ```
 
@@ -903,6 +906,63 @@ default for every export, whether or not `--override` is also passed.
 The archive also contains a small `manifest.toml` (shimback version, export
 timestamp, hostname, shim count) — [`list --full`](#list-alias-ls) shows
 every backup found in the effective `backup_dir`, alongside the shim table.
+
+### `import`
+
+```sh
+shimback import ~/backups/shimback_backup_laptop_20260101-120000.sz
+shimback import backup.sz -y          # accept every prompt
+shimback import backup.sz --replace   # the archive becomes the new source of truth
+shimback import backup.sz --dry-run   # report the plan, write nothing
+```
+
+Reads an [`export`](#export)-produced `.sz` archive and brings its shims into
+the local config. First checks the archive's `manifest.toml`: a missing one
+means this isn't a shimback export (or it's corrupt) and nothing is
+extracted; an unrecognized `format_version` is also refused outright, with
+the version it found. A `shimback_version` older or newer than this build's
+own prints an informational note but never blocks the import.
+
+By default this **merges**: every shim the archive contributes is folded
+into whatever's already configured, and nothing already configured that's
+*absent* from the archive is touched. A name that collides with a different
+local configuration prompts `[y/N]` to overwrite it with the archived
+version (byte-for-byte identical content never prompts — there's nothing to
+decide); `-y`/`--yes` accepts every prompt without asking. `--replace`
+switches to full-restore semantics instead: the archive becomes the new
+source of truth, and every *configured* local shim absent from it is
+removed too — config and symlink both, not left behind as an orphan — after
+a single combined confirmation listing all of them (also covered by `-y`). A
+bare orphaned symlink (no configuration anywhere for it) is never touched by
+`--replace`; that's [`doctor`](#doctor)'s job. `--replace` refuses outright
+if the archive itself contributes no shims at all, rather than silently
+wiping everything.
+
+A shim's `source`/`fallback`/a `route-map` route's command are absolute
+paths frozen on the machine that exported them — often a different OS, or a
+different package-manager layout, than the one importing (an `auto` source
+is checked too: it's flagged if nothing by that name is actually on `$PATH`
+here). A shim whose path doesn't resolve here is still imported and flagged
+in the summary, rather than skipped or failing the whole run; it's left for
+a plain [`doctor`](#doctor) to report (never silently suppressed via
+`force`) and [`doctor fix`](#doctor) to repair once you're ready.
+
+A symlink is created (or repaired, if it had gone missing independently —
+say the shim directory got wiped separately from `config.toml`) for every
+shim the archive actually contributes, including one whose own content
+didn't change — never for anything outside the archive's own names, and
+never a blanket [`doctor fix`](#doctor) sweep of everything else; run
+`doctor` afterward to check the rest of your setup. `--dry-run` builds and
+prints the same plan (what would be imported/updated/skipped/removed)
+without writing anything or touching the shim directory lock.
+
+Apart from an outright error (an unreadable/invalid archive, an unrecognized
+`format_version`, and the like, each already its own non-zero exit), exit
+status is `0` even with flagged shims (flagged means "reported", not "this
+import failed"), and `1` if any shim's own split-file write genuinely
+failed (a disk error, say) — that one shim is left exactly as it was
+locally (its write is backed up and rolled back, same as every other write
+here), while every other shim in the same run still commits normally.
 
 ### `completions`
 

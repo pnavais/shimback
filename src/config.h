@@ -337,6 +337,17 @@ size_t config_upsert(Config *cfg, const char *name);
  * removed. */
 bool config_remove(Config *cfg, const char *name);
 
+/* True if `a` and `b` would render to the same split-config body (via
+ * render_shim_entry_body -- the same thing config_save_split() itself
+ * writes), ignoring their names: every field config_save_split knows about
+ * is compared this way, automatically, rather than via a hand-rolled
+ * field-by-field comparator that could silently drift out of sync with
+ * ShimEntry as fields are added. For `import` (see import.c) to tell an
+ * archived shim that's byte-for-byte identical to what's already
+ * configured locally (a silent no-op) apart from one that actually
+ * conflicts (needs a decision). */
+bool shim_entry_content_equal(const ShimEntry *a, const ShimEntry *b);
+
 /* Frees what `route` owns (match, command, args), not `route` itself. */
 void route_entry_free(RouteEntry *route);
 

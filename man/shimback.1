@@ -50,6 +50,10 @@ shimback \- run a primary command, transparently fall back to another
 .B shimback export
 [\fB\-o\fR|\fB\-\-output\fR \fIpath\fR] [\fB\-y\fR|\fB\-\-yes\fR] [\fB\-\-override\fR]
 .br
+.B shimback import
+.I archive
+[\fB\-y\fR|\fB\-\-yes\fR] [\fB\-\-replace\fR] [\fB\-\-dry\-run\fR]
+.br
 .B shimback completions
 \fIbash\fR|\fIzsh\fR|\fIfish\fR|\fIpowershell\fR
 .br
@@ -805,6 +809,90 @@ Examples:
 .nf
 shimback export
 shimback export \-o ~/backups/ \-y
+.fi
+.RE
+.RE
+.TP
+.BI "import " archive " [\-y] [\-\-replace] [\-\-dry\-run]"
+Reads an
+.B export
+\-produced
+.I .sz
+archive and brings its shims into the local config. First checks the
+archive's
+.IR manifest.toml :
+a missing one means this isn't a shimback export (or it's corrupt) and
+nothing is extracted; an unrecognized
+.I format_version
+is refused outright, naming the version found. A
+.I shimback_version
+older or newer than this build's own prints an informational note but
+never blocks the import.
+.IP
+By default this
+.B merges:
+every shim the archive contributes is folded into whatever's already
+configured, and nothing already configured that's absent from the archive
+is touched. A name that collides with a different local configuration
+prompts
+.RI [ y / N ]
+to overwrite it with the archived version (byte\-for\-byte identical content
+never prompts);
+.B \-y
+/
+.B \-\-yes
+accepts every prompt without asking.
+.B \-\-replace
+switches to full\-restore semantics instead: the archive becomes the new
+source of truth, and every
+.I configured
+local shim absent from it is removed too \(em config and symlink both, not
+left behind as an orphan \(em after a single combined confirmation (also
+covered by
+.BR \-y ).
+A bare orphaned symlink (no configuration anywhere for it) is never touched
+by
+.BR \-\-replace ;
+that's
+.BR doctor 's
+job.
+.B \-\-replace
+refuses outright if the archive itself contributes no shims at all.
+.IP
+A shim's source/fallback/a route\-map route's command are absolute paths
+frozen on the machine that exported them \(em often a different OS, or a
+different package\-manager layout, than the one importing (an
+.I auto
+source is checked too: flagged if nothing by that name is on
+.IR $PATH ).
+A shim whose path doesn't resolve here is still imported and flagged in the
+summary rather than skipped or failing the whole run; it's left for a plain
+.B doctor
+to report (never silently suppressed) and
+.B doctor fix
+to repair once you're ready.
+.IP
+A symlink is created (or repaired, if it had gone missing independently)
+for every shim the archive actually contributes, including one whose own
+content didn't change \(em never for anything outside the archive's own
+names, and never a blanket
+.B doctor fix
+sweep of everything else.
+.B \-\-dry\-run
+builds and prints the same plan without writing anything.
+.IP
+Apart from an outright error (an unreadable/invalid archive, an
+unrecognized format_version, and the like), exit status is 0 even with
+flagged shims, and 1 if any shim's own split\-file write genuinely failed
+\(em that one shim is left exactly as it was locally, while every other
+shim in the same run still commits normally.
+.RS
+.PP
+Examples:
+.RS
+.nf
+shimback import ~/backups/shimback_backup_laptop_20260101\-120000.sz
+shimback import backup.sz \-\-replace \-y
 .fi
 .RE
 .RE

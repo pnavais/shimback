@@ -1275,6 +1275,18 @@ static void render_shim_entry_body(const ShimEntry *entry, DynBuf *out,
     }
 }
 
+bool shim_entry_content_equal(const ShimEntry *a, const ShimEntry *b) {
+    DynBuf abuf, bbuf;
+    dynbuf_init(&abuf);
+    dynbuf_init(&bbuf);
+    render_shim_entry_body(a, &abuf, NULL);
+    render_shim_entry_body(b, &bbuf, NULL);
+    bool equal = abuf.len == bbuf.len && memcmp(abuf.data, bbuf.data, abuf.len) == 0;
+    dynbuf_free(&abuf);
+    dynbuf_free(&bbuf);
+    return equal;
+}
+
 static void render_config(const Config *cfg, DynBuf *out) {
     char line[64];
     snprintf(line, sizeof(line), "version = %d\n", cfg->version);

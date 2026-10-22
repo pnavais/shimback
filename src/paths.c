@@ -559,6 +559,96 @@ bool refresh_shim_link(const char *target, const char *link_path, const char *cm
     return ok;
 }
 
+ShimLinkFixStatus ensure_shim_link(const char *shim_dir, const char *name, const char *self_exe,
+                                    const char *cmd_prefix, bool *out_was_missing,
+                                    bool *out_was_occupied_by_other, char *errmsg,
+                                    size_t errmsg_size) {
+    if (out_was_missing) {
+        *out_was_missing = false;
+    }
+    if (out_was_occupied_by_other) {
+        *out_was_occupied_by_other = false;
+    }
+
+    char *shim_file = shim_file_name(name);
+    char *link_path = path_join(shim_dir, shim_file);
+    free(shim_file);
+
+#ifdef _WIN32
+    /* No "dangling" case on Windows at all: a hard link has nothing
+     * separate to go missing out from under it -- as long as this entry's
+     * own link exists, its file data is alive regardless of what happens
+     * to self_exe's own path. "missing" is the only repairable case there
+     * is to check for, and access() (which would be wrong on POSIX below
+     * -- it follows symlinks, conflating "missing" with "dangling") is
+     * exactly right here, since there's no separate target-resolution
+     * step to distinguish it from at all. A hard link also has no
+     * "occupied by something else" case worth detecting here (see
+     * is_shim_dir_entry()'s own Windows-side comment): anything at this
+     * path that isn't shimback's own content is, by construction, not
+     * something "missing or dangling" describes, so it's simply never
+     * reported as needing a fix, the same as the POSIX side below. */
+    bool missing = access(link_path, F_OK) != 0;
+    bool dangling = false;
+    bool occupied_by_other = !missing && !looks_like_shimback_binary(link_path);
+#else
+    /* lstat(), not access()/stat(): this must NOT follow the symlink --
+     * "missing" (the entry itself isn't there) and "dangling" (the entry
+     * is a symlink, but its target is gone) are different repairable
+     * cases, and access()/stat() alone can't tell them apart from each
+     * other (both would just report "doesn't exist" for either). */
+    struct stat lst;
+    bool missing = lstat(link_path, &lst) != 0;
+    bool is_link = !missing && S_ISLNK(lst.st_mode);
+    bool dangling = false;
+    bool occupied_by_other = false;
+    if (is_link) {
+        struct stat st;
+        dangling = stat(link_path, &st) != 0;
+        if (!dangling && !is_shim_dir_entry(link_path)) {
+            /* Resolves fine, but to something that isn't recognizably
+             * shimback's own binary (any build/install location -- see
+             * is_shim_dir_entry()'s own comment) -- never ours to touch,
+             * but still worth a caller knowing "nothing happened" doesn't
+             * mean "this name is a healthy shimback shim". */
+            occupied_by_other = true;
+        }
+    } else if (!missing) {
+        /* A real, non-symlink entry already at this path -- a plain file
+         * or a directory. Never shimback's to touch. */
+        occupied_by_other = true;
+    }
+#endif
+
+    if (!missing && !dangling) {
+        if (occupied_by_other && out_was_occupied_by_other) {
+            *out_was_occupied_by_other = true;
+        }
+        free(link_path);
+        return SHIM_LINK_OK;
+    }
+
+    if (out_was_missing) {
+        *out_was_missing = missing;
+    }
+
+#ifndef _WIN32
+    if (is_link) {
+        unlink(link_path); /* drop the dangling symlink before recreating it */
+    }
+#endif
+    bool ok = create_shim_link(self_exe, link_path, cmd_prefix);
+    if (!ok) {
+        int link_errno = errno;
+        format_link_create_error(errmsg, errmsg_size, cmd_prefix, link_path, self_exe,
+                                  link_errno);
+        free(link_path);
+        return SHIM_LINK_FAILED;
+    }
+    free(link_path);
+    return SHIM_LINK_RECREATED;
+}
+
 static bool copy_file_mode(const char *src, const char *dst, mode_t mode) {
     FILE *in = plat_fopen(src, "rb");
     if (!in) {

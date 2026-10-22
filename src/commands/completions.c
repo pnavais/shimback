@@ -65,6 +65,7 @@ static const FlagSpec INSTALL_FLAGS[] = {
 static const FlagSpec UNINSTALL_FLAGS[] = {{"prefix", 'p'}, {"full", 'f'}};
 static const FlagSpec UPDATE_FLAGS[] = {{"check", 'c'}, {"yes", 'y'}};
 static const FlagSpec EXPORT_FLAGS[] = {{"output", 'o'}, {"yes", 'y'}, {"override", '\0'}};
+static const FlagSpec IMPORT_FLAGS[] = {{"yes", 'y'}, {"replace", '\0'}, {"dry-run", '\0'}};
 
 #define FLAGS(arr) arr, sizeof(arr) / sizeof(arr[0])
 
@@ -84,6 +85,9 @@ static const CommandSpec COMMAND_SPECS[] = {
     {"info", NULL, 0, true},
     {"update", FLAGS(UPDATE_FLAGS), false},
     {"export", FLAGS(EXPORT_FLAGS), false},
+    {"import", FLAGS(IMPORT_FLAGS), false}, /* its positional is a file path, not a shim
+                                              * name -- falls through to the shell's own
+                                              * default filename completion. */
     {"completions", NULL, 0, false}, /* its own "bash|zsh|fish|powershell" literal
                                        * list also hand-written per shell below,
                                        * same reasoning as doctor's "fix". */

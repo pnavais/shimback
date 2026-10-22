@@ -77,78 +77,41 @@ static void report_warn(const char *fmt, ...) {
  * thing `add` does when it first creates a shim's symlink. Never touches a
  * path occupied by anything else (a plain file, a directory, or a symlink
  * that still resolves, even to a different-but-valid shimback binary
- * elsewhere) -- only genuinely dead or missing entries are "needed" fixes. */
+ * elsewhere) -- only genuinely dead or missing entries are "needed" fixes.
+ * A thin, locked wrapper around ensure_shim_link() (paths.h) -- the actual
+ * check-then-recreate logic lives there, lock-free, so a caller doing this
+ * for many shims under one already-held lock (import, see import.c) can
+ * call it directly without re-acquiring shim_dir_lock_acquire() per shim
+ * (which would self-deadlock -- see ensure_shim_link's own doc comment).
+ * Held across the whole check-then-recreate sequence, so a concurrent
+ * `add`/`remove`/`doctor fix` racing the same symlink as the same user
+ * can't land in between the check and the unlink()+create that acts on
+ * it. shim_dir is guaranteed to exist here -- this is only ever reached
+ * for an already-known shim entry. */
 static void fix_symlink_if_needed(const char *shim_dir, const char *name, const char *self_exe) {
-    char *shim_file = shim_file_name(name);
-    char *link_path = path_join(shim_dir, shim_file);
-    free(shim_file);
-
-    /* Held across the whole check-then-recreate sequence below, so a
-     * concurrent `add`/`remove`/`doctor fix` racing the same symlink as
-     * the same user can't land in between the check and the unlink()+
-     * create that acts on it. shim_dir is guaranteed
-     * to exist here -- this is only ever reached for an already-known
-     * shim entry. */
     int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
     if (shim_lock_fd < 0) {
         warn("doctor fix: failed to acquire the shim directory lock on %s: %s -- skipping '%s'",
              shim_dir, plat_strerror(errno), name);
-        free(link_path);
         return;
     }
 
-#ifdef _WIN32
-    /* No "dangling" case on Windows at all:
-     * a hard link has nothing separate to go missing out from under it --
-     * as long as this entry's own link exists, its file data is alive
-     * regardless of what happens to self_exe's own path. "missing" is the
-     * only repairable case there is to check for, and access() (which
-     * would be wrong on POSIX below -- it follows symlinks, conflating
-     * "missing" with "dangling") is exactly right here, since there's no
-     * separate target-resolution step to distinguish it from at all. */
-    bool missing = access(link_path, F_OK) != 0;
-    bool dangling = false;
-#else
-    /* lstat(), not access()/stat(): this must NOT follow the symlink --
-     * "missing" (the entry itself isn't there) and "dangling" (the entry
-     * is a symlink, but its target is gone) are different repairable
-     * cases with different messages, and access()/stat() alone can't tell
-     * them apart from each other (both would just report "doesn't exist"
-     * for either case, since both follow symlinks to their target). */
-    struct stat lst;
-    bool missing = lstat(link_path, &lst) != 0;
-    bool is_link = !missing && S_ISLNK(lst.st_mode);
-    bool dangling = false;
-    if (is_link) {
-        struct stat st;
-        dangling = stat(link_path, &st) != 0;
-    }
-#endif
-
-    if (!missing && !dangling) {
-        shim_dir_lock_release(shim_lock_fd);
-        free(link_path);
-        return;
-    }
-
-#ifndef _WIN32
-    if (is_link) {
-        unlink(link_path); /* drop the dangling symlink before recreating it */
-    }
-#endif
-    if (create_shim_link(self_exe, link_path, "doctor fix")) {
+    bool was_missing;
+    char errmsg[1024];
+    ShimLinkFixStatus st = ensure_shim_link(shim_dir, name, self_exe, "doctor fix", &was_missing,
+                                            NULL, errmsg, sizeof(errmsg));
+    if (st == SHIM_LINK_RECREATED) {
+        char *shim_file = shim_file_name(name);
+        char *link_path = path_join(shim_dir, shim_file);
+        free(shim_file);
         report_fixed("recreated %s symlink " COLOR_PATH_FMT " -> " COLOR_PATH_FMT,
-                     missing ? "missing" : "dangling", COLOR_PATH_ARGS(link_path, g_colorize),
+                     was_missing ? "missing" : "dangling", COLOR_PATH_ARGS(link_path, g_colorize),
                      COLOR_PATH_ARGS(self_exe, g_colorize));
-    } else {
-        int link_errno = errno;
-        char link_err_msg[1024];
-        format_link_create_error(link_err_msg, sizeof(link_err_msg), "doctor fix", link_path,
-                                  self_exe, link_errno);
-        warn("%s", link_err_msg);
+        free(link_path);
+    } else if (st == SHIM_LINK_FAILED) {
+        warn("%s", errmsg);
     }
     shim_dir_lock_release(shim_lock_fd);
-    free(link_path);
 }
 
 /* Interactively prompts for a replacement value for `field_label`

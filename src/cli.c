@@ -51,6 +51,7 @@ static const Command COMMANDS[] = {
     {"info", NULL, cmd_info, false},
     {"update", NULL, cmd_update, false},
     {"export", NULL, cmd_export, false},
+    {"import", NULL, cmd_import, false},
     {"completions", NULL, cmd_completions, false},
     {"__complete-names", NULL, cmd_complete_names, true},
 };
@@ -380,6 +381,38 @@ static const CommandHelp COMMAND_HELP[] = {
         "              placeholders) in config.toml override the default location/naming.\n"
         "              \004e.g. shimback export\004\n"
         "              \004e.g. shimback export -o ~/backups/ -y\004\n"
+        "\n",
+    },
+    {
+        "import",
+        "  \001shimback import\001 \002<archive>\002 [\001-y\001|\001--yes\001] [\001--replace\001] "
+        "[\001--dry-run\001]\n",
+
+        "  \001import\001    Reads an \001export\001-produced \002.sz\002 archive and brings its shims\n"
+        "            into the local config: checks its \002manifest.toml\002 is a format this\n"
+        "            build understands, then merges each archived shim into whatever's\n"
+        "            already configured -- nothing already configured that's absent from\n"
+        "            the archive is touched. A name that collides with a different local\n"
+        "            config prompts \002[y/N]\002 to overwrite (identical content never\n"
+        "            prompts); \001-y\001/\001--yes\001 accepts every prompt. \001--replace\001 makes the\n"
+        "            archive the new source of truth instead: local-only shims get\n"
+        "            removed too (a single combined prompt, bare orphan symlinks never\n"
+        "            touched), and \001--dry-run\001 reports the full plan without writing\n"
+        "            anything.\n"
+        "\n"
+        "              A shim whose source/fallback/a route doesn't resolve on this\n"
+        "              machine is still imported, flagged in the summary, and left for\n"
+        "              \001doctor\001 to report -- machine-specific absolute paths frozen on\n"
+        "              the exporting machine often won't exist here (an \002auto\002 source is\n"
+        "              checked too). A symlink is created or repaired for every shim the\n"
+        "              archive contributes, including an unchanged one whose symlink went\n"
+        "              missing on its own -- never anything outside the archive's own\n"
+        "              names; run \001doctor\001 afterward for anything else. Apart from an\n"
+        "              outright error, exit status is 0 even with flagged shims, 1 if a\n"
+        "              shim's own split-file write genuinely failed (that one shim is left\n"
+        "              as it was locally; every other shim still commits).\n"
+        "              \004e.g. shimback import ~/backups/shimback_backup_laptop_20260101-120000.sz\004\n"
+        "              \004e.g. shimback import backup.sz --replace -y\004\n"
         "\n",
     },
     {

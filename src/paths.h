@@ -203,6 +203,39 @@ void format_link_create_error(char *buf, size_t bufcap, const char *cmd_prefix,
  * reason. */
 bool create_shim_link(const char *target, const char *link_path, const char *cmd_prefix);
 
+typedef enum {
+    SHIM_LINK_OK,        /* already a healthy shimback link; nothing to do */
+    SHIM_LINK_RECREATED, /* was missing or dangling; recreated now */
+    SHIM_LINK_FAILED,    /* needed recreating but couldn't -- see errmsg */
+} ShimLinkFixStatus;
+
+/* Lock-free core of "recreate <shim_dir>/<name> if it's missing or
+ * dangling" -- the caller must already hold shim_dir_lock_acquire() (or
+ * have its own reason not to need it) before calling this; it does NOT
+ * lock internally, specifically so a caller fixing many shims in one
+ * already-locked operation (import, say) doesn't re-lock per shim the way
+ * nesting shim_dir_lock_acquire() calls would (shim_dir_lock_acquire() is
+ * a per-fd flock(), not reentrant -- a second acquire from the same
+ * process would just block waiting on a lock it already holds on a
+ * different fd). doctor fix's own per-shim repair is the thin, locked
+ * wrapper around this (see doctor.c's fix_symlink_if_needed).
+ *
+ * Never touches a path occupied by anything else (a plain file, a
+ * directory, or a symlink that still resolves, even to a
+ * different-but-valid shimback binary elsewhere) -- *out_was_occupied_by_other
+ * is set true in that case (distinct from SHIM_LINK_OK, which means
+ * "already a healthy shimback symlink") so a caller can flag it rather
+ * than silently treat "nothing happened" as success; both out params may
+ * be NULL if a caller doesn't need them. On SHIM_LINK_RECREATED,
+ * *out_was_missing distinguishes "missing entirely" from "dangling
+ * symlink" for the caller's own message. On SHIM_LINK_FAILED, `errmsg` (via
+ * format_link_create_error(), prefixed with `cmd_prefix`) is filled
+ * instead. */
+ShimLinkFixStatus ensure_shim_link(const char *shim_dir, const char *name, const char *self_exe,
+                                    const char *cmd_prefix, bool *out_was_missing,
+                                    bool *out_was_occupied_by_other, char *errmsg,
+                                    size_t errmsg_size);
+
 /* Atomically replaces the shim link already at `link_path` with a fresh
  * one to `target` -- builds the replacement at a temp name first via
  * create_shim_link() (hard link, falling back to a copy on EXDEV) and

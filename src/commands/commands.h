@@ -15,6 +15,7 @@ int cmd_edit(int argc, char **argv);
 int cmd_info(int argc, char **argv);
 int cmd_update(int argc, char **argv);
 int cmd_export(int argc, char **argv);
+int cmd_import(int argc, char **argv);
 int cmd_completions(int argc, char **argv);
 
 /* Hidden plumbing command, not a real user-facing subcommand (see cli.c's

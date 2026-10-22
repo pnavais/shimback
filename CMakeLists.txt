@@ -162,6 +162,7 @@ add_executable(shimback
   src/commands/info.c
   src/commands/update.c
   src/commands/export.c
+  src/commands/import.c
   src/commands/completions.c
 )
 
@@ -280,3 +281,5 @@ add_test(NAME test_completions
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_completions.sh $<TARGET_FILE:shimback>)
 add_test(NAME test_export
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_export.sh $<TARGET_FILE:shimback>)
+add_test(NAME test_import
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_import.sh $<TARGET_FILE:shimback>)
