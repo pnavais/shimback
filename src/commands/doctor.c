@@ -220,6 +220,28 @@ static bool fix_cycle_if_needed(ShimEntry *entry, const char *self_exe) {
     return changed;
 }
 
+/* True if `shim_dir` is already listed in the *current shell's own*
+ * shimback PATH block (reading its startup file(s) directly, via
+ * shell_read_block_dirs -- the same primitive find_installations()/
+ * find_stale_block_dirs() already use for a related purpose), as opposed
+ * to dir_on_path() above, which only checks this process's live $PATH.
+ * The distinction matters: a block that already lists it just needs a
+ * shell restart to take effect (nothing for `doctor fix` to actually do);
+ * one that doesn't is a real, fixable gap -- "restart your shell" alone
+ * would be misleading advice for that case, since restarting changes
+ * nothing when the block was never written in the first place. */
+static bool shim_dir_in_shell_block(const char *shim_dir) {
+    StrVec dirs;
+    strvec_init(&dirs);
+    shell_read_block_dirs(detect_current_shell(), SHELL_BLOCK_TAG, &dirs);
+    bool found = false;
+    for (size_t i = 0; i < dirs.count && !found; i++) {
+        found = same_dir_path(dirs.items[i], shim_dir);
+    }
+    strvec_free(&dirs);
+    return found;
+}
+
 static bool dir_on_path(const char *dir) {
     const char *path_env = plat_getenv("PATH");
     if (!path_env) {
@@ -465,10 +487,45 @@ int cmd_doctor(int argc, char **argv) {
         }
     } else if (dir_on_path(shim_dir)) {
         report_ok("on $PATH");
-    } else {
+    } else if (shim_dir_in_shell_block(shim_dir)) {
+        /* Already written -- there's genuinely nothing to fix here, in
+         * either mode; this shell session just predates it. */
         report_fail(&issues,
                      "not on $PATH in this shell -- restart your shell (or re-source its "
                      "startup file)");
+    } else if (!fix_mode) {
+        report_fail(&issues,
+                     "not on $PATH, and no shimback PATH block exists yet for this shell -- "
+                     "run `shimback doctor fix` to add it");
+    } else {
+        ShellKind shell = detect_current_shell();
+        if (shell == SHELL_UNKNOWN) {
+            /* shell_ensure_path() would also just print this same manual
+             * instruction unconditionally for SHELL_UNKNOWN and report
+             * success -- handled here instead so doctor's own [[tag]]
+             * output stays consistent rather than an unguarded printf, and
+             * so this is correctly still a [fail], not a [fixed]. */
+            report_fail(&issues,
+                        "not on $PATH, and your shell couldn't be auto-detected to fix this "
+                        "automatically -- add it manually: export PATH=\"%s:$PATH\"",
+                        shim_dir);
+        } else {
+            MiseIntegrationMode mise_mode =
+                cfg.mise_integration_set ? (cfg.mise_integration ? MISE_ON : MISE_OFF) : MISE_AUTO;
+            /* verbose=false: shell_ensure_path's own "PATH updated in
+             * <file>" line would be an unguarded printf outside doctor's
+             * [[tag]] format -- report_fixed() below says the same thing
+             * consistently instead, the same way the zsh block migration
+             * just above handles its own success message. */
+            if (shell_ensure_path(shell, shim_dir, false, mise_mode)) {
+                report_fixed("added the shim directory to your PATH -- restart your shell (or "
+                             "re-source its startup file) for it to take effect");
+            } else {
+                warn("doctor fix: failed to add the shim directory to your shell's PATH");
+                report_fail(&issues, "not on $PATH, and adding it to your shell's startup file "
+                                     "just failed (see the warning above)");
+            }
+        }
     }
     printf("\n");
 

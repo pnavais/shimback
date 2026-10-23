@@ -451,4 +451,52 @@ assert_contains "doctor: lists the second installation" "$out_multi" "$SECOND_PR
 assert_eq "doctor: multiple installations are a warning, not an issue" "$baseline" \
     "$(issue_count "$out_multi")"
 
+# --- shim directory PATH checks: doctor distinguishes "the block exists,
+# this shell session just predates it" (nothing to fix -- only a restart
+# helps) from "the block was never written at all" (something `doctor fix`
+# can actually repair), instead of giving the same "restart your shell"
+# advice -- misleading in the second case -- for both. Run last: `doctor
+# fix` here fixes anything else it finds along the way too, which would
+# disrupt an earlier test still relying on that state being broken when
+# *its own* doctor fix call runs. Entirely self-contained -- explicitly
+# stages its own rc-file state rather than relying on whatever an earlier
+# scenario happened to leave behind. ---
+PATH_WITHOUT_SHIM_DIR="$(printf '%s\n' "$PATH" | tr ':' '\n' | grep -vxF "$DOCTOR_SHIM_DIR" | tr '\n' ':')"
+
+# The block exists (in .zshrc.local) -- only this simulated shell's own
+# PATH lacks it.
+write_block "$DOCTOR_SHIM_DIR"
+out="$(PATH="$PATH_WITHOUT_SHIM_DIR" "$SHIMBACK" doctor)"
+assert_contains "doctor: block exists, just not loaded -- asks for a restart" "$out" \
+    "not on \$PATH in this shell -- restart your shell"
+assert_not_contains "doctor: doesn't claim the block itself is missing" "$out" \
+    "no shimback PATH block exists yet"
+
+# Now the block is genuinely gone from every rc file (hand-deleted, or
+# never written in the first place).
+: >"$ZSHRC"
+: >"$ZSHRC_LOCAL"
+out="$(PATH="$PATH_WITHOUT_SHIM_DIR" "$SHIMBACK" doctor)"
+assert_contains "doctor: block genuinely missing -- names the real fix" "$out" \
+    "not on \$PATH, and no shimback PATH block exists yet for this shell -- run \`shimback doctor fix\` to add it"
+
+out="$(PATH="$PATH_WITHOUT_SHIM_DIR" "$SHIMBACK" doctor fix -y)"
+assert_contains "doctor fix: actually adds the missing PATH block" "$out" \
+    "[fixed] added the shim directory to your PATH"
+assert_contains "doctor fix: restart-your-shell reminder is part of the fixed message" "$out" \
+    "restart your shell (or re-source its startup file) for it to take effect"
+assert_contains "doctor fix: the block is now really in the rc file" "$(cat "$ZSHRC_LOCAL")" \
+    "# >>> shimback >>>"
+assert_contains "doctor fix: the block actually lists the shim directory" \
+    "$(cat "$ZSHRC_LOCAL")" "$DOCTOR_SHIM_DIR"
+
+# Still without the shim dir on live PATH (same simulated stale shell),
+# doctor now correctly falls back to "restart your shell" instead of
+# repeating "missing" -- the block really is there now.
+out="$(PATH="$PATH_WITHOUT_SHIM_DIR" "$SHIMBACK" doctor)"
+assert_contains "doctor: after the fix, correctly asks for a restart instead" "$out" \
+    "not on \$PATH in this shell -- restart your shell"
+assert_not_contains "doctor: no longer claims the block is missing" "$out" \
+    "no shimback PATH block exists yet"
+
 finish

@@ -268,8 +268,11 @@ static const CommandHelp COMMAND_HELP[] = {
         "            anything's wrong.\n"
         "\n"
         "              \001doctor fix\001 recreates any missing or dangling shim symlink it\n"
-        "              finds, and prompts to remove each orphan it finds\n"
-        "              (\001-y\001/\001--yes\001 removes every orphan without asking).\n"
+        "              finds, prompts to remove each orphan it finds\n"
+        "              (\001-y\001/\001--yes\001 removes every orphan without asking), and writes\n"
+        "              the shim directory's PATH block if it was never written at all\n"
+        "              (a shell restart is still needed either way for that to take\n"
+        "              effect).\n"
         "\n"
         "              \004e.g. shimback doctor fix -y\004\n"
         "\n",

@@ -491,6 +491,23 @@ not a failure \(em it doesn't affect the exit status, since PATH still
 works either way.
 .B fix
 moves the block over.
+.IP
+When the shim directory isn't on
+.IR $PATH ,
+.B doctor
+tells apart two reasons: the PATH block may already be written, with this
+shell session just predating it (a restart is the complete fix, nothing
+for
+.B fix
+to do), or the block may never have been written at all \(em
+.B fix
+writes it then, the same mechanism
+.B add
+/
+.B install
+already use. Either way a shell restart (or re\-sourcing the startup
+file) is still needed afterward: nothing run from inside a process can
+push a new PATH into the shell already running it.
 .RS
 .PP
 Example:

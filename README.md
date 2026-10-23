@@ -611,6 +611,19 @@ shimback preferred it — see `add`, above), it's flagged as a `[warn]`, not
 a `[fail]` — it doesn't affect `doctor`'s exit code, since PATH still works
 fine either way. `doctor fix` acts on it by moving the block over.
 
+When the shim directory isn't on `$PATH`, `doctor` tells apart two
+different reasons rather than giving the same advice for both: the PATH
+block may already be written into your shell's startup file, with this
+particular shell session just predating it (restarting it is the complete
+fix — there's nothing for `doctor fix` to actually do), or the block may
+never have been written at all (hand-removed, or an edge case that skipped
+it). In the second case, `doctor fix` writes it — the exact same
+`shell_ensure_path` mechanism `add`/`install` already use — instead of
+only pointing you at a shell restart that wouldn't have helped. Either
+way, a shell restart (or re-sourcing the startup file) is still needed
+afterward: `doctor fix` can write to the file, but nothing run from inside
+a process can push a new `PATH` into the shell that's already running it.
+
 ### `install`
 
 ```sh
