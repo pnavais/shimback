@@ -48,6 +48,15 @@
  * matching the shell convention for "command not found". */
 int plat_run_inherited(const char *exe, char *const argv[]);
 
+/* Splits a user-supplied command line (e.g. $EDITOR, "code --wait") into
+ * words the platform's own way, without running anything: POSIX shell word
+ * splitting via wordexp(WRDE_NOCMD), which refuses command substitution and
+ * unquoted shell operators; Windows command-line rules via
+ * CommandLineToArgvW (quotes group, nothing is ever interpreted). Pushes the
+ * words onto `out` (must be strvec_init'd). Returns false, with *why set to
+ * a short reason or NULL, for input that isn't a plain command. */
+bool plat_split_command(const char *command, StrVec *out, const char **why);
+
 /* Runs `exe` with stdout/stderr captured into `out`/`err` instead of
  * inherited -- this is what makes a failed trial run invisible (see
  * dispatch.c's dispatch_run). Bounded by `timeout_ms`/`limit_bytes`:

@@ -14,6 +14,7 @@
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <wordexp.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -64,6 +65,23 @@ static int decode_exit_status(int status) {
         return 128 + WTERMSIG(status);
     }
     return 1;
+}
+
+bool plat_split_command(const char *command, StrVec *out, const char **why) {
+    *why = NULL;
+    wordexp_t we;
+    int rc = wordexp(command, &we, WRDE_NOCMD);
+    if (rc != 0) {
+        if (rc == WRDE_CMDSUB) {
+            *why = "command substitution isn't allowed";
+        }
+        return false;
+    }
+    for (size_t i = 0; i < we.we_wordc; i++) {
+        strvec_push(out, xstrdup(we.we_wordv[i]));
+    }
+    wordfree(&we);
+    return out->count > 0;
 }
 
 int plat_run_inherited(const char *exe, char *const argv[]) {

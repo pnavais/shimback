@@ -10,21 +10,6 @@
 #include "util.h"
 #include "version.h"
 
-#ifdef _WIN32
-/* edit.c is excluded from the Windows build entirely
- * (wordexp() has no Windows equivalent,
- * and the fallback-editor chain needs a real PATH-search-first redesign,
- * not a mechanical port). */
-static int cmd_edit_unsupported(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
-    die("edit: not yet implemented on Windows");
-}
-#define CMD_EDIT cmd_edit_unsupported
-#else
-#define CMD_EDIT cmd_edit
-#endif
-
 /* Every subcommand, with its optional alias -- the one list dispatch,
  * help lookup and "did you mean" suggestions all read. */
 typedef struct {
@@ -47,7 +32,7 @@ static const Command COMMANDS[] = {
     {"doctor", NULL, cmd_doctor, false},
     {"install", NULL, cmd_install, false},
     {"uninstall", NULL, cmd_uninstall, false},
-    {"edit", NULL, CMD_EDIT, false},
+    {"edit", NULL, cmd_edit, false},
     {"info", NULL, cmd_info, false},
     {"update", NULL, cmd_update, false},
     {"export", NULL, cmd_export, false},
@@ -335,9 +320,13 @@ static const CommandHelp COMMAND_HELP[] = {
         "edit",
         "  \001shimback edit\001 [\002<name>\002]\n",
 
-        "  \001edit\001      Open config.toml in \002$EDITOR\002, or, if unset, the first of \002nvim\002,\n"
-        "            \002vim\002, \002vi\002, \002nano\002, \002pico\002 found on \002PATH\002 -- fails if none of\n"
-        "            those are found either. With a shim \002<name>\002, opens whichever file\n"
+        "  \001edit\001      Open config.toml in \002$EDITOR\002, or, if unset, the first of\n"
+#ifdef _WIN32
+        "            \002edit\002, \002nvim\002, \002vim\002, \002vi\002, \002nano\002 found on \002PATH\002 -- fails if none\n"
+#else
+        "            \002nvim\002, \002vim\002, \002vi\002, \002nano\002, \002pico\002 found on \002PATH\002 -- fails if none\n"
+#endif
+        "            of those are found either. With a shim \002<name>\002, opens whichever file\n"
         "            defines that shim instead: its split config file if it has one,\n"
         "            else config.toml. Warns (without failing) if the file no longer\n"
         "            parses once the editor exits successfully.\n"

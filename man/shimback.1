@@ -705,8 +705,34 @@ isn't set and none of those five are found either. A multi\-word
 .B $EDITOR
 (e.g. set to
 .IR "code --wait" )
-works as expected \(em run through a shell so its own flags are honored,
-not treated as part of a single literal command name. The config's
+works as expected: it's split into words the platform's way (shell word
+splitting on Linux/macOS, Windows command\-line quoting on Windows) but never
+run through a shell, so a
+.BR ; ,
+.B &&
+or
+.B $(...)
+in it can't run anything else. (On Windows a
+.I .bat
+or
+.I .cmd
+editor always runs through
+.BR cmd.exe ,
+so one is refused if any of its arguments contains
+.BR "& | < > ^ %" " or " \(dq .)
+On Windows the fallback list is
+.BR edit ,
+.BR nvim ,
+.BR vim ,
+.BR vi ,
+.BR nano ,
+and the
+.B PATH
+lookup follows
+.BR PATHEXT ,
+so a
+.I .cmd
+editor is found too. The config's
 directory is created first if it doesn't exist yet, so this works even
 before the first
 .BR add .

@@ -7,32 +7,134 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#include <wordexp.h>
 
 #include "../config.h"
 #include "../paths.h"
+#include "../platform/platform.h"
 #include "../suggest.h"
 #include "../util.h"
 
-/* Declared in platform/platform_posix.c, not util.h -- see that
- * declaration's own comment for why. This whole file is POSIX-only for now
- * (wordexp() has no Windows equivalent), so a POSIX-
- * only symbol here is consistent, not a workaround. */
-pid_t xwaitpid(pid_t pid, int *status);
-
-/* Tried in order when $EDITOR is unset or empty. */
+/* Tried in order when $EDITOR is unset or blank. On Windows, `edit` is
+ * Microsoft Edit, which ships with Windows 11. */
+#ifdef _WIN32
+static const char *const FALLBACK_EDITORS[] = {"edit", "nvim", "vim", "vi", "nano"};
+#else
 static const char *const FALLBACK_EDITORS[] = {"nvim", "vim", "vi", "nano", "pico"};
+#endif
+#define FALLBACK_EDITOR_COUNT (sizeof(FALLBACK_EDITORS) / sizeof(FALLBACK_EDITORS[0]))
 
-static int decode_exit_code(int status) {
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
+/* The runnable file a command word names: the word itself if it's a path,
+ * else the first match on PATH (see path_search_command). NULL if neither. */
+static char *resolve_command(const char *word) {
+    for (const char *c = word; *c; c++) {
+        if (is_path_sep(*c)) {
+            return is_executable_file(word) ? xstrdup(word) : NULL;
+        }
     }
-    if (WIFSIGNALED(status)) {
-        return 128 + WTERMSIG(status);
+    return path_search_command(word);
+}
+
+static bool is_blank(const char *s) {
+    for (; *s; s++) {
+        if (*s != ' ' && *s != '\t') {
+            return false;
+        }
     }
-    return 1;
+    return true;
+}
+
+/* Runs `editor_argv` (the editor and any flags of its own) on `target_path`
+ * from the already-resolved `exe`, keeping the editor's own argv[0] (vim
+ * picks vi-compatible mode from it). */
+static int run_editor(const char *exe, StrVec *editor_argv, const char *target_path) {
+    char **argv = xmalloc((editor_argv->count + 2) * sizeof(char *));
+    for (size_t i = 0; i < editor_argv->count; i++) {
+        argv[i] = editor_argv->items[i];
+    }
+#ifdef _WIN32
+    /* config_file_path() can mix separators (C:\\Users\\x\\.config/...);
+     * hand the editor a plain Windows path. */
+    char *native = xstrdup(target_path);
+    for (char *c = native; *c; c++) {
+        if (*c == '/') {
+            *c = '\\';
+        }
+    }
+    argv[editor_argv->count] = native;
+#else
+    argv[editor_argv->count] = (char *)target_path;
+#endif
+    argv[editor_argv->count + 1] = NULL;
+#ifdef _WIN32
+    /* Windows runs a .bat/.cmd through cmd.exe, which acts on & | < > ^ in
+     * an argument and expands %VAR% even inside quotes -- so an $EDITOR
+     * like `code --wait&calc` would run calc. Refuse rather than escape:
+     * % can't be escaped reliably. */
+    const char *dot = strrchr(path_basename(exe), '.');
+    if (dot && (_stricmp(dot, ".bat") == 0 || _stricmp(dot, ".cmd") == 0)) {
+        /* argv[0] itself is replaced by `exe` on the command line. */
+        for (size_t i = 0; argv[i]; i++) {
+            const char *arg = i == 0 ? exe : argv[i];
+            if (strpbrk(arg, "&|<>^%\"")) {
+                warn("edit: refusing to pass '%s' to %s -- batch files run through cmd.exe, "
+                     "which would interpret its & | < > ^ %% or \" characters",
+                     arg, exe);
+                return 127;
+            }
+        }
+    }
+#endif
+    int code = plat_run_inherited(exe, argv);
+    if (code < 0) {
+        die("edit: failed to run %s: %s", exe, plat_strerror(errno));
+    }
+    return code;
+}
+
+/* Opens `target_path` in $EDITOR, or else the first fallback editor found.
+ * Returns the editor's exit code (127 if no editor could be run at all). */
+static int open_in_editor(const char *target_path) {
+    const char *editor_env = plat_getenv("EDITOR");
+    StrVec words;
+    strvec_init(&words);
+
+    if (editor_env && !is_blank(editor_env)) {
+        /* Split into words (multi-word editors like "code --wait"), but
+         * never through a shell: see plat_split_command. Running $EDITOR
+         * via `sh -c` would execute any `;`, `&&` or `$(...)` it contains
+         * before the editor even opened -- not something to do
+         * unconditionally with whatever the environment happens to hold
+         * (e.g. inherited across `sudo -E`, a CI job, or a container). */
+        const char *why = NULL;
+        if (!plat_split_command(editor_env, &words, &why)) {
+            warn("$EDITOR ('%s') doesn't look like a plain command%s%s%s -- refusing to run it",
+                 editor_env, why ? " (" : "", why ? why : "", why ? ")" : "");
+            return 127;
+        }
+        char *exe = resolve_command(words.items[0]);
+        if (!exe) {
+            warn("$EDITOR ('%s'): '%s' not found or not executable", editor_env, words.items[0]);
+            return 127;
+        }
+        return run_editor(exe, &words, target_path);
+    }
+
+    for (size_t i = 0; i < FALLBACK_EDITOR_COUNT; i++) {
+        char *exe = resolve_command(FALLBACK_EDITORS[i]);
+        if (exe) {
+            strvec_push(&words, xstrdup(FALLBACK_EDITORS[i]));
+            return run_editor(exe, &words, target_path);
+        }
+    }
+
+    DynBuf names;
+    dynbuf_init(&names);
+    for (size_t i = 0; i < FALLBACK_EDITOR_COUNT; i++) {
+        dynbuf_append_str(&names, i > 0 ? ", " : "");
+        dynbuf_append_str(&names, FALLBACK_EDITORS[i]);
+    }
+    warn("no editor found -- set $EDITOR, or install one of: %s", dynbuf_cstr(&names));
+    return 127;
 }
 
 /* The file that currently defines shim `name`: its split config file if it
@@ -103,66 +205,7 @@ int cmd_edit(int argc, char **argv) {
         target_path = cfg_path;
     }
 
-    const char *editor_env = getenv("EDITOR");
-
-    pid_t pid = fork();
-    if (pid < 0) {
-        die("fork failed: %s", strerror(errno));
-    }
-    if (pid == 0) {
-        if (editor_env && editor_env[0] != '\0') {
-            /* wordexp() does the same word-splitting a shell would for a
-             * multi-word $EDITOR (e.g. "code --wait"), but with
-             * WRDE_NOCMD: command substitution ($(...), backticks) is
-             * refused outright rather than executed, and shell control
-             * operators (;, &&, |, >, ...) left unquoted are rejected as
-             * malformed input rather than being interpreted. Running
-             * $EDITOR through `sh -c` (the previous approach here) would
-             * instead hand any such content straight to the shell to
-             * execute, before the editor even opened -- fine for a
-             * trusted, self-chosen $EDITOR, but not something to do
-             * unconditionally with whatever the environment happens to
-             * contain (e.g. inherited across `sudo -E`, a CI job, or a
-             * container entrypoint). */
-            wordexp_t we;
-            int wrc = wordexp(editor_env, &we, WRDE_NOCMD);
-            if (wrc != 0 || we.we_wordc == 0) {
-                fprintf(stderr,
-                        "shimback: $EDITOR ('%s') doesn't look like a plain command%s -- "
-                        "refusing to run it\n",
-                        editor_env,
-                        wrc == WRDE_CMDSUB ? " (command substitution isn't allowed)" : "");
-                _exit(127);
-            }
-            size_t editor_argc = we.we_wordc;
-            char **editor_argv = xmalloc((editor_argc + 2) * sizeof(char *));
-            for (size_t i = 0; i < editor_argc; i++) {
-                editor_argv[i] = we.we_wordv[i];
-            }
-            editor_argv[editor_argc] = target_path;
-            editor_argv[editor_argc + 1] = NULL;
-            execvp(editor_argv[0], editor_argv);
-            warn("failed to run $EDITOR ('%s'): %s", editor_env,
-                 strerror(errno));
-            _exit(127);
-        }
-
-        for (size_t i = 0; i < sizeof(FALLBACK_EDITORS) / sizeof(FALLBACK_EDITORS[0]); i++) {
-            execlp(FALLBACK_EDITORS[i], FALLBACK_EDITORS[i], target_path, (char *)NULL);
-            /* exec only returns on failure (not installed, or something
-             * else wrong with it) -- try the next candidate either way. */
-        }
-        fprintf(stderr,
-                "shimback: no editor found -- set $EDITOR, or install one of: nvim, vim, vi, "
-                "nano, pico\n");
-        _exit(127);
-    }
-
-    int status;
-    if (xwaitpid(pid, &status) < 0) {
-        die("edit: failed to wait for editor: %s", strerror(errno));
-    }
-    int code = decode_exit_code(status);
+    int code = open_in_editor(target_path);
 
     /* A quick sanity check, not a hard requirement: if the editor exited
      * cleanly but left the file unparseable, say so right away rather

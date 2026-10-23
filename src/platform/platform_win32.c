@@ -7,6 +7,7 @@
 #include <fcntl.h>   /* _O_* */
 #include <io.h>      /* _isatty, _wsopen_s, _mktemp_s, _close */
 #include <share.h>   /* _SH_DENYNO */
+#include <shellapi.h> /* CommandLineToArgvW */
 #include <shlobj.h>  /* SHGetKnownFolderPath, FOLDERID_Profile/FOLDERID_Documents */
 #include <stdio.h>
 #include <stdlib.h>
@@ -209,6 +210,42 @@ static void set_errno_from_win32(DWORD err) {
             errno = EIO;
             break;
     }
+}
+
+bool plat_split_command(const char *command, StrVec *out, const char **why) {
+    *why = NULL;
+    /* CommandLineToArgvW returns the running exe's own path for an empty
+     * string, so blank input has to be refused before it gets there. */
+    const char *p = command;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    if (*p == '\0') {
+        return false;
+    }
+    /* Trimmed too: with leading whitespace, CommandLineToArgvW returns an
+     * empty first word. */
+    wchar_t *wcommand = utf8_to_wide(p);
+    if (!wcommand) {
+        return false;
+    }
+    int wargc = 0;
+    wchar_t **wargv = CommandLineToArgvW(wcommand, &wargc);
+    free(wcommand);
+    if (!wargv) {
+        return false;
+    }
+    bool ok = true;
+    for (int i = 0; i < wargc && ok; i++) {
+        char *word = wide_to_utf8(wargv[i]);
+        if (word) {
+            strvec_push(out, word);
+        } else {
+            ok = false;
+        }
+    }
+    LocalFree(wargv);
+    return ok && out->count > 0;
 }
 
 int plat_run_inherited(const char *exe, char *const argv[]) {

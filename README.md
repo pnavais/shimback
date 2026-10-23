@@ -775,11 +775,20 @@ shimback edit sed
 ```
 
 Opens `config.toml` in `$EDITOR`, or, if that's unset (or empty), the first
-of `nvim`, `vim`, `vi`, `nano`, `pico` found on `PATH` — in that order.
-Fails with a clear error if `$EDITOR` isn't set and none of those five are
-found either. A multi-word `$EDITOR` (e.g. `EDITOR="code --wait"`) works as
-expected — it's run through a shell so its own flags are honored, not
-treated as part of a single literal command name. The config's directory is
+of `nvim`, `vim`, `vi`, `nano`, `pico` found on `PATH` — in that order. On
+Windows the list is `edit` (Microsoft Edit, included with Windows 11),
+`nvim`, `vim`, `vi`, `nano`, and `PATH` lookup follows `PATHEXT`, so a
+`.cmd` editor like VS Code's `code` is found too. Fails with a clear error if
+`$EDITOR` isn't set and none of those are found either. A multi-word
+`$EDITOR` (e.g. `EDITOR="code --wait"`) works as expected: it's split into
+words the platform's way (shell word splitting on Linux/macOS, Windows
+command-line quoting on Windows, e.g.
+`EDITOR='"C:\Program Files\Notepad++\notepad++.exe" -multiInst'`), but never
+run through a shell, so a `;`, `&&` or `$(...)` in it can't run anything
+else. One Windows exception: a `.bat`/`.cmd` editor (like `code.cmd`) always
+runs through `cmd.exe`, so shimback refuses to start one with any of
+`& | < > ^ % "` in its arguments rather than let `cmd.exe` interpret them. The
+config's directory is
 created first if it doesn't exist yet, so editing works even before the
 first `add`. Once the editor exits, if it exited successfully but the file
 it left behind no longer parses, shimback warns about that right away

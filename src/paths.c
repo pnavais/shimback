@@ -864,6 +864,77 @@ void shim_dir_lock_file_remove(const char *shim_dir) {
     free(lock_path);
 }
 
+#ifdef _WIN32
+/* True if `ext` (with its dot) is one CreateProcess can launch directly. */
+static bool is_launchable_ext(const char *ext) {
+    return _stricmp(ext, ".com") == 0 || _stricmp(ext, ".exe") == 0 ||
+           _stricmp(ext, ".bat") == 0 || _stricmp(ext, ".cmd") == 0;
+}
+
+/* The executable `name` names in `dir`, per path_search_command's rules. */
+static char *find_command_in_dir(const char *dir, const char *name) {
+    const char *dot = strrchr(path_basename(name), '.');
+    if (dot && is_launchable_ext(dot)) {
+        char *candidate = path_join(dir, name);
+        if (is_executable_file(candidate)) {
+            return candidate;
+        }
+        free(candidate);
+        return NULL;
+    }
+    const char *pathext = plat_getenv("PATHEXT");
+    char *exts = xstrdup(pathext && pathext[0] ? pathext : ".COM;.EXE;.BAT;.CMD");
+    char *result = NULL;
+    char *saveptr = NULL;
+    for (char *ext = strtok_r(exts, ";", &saveptr); ext && !result;
+         ext = strtok_r(NULL, ";", &saveptr)) {
+        if (!is_launchable_ext(ext)) {
+            continue;
+        }
+        size_t len = strlen(name) + strlen(ext) + 1;
+        char *with_ext = xmalloc(len);
+        snprintf(with_ext, len, "%s%s", name, ext);
+        char *candidate = path_join(dir, with_ext);
+        free(with_ext);
+        if (is_executable_file(candidate)) {
+            result = candidate;
+        } else {
+            free(candidate);
+        }
+    }
+    free(exts);
+    return result;
+}
+#endif
+
+char *path_search_command(const char *name) {
+    const char *path_env = plat_getenv("PATH");
+    if (!path_env) {
+        return NULL;
+    }
+    char *path_copy = xstrdup(path_env);
+    char *result = NULL;
+    char *saveptr = NULL;
+    for (char *dir = strtok_r(path_copy, PLAT_PATH_LIST_SEP, &saveptr); dir && !result;
+         dir = strtok_r(NULL, PLAT_PATH_LIST_SEP, &saveptr)) {
+        if (dir[0] == '\0') {
+            continue;
+        }
+#ifdef _WIN32
+        result = find_command_in_dir(dir, name);
+#else
+        char *candidate = path_join(dir, name);
+        if (is_executable_file(candidate)) {
+            result = candidate;
+        } else {
+            free(candidate);
+        }
+#endif
+    }
+    free(path_copy);
+    return result;
+}
+
 char *path_search(const char *name, const char *exclude_dir,
                    const char *exclude_canonical) {
     const char *path_env = plat_getenv("PATH");

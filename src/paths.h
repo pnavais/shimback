@@ -263,6 +263,15 @@ bool copy_file(const char *src, const char *dst);
  * any directory equal to `exclude_dir` (may be NULL for no exclusion) and
  * any candidate that canonicalizes to `exclude_canonical` (may be NULL).
  * Returns NULL if nothing matches. */
+/* Finds a user-named command (e.g. an editor) the way the platform's own
+ * shell would: on POSIX, the first executable `name` on $PATH; on Windows,
+ * per $PATH directory, `name` plus each %PATHEXT% extension that
+ * CreateProcess can actually launch (.com, .exe, .bat, .cmd) in %PATHEXT%
+ * order, or `name` itself only if it already ends in one -- so `code`
+ * finds code.cmd, not the extension-less shell script beside it. Unlike
+ * path_search, the result isn't canonicalized. NULL if not found. */
+char *path_search_command(const char *name);
+
 char *path_search(const char *name, const char *exclude_dir,
                    const char *exclude_canonical);
 

@@ -164,18 +164,13 @@ add_executable(shimback
   src/commands/export.c
   src/commands/import.c
   src/commands/completions.c
+  src/commands/edit.c
 )
 
 if(SHIMBACK_TARGET_WINDOWS)
   target_sources(shimback PRIVATE src/platform/platform_win32.c src/platform/getopt_win32.c)
 else()
   target_sources(shimback PRIVATE src/platform/platform_posix.c)
-  # edit.c uses wordexp() (no Windows equivalent) and an exec-fails-in-child
-  # fallback-chain idiom that needs a real PATH-search-first redesign for
-  # Windows, not a mechanical port -- deliberately deferred.
-  # Excluded from the Windows build
-  # entirely rather than partially ported.
-  target_sources(shimback PRIVATE src/commands/edit.c)
 endif()
 
 target_include_directories(shimback PRIVATE
