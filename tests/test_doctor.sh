@@ -483,12 +483,24 @@ assert_contains "doctor: block genuinely missing -- names the real fix" "$out" \
 out="$(PATH="$PATH_WITHOUT_SHIM_DIR" "$SHIMBACK" doctor fix -y)"
 assert_contains "doctor fix: actually adds the missing PATH block" "$out" \
     "[fixed] added the shim directory to your PATH"
-assert_contains "doctor fix: restart-your-shell reminder is part of the fixed message" "$out" \
-    "restart your shell (or re-source its startup file) for it to take effect"
 assert_contains "doctor fix: the block is now really in the rc file" "$(cat "$ZSHRC_LOCAL")" \
     "# >>> shimback >>>"
 assert_contains "doctor fix: the block actually lists the shim directory" \
     "$(cat "$ZSHRC_LOCAL")" "$DOCTOR_SHIM_DIR"
+
+# The restart reminder is printed once more, prominently, as the literal
+# last line of output -- not just inline next to the [fixed] message,
+# where it's easy to lose track of by the time a long doctor report
+# finishes (the whole point of this part of the fix).
+last_line="$(printf '%s\n' "$out" | tail -1)"
+assert_eq "doctor fix: restart reminder is the very last line of output" \
+    "Restart your shell (or re-source its startup file) for the PATH change to take effect." \
+    "$last_line"
+
+# A healthy run (nothing to fix) never prints this reminder at all.
+healthy_out="$(PATH="$PATH_WITHOUT_SHIM_DIR:$DOCTOR_SHIM_DIR" "$SHIMBACK" doctor)"
+assert_not_contains "doctor: no restart reminder when nothing needed fixing" "$healthy_out" \
+    "Restart your shell"
 
 # Still without the shim dir on live PATH (same simulated stale shell),
 # doctor now correctly falls back to "restart your shell" instead of

@@ -442,6 +442,12 @@ int cmd_doctor(int argc, char **argv) {
     }
 
     int issues = 0;
+    bool path_block_fixed = false; /* set below if `fix` actually wrote the shim
+                                     * directory's PATH block -- read at the very
+                                     * end, after everything else doctor prints, so
+                                     * the "restart your shell" reminder is the
+                                     * last thing seen instead of buried mid-report
+                                     * (see the shim-directory section below). */
     g_colorize = stdout_is_color();
     const char *hdr = g_colorize ? ANSI_BOLD ANSI_YELLOW : "";
     const char *name_color = g_colorize ? ANSI_BOLD ANSI_CYAN : "";
@@ -518,8 +524,9 @@ int cmd_doctor(int argc, char **argv) {
              * consistently instead, the same way the zsh block migration
              * just above handles its own success message. */
             if (shell_ensure_path(shell, shim_dir, false, mise_mode)) {
-                report_fixed("added the shim directory to your PATH -- restart your shell (or "
-                             "re-source its startup file) for it to take effect");
+                report_fixed("added the shim directory to your PATH");
+                path_block_fixed = true; /* the actual reminder is printed once,
+                                           * prominently, at the very end -- see there */
             } else {
                 warn("doctor fix: failed to add the shim directory to your shell's PATH");
                 report_fail(&issues, "not on $PATH, and adding it to your shell's startup file "
@@ -809,6 +816,18 @@ int cmd_doctor(int argc, char **argv) {
     } else {
         printf("%sshimback doctor: all checks passed%s\n", g_colorize ? ANSI_BOLD ANSI_GREEN : "",
                reset);
+    }
+    if (path_block_fixed) {
+        /* Printed last, after everything else doctor reports (the
+         * installation section, every shim's own checks, the final
+         * summary above) -- the same reminder was already noted inline
+         * up where the fix actually happened, but doctor's own report can
+         * run on long enough that it's easy to lose track of by the time
+         * you reach the bottom; repeating it here, prominently, as the
+         * literal last thing printed, is the same shape `add`'s own
+         * verbose PATH-update reminder already uses. */
+        recommend("Restart your shell (or re-source its startup file) for the PATH change to "
+                  "take effect.");
     }
     return issues > 0 ? 1 : 0;
 }
