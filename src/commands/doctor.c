@@ -467,6 +467,7 @@ int cmd_doctor(int argc, char **argv) {
     report_ok("parsed successfully");
     printf("\n");
 
+    char *self_exe = self_exe_path();
     char *shim_dir = shim_bin_dir();
     printf("%sshim directory:%s " COLOR_PATH_FMT "\n", hdr, reset,
            COLOR_PATH_ARGS(shim_dir, g_colorize));
@@ -549,12 +550,61 @@ int cmd_doctor(int argc, char **argv) {
         strvec_init(&stale);
         find_stale_block_dirs(&stale);
 
+        char *self_exe_dir = dir_of(self_exe);
+        /* Unlike the shim directory (a fixed, conventional location
+         * regardless of which binary happens to be running `doctor`),
+         * the currently running binary's own directory could just as
+         * easily be a one-off dev build nobody meant to keep on PATH --
+         * `install` exists specifically to make that an explicit
+         * declaration, not something `doctor` infers. The one case this
+         * *can* safely act on without guessing: that directory is
+         * already reachable on live $PATH right now, which is concrete
+         * evidence (not a guess) that it's a real, currently-working
+         * location -- the exact same signal the shim-directory fix above
+         * already relies on, applied here instead. */
+        bool self_exe_dir_live = install_count == 0 && dir_on_path(self_exe_dir);
+
         if (install_count == 1) {
             report_ok("installed at " COLOR_PATH_FMT,
                       COLOR_PATH_ARGS(installs[0].binary, g_colorize));
+        } else if (self_exe_dir_live) {
+            if (!fix_mode) {
+                report_warn("not recorded as installed in the PATH block, though the binary "
+                            "currently running is already on $PATH at " COLOR_PATH_FMT
+                            " -- run `shimback doctor fix` to record it",
+                            COLOR_PATH_ARGS(self_exe, g_colorize));
+            } else {
+                ShellKind shell = detect_current_shell();
+                if (shell == SHELL_UNKNOWN) {
+                    report_warn("not recorded as installed in the PATH block, though the binary "
+                                "currently running is already on $PATH at " COLOR_PATH_FMT
+                                " -- your shell couldn't be auto-detected to record it "
+                                "automatically",
+                                COLOR_PATH_ARGS(self_exe, g_colorize));
+                } else {
+                    MiseIntegrationMode mise_mode = cfg.mise_integration_set
+                                                         ? (cfg.mise_integration ? MISE_ON : MISE_OFF)
+                                                         : MISE_AUTO;
+                    /* No restart reminder tied to this one: self_exe_dir is
+                     * already on live $PATH (that's the precondition for
+                     * reaching here at all), so this is purely a
+                     * bookkeeping update to the rc file -- nothing a shell
+                     * restart would newly pick up. */
+                    if (shell_ensure_path(shell, self_exe_dir, false, mise_mode)) {
+                        report_fixed("recorded the installation at " COLOR_PATH_FMT,
+                                     COLOR_PATH_ARGS(self_exe, g_colorize));
+                    } else {
+                        warn("doctor fix: failed to record the installation in your shell's "
+                             "PATH block");
+                        report_warn("not recorded as installed in the PATH block, and recording "
+                                    "it just failed (see the warning above)");
+                    }
+                }
+            }
         } else if (install_count == 0 && stale.count == 0) {
             report_ok("not installed (no `shimback install` recorded in the PATH block)");
         }
+        free(self_exe_dir);
         if (install_count > 1) {
             report_warn("%zu installations are recorded in the PATH block, but only one is "
                         "supported -- run `shimback uninstall --prefix <dir>` for each one you "
@@ -602,7 +652,6 @@ int cmd_doctor(int argc, char **argv) {
         return issues > 0 ? 1 : 0;
     }
 
-    char *self_exe = self_exe_path();
     bool config_dirty = false;
 
     printf("%s%zu shim(s):%s\n", hdr, name_count, reset);

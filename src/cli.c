@@ -272,7 +272,9 @@ static const CommandHelp COMMAND_HELP[] = {
         "              (\001-y\001/\001--yes\001 removes every orphan without asking), and writes\n"
         "              the shim directory's PATH block if it was never written at all\n"
         "              (a shell restart is still needed either way for that to take\n"
-        "              effect).\n"
+        "              effect). If the running binary's own directory is already on\n"
+        "              live \002$PATH\002 but isn't recorded as installed, records that too\n"
+        "              -- no restart needed, since it's already live.\n"
         "\n"
         "              \004e.g. shimback doctor fix -y\004\n"
         "\n",

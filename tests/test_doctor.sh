@@ -430,6 +430,35 @@ assert_contains "doctor: reports the installed binary" "$out_one" \
 assert_eq "doctor: an installation doesn't change the issue count" "$baseline" \
     "$(issue_count "$out_one")"
 
+# --- installation section: when nothing is recorded, but the currently
+# running binary's own directory is already reachable on live $PATH
+# (concrete evidence, not a guess -- the same signal the shim-directory
+# fix relies on), doctor calls that out specifically and `doctor fix`
+# records it, reusing the exact same shell_ensure_path() mechanism. No
+# restart reminder for this one: that directory is already live, so
+# nothing a restart would newly pick up. ---
+write_block "$DOCTOR_SHIM_DIR"
+LIVE_BUNDLE_PATH="$DOCTOR_BUNDLE:$PATH"
+out_live="$(PATH="$LIVE_BUNDLE_PATH" "$DOCTOR_BUNDLE/shimback" doctor)"
+assert_contains "doctor: notices the running binary is live but unrecorded" "$out_live" \
+    "not recorded as installed in the PATH block"
+assert_contains "doctor: names where it's actually running from" "$out_live" \
+    "$DOCTOR_BUNDLE/shimback"
+
+out_live_fix="$(PATH="$LIVE_BUNDLE_PATH" "$DOCTOR_BUNDLE/shimback" doctor fix -y)"
+assert_contains "doctor fix: records the installation for the already-live binary" \
+    "$out_live_fix" "[fixed] recorded the installation at \"$DOCTOR_BUNDLE/shimback\""
+assert_not_contains "doctor fix: no restart reminder needed -- it was already live" \
+    "$out_live_fix" "Restart your shell"
+assert_contains "doctor fix: the block now actually lists that directory" \
+    "$(cat "$ZSHRC_LOCAL")" "$DOCTOR_BUNDLE"
+
+out_live_after="$(PATH="$LIVE_BUNDLE_PATH" "$DOCTOR_BUNDLE/shimback" doctor)"
+assert_contains "doctor: now reports it as a real installation" "$out_live_after" \
+    "installed at \"$DOCTOR_BUNDLE/shimback\""
+assert_eq "doctor: recording it introduces no new issues" "$baseline" \
+    "$(issue_count "$out_live_after")"
+
 write_block "$DOCTOR_SHIM_DIR" "$INST_PREFIX/bin" "/nonexistent/stale/bin"
 out_stale="$("$SHIMBACK" doctor)"
 assert_contains "doctor: warns about a stale PATH entry" "$out_stale" \

@@ -604,6 +604,19 @@ possible from a version that predates `install`'s single-installation rule),
 and a recorded directory with no shimback binary in it any more (a stale
 entry, harmless). Both come with what to do about them.
 
+A third case: nothing is recorded at all, but the binary currently running
+`doctor` is already reachable on your live `$PATH` right now — concrete
+evidence it's a real, working location, not a guess (the same signal the
+shim-directory fix below relies on; a plain "nothing recorded" otherwise
+stays a neutral, unflagged state, since that's also just what running
+shimback without ever having installed it looks like). That gets a
+`[warn]` too, naming where it's actually running from; `doctor fix` records
+it the same way `install` would, with no restart needed afterward — it was
+already live, so writing it to the startup file is pure bookkeeping.
+Deliberately not automatic for a directory that *isn't* already live: that
+could just as easily be a one-off dev build nobody meant to keep on `PATH`,
+and `install` exists specifically so that choice stays an explicit one.
+
 `doctor` also checks for a stray PATH block: if `~/.zshrc.local` exists but
 the shimback block is still sitting in `~/.zshrc` (written by an `add`/
 `init`/`install` that ran before `~/.zshrc.local` existed, or before

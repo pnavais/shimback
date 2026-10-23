@@ -481,6 +481,24 @@ If stdin isn't interactive and hits EOF before being answered,
 .B fix
 gives up on that entry and leaves it as\-is rather than hang.
 .IP
+Also reports on the installation recorded in the PATH block (see
+.BR install ).
+If nothing is recorded, but the binary currently running
+.B doctor
+is already reachable on live
+.I $PATH
+right now \(em concrete evidence, not a guess \(em that's a
+.BR warn ,
+naming where it's actually running from;
+.B fix
+records it the same way
+.B install
+would, no restart needed (it was already live). Not automatic for a
+directory that isn't already live, since that could just as easily be a
+one\-off dev build, and
+.B install
+exists so that choice stays explicit.
+.IP
 Also flags a stray PATH block: if
 .I ~/.zshrc.local
 exists but the shimback block is still in
