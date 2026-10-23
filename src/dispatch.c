@@ -17,7 +17,7 @@
 static int run_inherited_or_die(const char *exe, char *const argv[]) {
     int code = plat_run_inherited(exe, argv);
     if (code < 0) {
-        die("failed to run %s", exe);
+        die("failed to run %s", display_path(exe));
     }
     return code;
 }
@@ -194,8 +194,7 @@ static char *resolve_executable_or_report(const char *path, const char *role,
                                           const char *shim_name) {
     char *resolved = is_executable_file(path) ? canonicalize(path) : NULL;
     if (!resolved) {
-        warn("%s '%s' for '%s' not found or not executable", role, path,
-             shim_name);
+        warn("%s '%s' for '%s' not found or not executable", role, display_path(path), shim_name);
     }
     return resolved;
 }
@@ -206,7 +205,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     char errbuf[256];
     ConfigStatus cst = config_load(cfg_path, &cfg, errbuf, sizeof(errbuf));
     if (cst != CONFIG_OK) {
-        die("failed to load config %s: %s", cfg_path, errbuf);
+        die("failed to load config %s: %s", display_path(cfg_path), errbuf);
     }
 
     /* A <name>-config.toml split file, if present in any of its three
@@ -223,8 +222,8 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     char *resolved_source = NULL;
     if (entry->source) {
         if (!is_executable_file(entry->source)) {
-            warn("source '%s' for '%s' not found or not executable",
-                 entry->source, shim_name);
+            warn("source '%s' for '%s' not found or not executable", display_path(entry->source),
+                 shim_name);
             return 127;
         }
         resolved_source = canonicalize(entry->source);
@@ -310,7 +309,8 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         }
 
         if (matched_route && entry->diagnostic) {
-            warn("'%s': route '%s' matched; running %s", shim_name, matched_route->match, target);
+            warn("'%s': route '%s' matched; running %s", shim_name, matched_route->match,
+                 display_path(target));
         }
 
         int code = run_inherited_or_die(target, route_argv);
@@ -384,7 +384,8 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         }
 
         if (matched && entry->diagnostic) {
-            warn("'%s': routing arg matched; running fallback %s", shim_name, resolved_fallback);
+            warn("'%s': routing arg matched; running fallback %s", shim_name,
+                 display_path(resolved_fallback));
         }
 
         int code = run_inherited_or_die(target, route_argv);
@@ -429,7 +430,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
 
             if (use_fallback && entry->diagnostic) {
                 warn("'%s': split-args matched fallback's route args; running fallback %s",
-                     shim_name, resolved_fallback);
+                     shim_name, display_path(resolved_fallback));
             }
 
             int code = run_inherited_or_die(target, split_argv);
@@ -469,7 +470,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
     int status = plat_run_captured(resolved_source, source_argv, &out, &err, effective_timeout_ms,
                                     effective_limit_bytes, &committed_live);
     if (status < 0) {
-        die("failed to run %s", resolved_source);
+        die("failed to run %s", display_path(resolved_source));
     }
 
     if (committed_live) {
@@ -524,7 +525,7 @@ int dispatch_run(const char *shim_name, int argc, char **argv) {
         dynbuf_free(&out);
         dynbuf_free(&err);
         if (entry->diagnostic) {
-            warn("'%s' failed; falling back to %s", shim_name, resolved_fallback);
+            warn("'%s' failed; falling back to %s", shim_name, display_path(resolved_fallback));
         }
         return run_inherited_or_die(resolved_fallback, fallback_argv);
     }

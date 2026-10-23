@@ -114,10 +114,12 @@ static void restore_from_backup(const char *path, const char *backup_path) {
          * rename()/MoveFileW don't replace an existing destination on
          * Windows, see platform.h. */
         if (!plat_rename_replace(backup_path, path)) {
-            warn("add: failed to restore %s from backup: %s", path, plat_strerror(errno));
+            warn("add: failed to restore %s from backup: %s", display_path(path),
+                 plat_strerror(errno));
         }
     } else if (unlink(path) != 0 && errno != ENOENT) {
-        warn("add: failed to remove %s while rolling back: %s", path, plat_strerror(errno));
+        warn("add: failed to remove %s while rolling back: %s", display_path(path),
+             plat_strerror(errno));
     }
 }
 
@@ -126,7 +128,8 @@ static void restore_from_backup(const char *path, const char *backup_path) {
  * correctness problem. */
 static void discard_backup(const char *backup_path) {
     if (unlink(backup_path) != 0 && errno != ENOENT) {
-        warn("add: failed to remove rollback backup %s: %s", backup_path, plat_strerror(errno));
+        warn("add: failed to remove rollback backup %s: %s", display_path(backup_path),
+             plat_strerror(errno));
     }
 }
 
@@ -270,7 +273,7 @@ static int finish_add(AddRequest *req) {
                      req->fallback_args.count)) {
         die("add: source and fallback both resolve to '%s' with the same arguments -- refusing "
             "to add a no-op shim",
-            resolved_fallback);
+            display_path(resolved_fallback));
     }
 
     /* Read-only pre-flight: if something already occupies where the shim
@@ -300,7 +303,7 @@ static int finish_add(AddRequest *req) {
         if (!is_shim_dir_entry(symlink_path)) {
             die("add: %s already exists and is not a shimback-managed shim; remove it "
                 "manually first",
-                symlink_path);
+                display_path(symlink_path));
         }
 #ifndef _WIN32
         /* This ownership check and the eventual rename() that replaces
@@ -328,7 +331,7 @@ static int finish_add(AddRequest *req) {
             die("add: %s is writable by more than just its owner, which would let a "
                 "concurrent process race the replacement of an existing shim symlink -- "
                 "restrict its permissions first (e.g. chmod go-w %s)",
-                shim_dir, shim_dir);
+                display_path(shim_dir), display_path(shim_dir));
         }
 #endif
         replacing_existing_symlink = true;
@@ -343,7 +346,7 @@ static int finish_add(AddRequest *req) {
      * this doesn't reintroduce the "dangling symlink with no config
      * entry" risk that ordering was originally protecting against. */
     if (!mkdir_p(shim_dir)) {
-        die("add: failed to create shim directory %s", shim_dir);
+        die("add: failed to create shim directory %s", display_path(shim_dir));
     }
 
     /* Held for this whole operation -- config load through the symlink
@@ -362,7 +365,7 @@ static int finish_add(AddRequest *req) {
      * ordinary process exit). */
     int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
     if (shim_lock_fd < 0) {
-        die("add: failed to acquire the shim directory lock on %s: %s", shim_dir,
+        die("add: failed to acquire the shim directory lock on %s: %s", display_path(shim_dir),
             plat_strerror(errno));
     }
 
@@ -371,7 +374,7 @@ static int finish_add(AddRequest *req) {
     char errbuf[256];
     ConfigStatus cst = config_load(cfg_path, &cfg, errbuf, sizeof(errbuf));
     if (cst != CONFIG_OK) {
-        die("add: existing config at %s is invalid: %s", cfg_path, errbuf);
+        die("add: existing config at %s is invalid: %s", display_path(cfg_path), errbuf);
     }
 
     size_t idx = config_upsert(&cfg, req->name);
@@ -474,7 +477,7 @@ static int finish_add(AddRequest *req) {
                  (int)getpid());
         if (!backup_file_if_exists(split_target_path, split_backup_path)) {
             die("add: failed to back up existing split config %s before updating it",
-                split_target_path);
+                display_path(split_target_path));
         }
 
         ConfigStatus split_save_st =
@@ -495,7 +498,8 @@ static int finish_add(AddRequest *req) {
             if (split_target_path) {
                 restore_from_backup(split_target_path, split_backup_path);
             }
-            die("add: failed to back up existing config %s before updating it", cfg_path);
+            die("add: failed to back up existing config %s before updating it",
+                display_path(cfg_path));
         }
     }
 

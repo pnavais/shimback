@@ -16,7 +16,7 @@ int cmd_init(int argc, char **argv) {
 
     char *shim_dir = shim_bin_dir();
     if (!mkdir_p(shim_dir)) {
-        die("init: failed to create shim directory %s", shim_dir);
+        die("init: failed to create shim directory %s", display_path(shim_dir));
     }
 
     /* A malformed config.toml shouldn't block `init` from wiring up PATH

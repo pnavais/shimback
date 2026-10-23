@@ -444,12 +444,13 @@ static ConfigStatus read_file_into_buffer(FILE *f, const char *path, char **out,
         case FILE_READ_OK:
             return CONFIG_OK;
         case FILE_READ_SEEK_FAILED:
-            snprintf(errbuf, errbuf_size, "cannot read %s: %s", path, plat_strerror(errno));
+            snprintf(errbuf, errbuf_size, "cannot read %s: %s", display_path(path),
+                     plat_strerror(errno));
             return CONFIG_ERR_IO;
         case FILE_READ_SHORT:
         default:
             snprintf(errbuf, errbuf_size, "cannot read %s: incomplete read (got %zu of %ld bytes)",
-                     path, n, size);
+                     display_path(path), n, size);
             return CONFIG_ERR_IO;
     }
 }
@@ -853,7 +854,8 @@ ConfigStatus config_load(const char *path, Config *cfg, char *errbuf, size_t err
         if (errno == ENOENT) {
             return CONFIG_OK; /* no config yet is not an error */
         }
-        snprintf(errbuf, errbuf_size, "cannot open %s: %s", path, plat_strerror(errno));
+        snprintf(errbuf, errbuf_size, "cannot open %s: %s", display_path(path),
+                 plat_strerror(errno));
         return CONFIG_ERR_IO;
     }
 
@@ -1076,7 +1078,8 @@ ConfigStatus config_load_split(const char *path, ShimEntry *entry, char *errbuf,
                                 size_t errbuf_size) {
     FILE *f = plat_fopen(path, "rb");
     if (!f) {
-        snprintf(errbuf, errbuf_size, "cannot open %s: %s", path, plat_strerror(errno));
+        snprintf(errbuf, errbuf_size, "cannot open %s: %s", display_path(path),
+                 plat_strerror(errno));
         return CONFIG_ERR_IO;
     }
 
@@ -1334,7 +1337,8 @@ static ConfigStatus write_config_text(const char *path, DynBuf *out, char *errbu
     char *dir = dir_of(path);
     bool dir_ok = mkdir_p(dir);
     if (!dir_ok) {
-        snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", dir, plat_strerror(errno));
+        snprintf(errbuf, errbuf_size, "cannot create directory %s: %s", display_path(dir),
+                 plat_strerror(errno));
     }
     free(dir);
     if (!dir_ok) {
@@ -1345,7 +1349,8 @@ static ConfigStatus write_config_text(const char *path, DynBuf *out, char *errbu
     bool ok = write_file_atomic(path, out->data, out->len, 0600);
     dynbuf_free(out);
     if (!ok) {
-        snprintf(errbuf, errbuf_size, "cannot write %s: %s", path, plat_strerror(errno));
+        snprintf(errbuf, errbuf_size, "cannot write %s: %s", display_path(path),
+                 plat_strerror(errno));
         return CONFIG_ERR_IO;
     }
     return CONFIG_OK;
@@ -1391,7 +1396,8 @@ size_t remove_split_configs(const char *name) {
              * (permissions, read-only filesystem, ...) is worth surfacing
              * even though callers here treat this as best-effort: it's
              * the only place that finds out at all. */
-            warn("failed to remove split config %s: %s", paths[i], plat_strerror(errno));
+            warn("failed to remove split config %s: %s", display_path(paths[i]),
+                 plat_strerror(errno));
         }
         free(paths[i]);
     }

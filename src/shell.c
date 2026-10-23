@@ -156,7 +156,7 @@ static char *read_file_or_empty(const char *path) {
          * project does is worth risking someone's .zshrc for. */
         die("failed to read %s completely (got %zu of %ld bytes) -- refusing to risk "
             "overwriting it with a truncated copy",
-            path, n, size);
+            display_path(path), n, size);
     }
     return buf;
 }
@@ -205,7 +205,7 @@ static bool find_block(const char *content, const char *tag, const char *rc_path
     const char *e = find_marker_line(s, mark_end);
     if (!e) {
         warn("found a %s start marker without a matching end marker in %s; leaving it alone", tag,
-             rc_path);
+             display_path(rc_path));
         return false;
     }
     const char *after = e + strlen(mark_end);
@@ -1014,7 +1014,7 @@ static bool ensure_fish(const char *dir, const char *tag, bool verbose,
     char *path = fish_snippet_path(tag);
     char *confd_dir = dir_of(path);
     if (!mkdir_p(confd_dir)) {
-        warn("failed to create %s", confd_dir);
+        warn("failed to create %s", display_path(confd_dir));
         free(confd_dir);
         free(path);
         return false;
@@ -1044,7 +1044,7 @@ static bool ensure_fish(const char *dir, const char *tag, bool verbose,
                          COLOR_PATH_ARGS(path, colorize));
         }
     } else {
-        warn("failed to update %s", path);
+        warn("failed to update %s", display_path(path));
     }
     free(path);
     return ok;
@@ -1061,7 +1061,7 @@ static bool remove_fish(const char *tag) {
     }
     bool ok = unlink(path) == 0;
     if (!ok) {
-        warn("failed to remove %s: %s", path, plat_strerror(errno));
+        warn("failed to remove %s: %s", display_path(path), plat_strerror(errno));
     }
     free(path);
     return ok;
@@ -1078,7 +1078,7 @@ static bool ensure_zsh(const char *dir, const char *tag, bool verbose,
             shell_status("zsh", "PATH updated in " COLOR_PATH_FMT, COLOR_PATH_ARGS(rc, colorize));
         }
     } else {
-        warn("failed to update %s", rc);
+        warn("failed to update %s", display_path(rc));
     }
     free(rc);
     free(home);
@@ -1105,7 +1105,7 @@ static bool ensure_bash(const char *dir, const char *tag, bool verbose,
                                  COLOR_PATH_ARGS(path, colorize));
                 }
             } else {
-                warn("failed to update %s", path);
+                warn("failed to update %s", display_path(path));
             }
             all_ok = all_ok && ok;
         }
@@ -1122,7 +1122,7 @@ static bool ensure_bash(const char *dir, const char *tag, bool verbose,
                              COLOR_PATH_ARGS(path, colorize));
             }
         } else {
-            warn("failed to create %s", path);
+            warn("failed to create %s", display_path(path));
         }
         all_ok = ok;
         free(path);
@@ -1328,7 +1328,7 @@ static bool ensure_powershell(const char *dir, const char *tag, bool verbose,
                                  COLOR_PATH_ARGS(profile, colorize));
                 }
             } else {
-                warn("failed to update %s", profile);
+                warn("failed to update %s", display_path(profile));
             }
             free(profile);
         }
@@ -1350,7 +1350,7 @@ static bool ensure_powershell(const char *dir, const char *tag, bool verbose,
                                  COLOR_PATH_ARGS(profile, colorize));
                 }
             } else {
-                warn("failed to update %s", profile);
+                warn("failed to update %s", display_path(profile));
             }
             free(profile);
         }
@@ -1484,7 +1484,7 @@ static void build_cmd_body(DynBuf *body, const StrVec *dirs) {
         if (strchr(dirs->items[i], '"') != NULL) {
             die("refusing to write '%s' into the cmd.exe AutoRun PATH block -- a '\"' in a "
                 "directory name can't be safely quoted there",
-                dirs->items[i]);
+                display_path(dirs->items[i]));
         }
     }
     dynbuf_append_str(body, "set \"PATH=");

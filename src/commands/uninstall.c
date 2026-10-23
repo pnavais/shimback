@@ -82,7 +82,7 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
     if (shim_lock_fd < 0) {
         warn("uninstall: failed to acquire the shim directory lock on %s: %s -- proceeding "
              "without it",
-             shim_dir, plat_strerror(errno));
+             display_path(shim_dir), plat_strerror(errno));
     }
 
     int count = 0;
@@ -107,7 +107,8 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
                     strvec_push(removed_names, xstrdup(*e));
                 }
             } else {
-                warn("uninstall: failed to remove %s: %s", entry_path, plat_strerror(errno));
+                warn("uninstall: failed to remove %s: %s", display_path(entry_path),
+                     plat_strerror(errno));
             }
         }
 #else
@@ -123,11 +124,12 @@ static int remove_shim_symlinks(const char *shim_dir, StrVec *removed_names) {
                         strvec_push(removed_names, xstrdup(*e));
                     }
                 } else {
-                    warn("uninstall: failed to remove %s: %s", entry_path, plat_strerror(errno));
+                    warn("uninstall: failed to remove %s: %s", display_path(entry_path),
+                         plat_strerror(errno));
                 }
             } else {
                 warn("uninstall: leaving %s alone -- it doesn't resolve to the shimback binary",
-                     entry_path);
+                     display_path(entry_path));
             }
         }
 #endif
@@ -217,7 +219,7 @@ static void remove_file_if_present(const char *path, const char *label, FileVeri
     if (verify && !verify(path)) {
         warn("uninstall: %s doesn't look like a shimback %s -- leaving it alone (check "
              "--prefix)",
-             path, label);
+             display_path(path), label);
         return;
     }
     if (unlink(path) == 0) {
@@ -230,12 +232,12 @@ static void remove_file_if_present(const char *path, const char *label, FileVeri
              " is still running -- likely this very process -- so Windows won't "
              "let it delete its own binary; renamed it to %s\"%s.old\"%s instead, freeing the "
              "path for a future install",
-             COLOR_PATH_ARGS(path, colorize), colorize ? ANSI_GREEN : "", path,
+             COLOR_PATH_ARGS(path, colorize), colorize ? ANSI_GREEN : "", display_path(path),
              colorize ? ANSI_RESET : "");
         return;
     }
 #endif
-    warn("uninstall: failed to remove %s: %s", path, plat_strerror(errno));
+    warn("uninstall: failed to remove %s: %s", display_path(path), plat_strerror(errno));
 }
 
 static void remove_config(void) {
@@ -410,7 +412,7 @@ int cmd_uninstall(int argc, char **argv) {
         } else {
             warn("uninstall: left the PATH block in place -- another installation at %s still "
                  "uses it",
-                 remaining[0].binary);
+                 display_path(remaining[0].binary));
         }
         free_installations(remaining, remaining_count);
     }

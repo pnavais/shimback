@@ -53,16 +53,18 @@ static bool backup_file_if_exists(const char *path, const char *backup_path) {
 static void restore_from_backup(const char *path, const char *backup_path) {
     if (access(backup_path, F_OK) == 0) {
         if (!plat_rename_replace(backup_path, path)) {
-            warn("import: failed to restore %s from backup: %s", path, plat_strerror(errno));
+            warn("import: failed to restore %s from backup: %s", display_path(path),
+                 plat_strerror(errno));
         }
     } else if (unlink(path) != 0 && errno != ENOENT) {
-        warn("import: failed to remove %s while rolling back: %s", path, plat_strerror(errno));
+        warn("import: failed to remove %s while rolling back: %s", display_path(path),
+             plat_strerror(errno));
     }
 }
 
 static void discard_backup(const char *backup_path) {
     if (unlink(backup_path) != 0 && errno != ENOENT) {
-        warn("import: failed to remove rollback backup %s: %s", backup_path,
+        warn("import: failed to remove rollback backup %s: %s", display_path(backup_path),
              plat_strerror(errno));
     }
 }
@@ -349,30 +351,32 @@ int cmd_import(int argc, char **argv) {
     char *data;
     size_t data_len;
     if (!read_whole_file(archive_path, &data, &data_len)) {
-        die("import: failed to read %s: %s", archive_path, plat_strerror(errno));
+        die("import: failed to read %s: %s", display_path(archive_path), plat_strerror(errno));
     }
 
     ZipReader zr;
     char zerrbuf[256];
     if (!zip_reader_open(data, data_len, &zr, zerrbuf, sizeof(zerrbuf))) {
-        die("import: %s does not look like a valid zip archive: %s", archive_path, zerrbuf);
+        die("import: %s does not look like a valid zip archive: %s", display_path(archive_path),
+            zerrbuf);
     }
 
     const ZipReaderEntry *manifest_entry = zip_reader_find(&zr, "manifest.toml");
     if (!manifest_entry) {
         die("import: %s has no manifest.toml -- this doesn't look like a shimback export (or "
             "it's corrupt)",
-            archive_path);
+            display_path(archive_path));
     }
     Manifest manifest;
     parse_manifest(manifest_entry->data, manifest_entry->size, &manifest);
     if (manifest.format_version != 1) {
         if (manifest.format_version < 0) {
-            die("import: %s's manifest.toml has no readable format_version", archive_path);
+            die("import: %s's manifest.toml has no readable format_version",
+                display_path(archive_path));
         }
         die("import: %s was exported in a format this shimback build doesn't understand "
             "(format_version %d, expected 1) -- try a newer shimback",
-            archive_path, manifest.format_version);
+            display_path(archive_path), manifest.format_version);
     }
     if (manifest.shimback_version && strcmp(manifest.shimback_version, SHIMBACK_VERSION) != 0) {
         bool colorize = stdout_is_color();
@@ -413,7 +417,7 @@ int cmd_import(int argc, char **argv) {
         unlink(cfg_tmp);
         free(cfg_tmp);
         if (cst != CONFIG_OK) {
-            die("import: %s's config.toml is invalid: %s", archive_path, errbuf);
+            die("import: %s's config.toml is invalid: %s", display_path(archive_path), errbuf);
         }
     }
 
@@ -451,7 +455,7 @@ int cmd_import(int argc, char **argv) {
         unlink(split_tmp);
         free(split_tmp);
         if (cst != CONFIG_OK) {
-            die("import: %s's %s is invalid: %s", archive_path, arcname, errbuf);
+            die("import: %s's %s is invalid: %s", display_path(archive_path), arcname, errbuf);
         }
 
         ImportCandidate *c = push_candidate(&cands, &cand_count, &cand_cap);
@@ -490,7 +494,7 @@ int cmd_import(int argc, char **argv) {
     Config local_snapshot_cfg;
     char errbuf[256];
     if (config_load(local_cfg_path, &local_snapshot_cfg, errbuf, sizeof(errbuf)) != CONFIG_OK) {
-        die("import: existing config at %s is invalid: %s", local_cfg_path, errbuf);
+        die("import: existing config at %s is invalid: %s", display_path(local_cfg_path), errbuf);
     }
 
     for (size_t i = 0; i < cand_count; i++) {
@@ -524,7 +528,7 @@ int cmd_import(int argc, char **argv) {
         if (cand_count == 0) {
             die("import --replace: %s has no shims to import -- refusing to remove every local "
                 "shim",
-                archive_path);
+                display_path(archive_path));
         }
         size_t local_name_count = 0;
         char **local_names = collect_all_shim_names(&local_snapshot_cfg, &local_name_count);
@@ -603,17 +607,17 @@ int cmd_import(int argc, char **argv) {
     /* ---- Phase 2: commit -- lock held throughout ---- */
 
     if (!mkdir_p(shim_dir)) {
-        die("import: failed to create shim directory %s", shim_dir);
+        die("import: failed to create shim directory %s", display_path(shim_dir));
     }
     int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
     if (shim_lock_fd < 0) {
-        die("import: failed to acquire the shim directory lock on %s: %s", shim_dir,
+        die("import: failed to acquire the shim directory lock on %s: %s", display_path(shim_dir),
             plat_strerror(errno));
     }
 
     Config local_cfg;
     if (config_load(local_cfg_path, &local_cfg, errbuf, sizeof(errbuf)) != CONFIG_OK) {
-        die("import: existing config at %s is invalid: %s", local_cfg_path, errbuf);
+        die("import: existing config at %s is invalid: %s", display_path(local_cfg_path), errbuf);
     }
 
     /* Re-check every accepted decision against this fresh, locked load --
@@ -690,7 +694,7 @@ int cmd_import(int argc, char **argv) {
         char *split_backup_path = make_backup_path(target_path);
         if (!backup_file_if_exists(target_path, split_backup_path)) {
             warn("import: failed to back up existing split config %s -- '%s' not imported",
-                 target_path, c->name);
+                 display_path(target_path), c->name);
             c->write_failed = true;
             free(target_path);
             free(split_backup_path);
@@ -718,7 +722,8 @@ int cmd_import(int argc, char **argv) {
                 restore_from_backup(cands[i].split_target_path, cands[i].split_backup_path);
             }
         }
-        die("import: failed to back up existing config %s before updating it", local_cfg_path);
+        die("import: failed to back up existing config %s before updating it",
+            display_path(local_cfg_path));
     }
 
     for (size_t i = 0; i < cand_count; i++) {
@@ -797,13 +802,13 @@ int cmd_import(int argc, char **argv) {
             if (access(symlink_path, F_OK) == 0) {
                 if (is_shim_dir_entry(symlink_path)) {
                     if (unlink(symlink_path) != 0) {
-                        warn("import --replace: failed to remove symlink %s: %s", symlink_path,
-                             plat_strerror(errno));
+                        warn("import --replace: failed to remove symlink %s: %s",
+                             display_path(symlink_path), plat_strerror(errno));
                     }
                 } else {
                     warn("import --replace: %s is not a shimback-managed symlink; leaving it "
                          "alone",
-                         symlink_path);
+                         display_path(symlink_path));
                 }
             }
             free(symlink_path);

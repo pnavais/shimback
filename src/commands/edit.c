@@ -70,7 +70,7 @@ static int run_editor(const char *exe, StrVec *editor_argv, const char *target_p
             if (strpbrk(arg, "&|<>^%\"")) {
                 warn("edit: refusing to pass '%s' to %s -- batch files run through cmd.exe, "
                      "which would interpret its & | < > ^ %% or \" characters",
-                     arg, exe);
+                     arg, display_path(exe));
                 return 127;
             }
         }
@@ -78,7 +78,7 @@ static int run_editor(const char *exe, StrVec *editor_argv, const char *target_p
 #endif
     int code = plat_run_inherited(exe, argv);
     if (code < 0) {
-        die("edit: failed to run %s: %s", exe, plat_strerror(errno));
+        die("edit: failed to run %s: %s", display_path(exe), plat_strerror(errno));
     }
     return code;
 }
@@ -191,7 +191,7 @@ int cmd_edit(int argc, char **argv) {
     } else {
         char *cfg_dir = dir_of(cfg_path);
         if (!mkdir_p(cfg_dir)) {
-            die("edit: failed to create config directory %s", cfg_dir);
+            die("edit: failed to create config directory %s", display_path(cfg_dir));
         }
         free(cfg_dir);
         target_path = cfg_path;
@@ -223,7 +223,7 @@ int cmd_edit(int argc, char **argv) {
             }
         }
         if (cst != CONFIG_OK) {
-            warn("edit: %s now fails to parse: %s", target_path, errbuf);
+            warn("edit: %s now fails to parse: %s", display_path(target_path), errbuf);
         }
     }
 

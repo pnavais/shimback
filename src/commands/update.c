@@ -257,7 +257,7 @@ int cmd_update(int argc, char **argv) {
     if (found_count > 1) {
         die("update: found %zu installations (%s and %s ...) -- only one is supported; run "
             "`shimback uninstall` to remove them, then `shimback install` once",
-            found_count, found[0].binary, found[1].binary);
+            found_count, display_path(found[0].binary), display_path(found[1].binary));
     }
     const Installation *inst = &found[0];
 
@@ -442,7 +442,7 @@ int cmd_update(int argc, char **argv) {
     }
 
     if (!copy_executable(new_binary, inst->binary)) {
-        warn("update: failed to replace %s: %s", inst->binary, plat_strerror(errno));
+        warn("update: failed to replace %s: %s", display_path(inst->binary), plat_strerror(errno));
         goto done;
     }
 
@@ -458,7 +458,7 @@ int cmd_update(int argc, char **argv) {
         if (mkdir_p(man_dir) && copy_file(man_src, man_dest)) {
             info("man page refreshed at " COLOR_PATH_FMT, COLOR_PATH_ARGS(man_dest, colorize));
         } else {
-            warn("update: failed to refresh the man page at %s", man_dest);
+            warn("update: failed to refresh the man page at %s", display_path(man_dest));
             man_failed = true;
         }
     }
@@ -524,7 +524,7 @@ int cmd_update(int argc, char **argv) {
                     info("refreshed shim '%s'", stale_names.items[i]);
                 } else {
                     warn("update: failed to refresh shim '%s' at %s: %s", stale_names.items[i],
-                         shim_path, plat_strerror(errno));
+                         display_path(shim_path), plat_strerror(errno));
                 }
                 free(shim_path);
             }

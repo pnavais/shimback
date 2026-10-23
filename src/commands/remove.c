@@ -70,7 +70,7 @@ int cmd_remove(int argc, char **argv) {
      * remove, or lose an update to either way. */
     int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
     if (shim_lock_fd < 0 && errno != ENOENT) {
-        die("remove: failed to acquire the shim directory lock on %s: %s", shim_dir,
+        die("remove: failed to acquire the shim directory lock on %s: %s", display_path(shim_dir),
             plat_strerror(errno));
     }
 
@@ -154,7 +154,8 @@ int cmd_remove(int argc, char **argv) {
         if (is_shim_dir_entry(symlink_path)) {
             have_managed_symlink = true;
         } else {
-            warn("%s is not a shimback-managed symlink; leaving it alone", symlink_path);
+            warn("%s is not a shimback-managed symlink; leaving it alone",
+                 display_path(symlink_path));
         }
     }
 
@@ -166,7 +167,7 @@ int cmd_remove(int argc, char **argv) {
 
     bool symlink_removed_ok = true;
     if (have_managed_symlink && unlink(symlink_path) != 0) {
-        warn("failed to remove symlink %s: %s", symlink_path, plat_strerror(errno));
+        warn("failed to remove symlink %s: %s", display_path(symlink_path), plat_strerror(errno));
         symlink_removed_ok = false;
     }
     shim_dir_lock_release(shim_lock_fd);

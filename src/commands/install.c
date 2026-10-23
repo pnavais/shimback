@@ -71,14 +71,15 @@ static bool download_via_curl(const char *curl, const char *url, const char *des
     }
     if (ok && rename(tmp_file, dest) == 0) {
         if (rmdir(tmpdir) != 0) {
-            warn("install: failed to remove temporary directory %s: %s", tmpdir,
+            warn("install: failed to remove temporary directory %s: %s", display_path(tmpdir),
                  plat_strerror(errno));
         }
         return true;
     }
     unlink(tmp_file);
     if (rmdir(tmpdir) != 0) {
-        warn("install: failed to remove temporary directory %s: %s", tmpdir, plat_strerror(errno));
+        warn("install: failed to remove temporary directory %s: %s", display_path(tmpdir),
+             plat_strerror(errno));
     }
     return false;
 }
@@ -92,7 +93,7 @@ static bool download_via_curl(const char *curl, const char *url, const char *des
 static void install_man_page(const char *prefix, const char *self_exe) {
     char *man_dir = path_join(prefix, "share/man/man1");
     if (!mkdir_p(man_dir)) {
-        warn("install: failed to create %s; skipping man page", man_dir);
+        warn("install: failed to create %s; skipping man page", display_path(man_dir));
         free(man_dir);
         return;
     }
@@ -107,8 +108,8 @@ static void install_man_page(const char *prefix, const char *self_exe) {
         if (copy_file(local_man, man_dest)) {
             info("man page installed to " COLOR_PATH_FMT, COLOR_PATH_ARGS(man_dest, colorize));
         } else {
-            warn("install: failed to copy man page from %s to %s: %s", local_man, man_dest,
-                 plat_strerror(errno));
+            warn("install: failed to copy man page from %s to %s: %s", display_path(local_man),
+                 display_path(man_dest), plat_strerror(errno));
         }
     } else {
         char *curl = path_search("curl", NULL, NULL);
@@ -252,7 +253,7 @@ int cmd_install(int argc, char **argv) {
                              "shimback is already installed at %s -- only one installation is "
                              "allowed. Run `shimback uninstall` first to move it (--force only "
                              "overwrites an installation at the same --prefix).",
-                             found[i].binary);
+                             display_path(found[i].binary));
             }
         }
         return 1;
@@ -265,7 +266,7 @@ int cmd_install(int argc, char **argv) {
                      "shimback is already installed at %s -- nothing to do. "
                      "`shimback update` upgrades it to the latest release; `shimback install "
                      "--force` overwrites it with this binary.",
-                     existing_dest);
+                     display_path(existing_dest));
         free(existing_dest);
         free_installations(found, found_count);
         return 0;
@@ -273,7 +274,7 @@ int cmd_install(int argc, char **argv) {
     free_installations(found, found_count);
 
     if (!mkdir_p(bin_dir)) {
-        die("install: failed to create %s", bin_dir);
+        die("install: failed to create %s", display_path(bin_dir));
     }
 
     char *self_exe = self_exe_path();
@@ -306,7 +307,8 @@ int cmd_install(int argc, char **argv) {
             info("removed leftover " COLOR_PATH_FMT " from a previous uninstall",
                  COLOR_PATH_ARGS(dest_old, colorize));
         } else {
-            warn("install: failed to remove leftover %s: %s", dest_old, plat_strerror(errno));
+            warn("install: failed to remove leftover %s: %s", display_path(dest_old),
+                 plat_strerror(errno));
         }
     }
     dynbuf_free(&dest_old_buf);
@@ -323,7 +325,7 @@ int cmd_install(int argc, char **argv) {
     if (access(dest, F_OK) == 0 && !looks_like_shimback_binary(dest)) {
         die("install: %s already exists and doesn't look like a shimback binary -- refusing to "
             "overwrite it (remove it manually first if this --prefix is correct)",
-            dest);
+            display_path(dest));
     }
 
     /* By now this is either a fresh install or an explicit --force
@@ -338,7 +340,8 @@ int cmd_install(int argc, char **argv) {
              COLOR_PATH_ARGS(dest, colorize));
     } else {
         if (!copy_executable(self_exe, dest)) {
-            die("install: failed to copy %s to %s: %s", self_exe, dest, plat_strerror(errno));
+            die("install: failed to copy %s to %s: %s", display_path(self_exe), display_path(dest),
+                plat_strerror(errno));
         }
         info("installed to " COLOR_PATH_FMT, COLOR_PATH_ARGS(dest, colorize));
     }

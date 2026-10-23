@@ -92,7 +92,7 @@ static void fix_symlink_if_needed(const char *shim_dir, const char *name, const 
     int shim_lock_fd = shim_dir_lock_acquire(shim_dir);
     if (shim_lock_fd < 0) {
         warn("doctor fix: failed to acquire the shim directory lock on %s: %s -- skipping '%s'",
-             shim_dir, plat_strerror(errno), name);
+             display_path(shim_dir), plat_strerror(errno), name);
         return;
     }
 
@@ -481,7 +481,8 @@ int cmd_doctor(int argc, char **argv) {
                          COLOR_PATH_ARGS(shim_dir, g_colorize));
             shim_dir_missing = false;
         } else {
-            warn("doctor fix: failed to create shim directory %s: %s", shim_dir, plat_strerror(errno));
+            warn("doctor fix: failed to create shim directory %s: %s", display_path(shim_dir),
+                 plat_strerror(errno));
         }
     }
     if (shim_dir_missing) {
@@ -515,7 +516,7 @@ int cmd_doctor(int argc, char **argv) {
             report_fail(&issues,
                         "not on $PATH, and your shell couldn't be auto-detected to fix this "
                         "automatically -- add it manually: export PATH=\"%s:$PATH\"",
-                        shim_dir);
+                        display_path(shim_dir));
         } else {
             MiseIntegrationMode mise_mode =
                 cfg.mise_integration_set ? (cfg.mise_integration ? MISE_ON : MISE_OFF) : MISE_AUTO;
@@ -680,7 +681,7 @@ int cmd_doctor(int argc, char **argv) {
                 if (shim_lock_fd < 0) {
                     warn("doctor fix: failed to acquire the shim directory lock on %s: %s -- "
                          "skipping '%s'",
-                         shim_dir, plat_strerror(errno), name);
+                         display_path(shim_dir), plat_strerror(errno), name);
                     free(link_path);
                     continue;
                 }
@@ -847,7 +848,7 @@ int cmd_doctor(int argc, char **argv) {
         if (shim_lock_fd < 0) {
             warn("doctor fix: failed to acquire the shim directory lock on %s: %s -- saving "
                  "config anyway",
-                 shim_dir, plat_strerror(errno));
+                 display_path(shim_dir), plat_strerror(errno));
         }
         ConfigStatus save_st = config_save(&cfg, cfg_path, errbuf, sizeof(errbuf));
         shim_dir_lock_release(shim_lock_fd);

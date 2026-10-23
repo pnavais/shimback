@@ -89,6 +89,14 @@ Describe "export / import" {
         Test-Path (Join-Path $t.ShimDir "onlylocal.exe") | Should -BeFalse
     }
 
+    It "shows paths in error messages with backslashes only" {
+        $missing = (Join-Path $Sandbox.Root "no\such.sz") -replace '\\', '/'
+        $r = Invoke-Shimback @("import", $missing)
+        $r.ExitCode | Should -Not -Be 0
+        $r.StdErr | Should -Match ([regex]::Escape(($missing -replace '/', '\')))
+        $r.StdErr | Should -Not -Match ([regex]::Escape("/no/such.sz"))
+    }
+
     It "rejects a file that isn't a zip, changing nothing" {
         $t = New-Target "garbage"
         $garbage = Join-Path $Sandbox.Root "garbage.sz"

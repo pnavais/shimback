@@ -110,11 +110,11 @@ static void resolve_target(const char *output_arg, const char *effective_dir,
 
     if (needs_prompt) {
         if (!confirm_create_dir(dir, auto_yes)) {
-            die("export: aborted -- %s was not created", dir);
+            die("export: aborted -- %s was not created", display_path(dir));
         }
     }
     if (!mkdir_p(dir)) {
-        die("export: cannot create directory %s: %s", dir, plat_strerror(errno));
+        die("export: cannot create directory %s: %s", display_path(dir), plat_strerror(errno));
     }
 
     *out_dir = dir;
@@ -268,7 +268,7 @@ int cmd_export(int argc, char **argv) {
         char *data;
         size_t len;
         if (!read_whole_file(cfg_path, &data, &len)) {
-            die("export: failed to read %s: %s", cfg_path, plat_strerror(errno));
+            die("export: failed to read %s: %s", display_path(cfg_path), plat_strerror(errno));
         }
         zip_writer_add_file(&zw, "config.toml", data, len);
         free(data);
@@ -299,8 +299,8 @@ int cmd_export(int argc, char **argv) {
                 free(arcname);
                 free(data);
             } else {
-                warn("export: failed to read %s, skipping '%s': %s", split_path, names[i],
-                     plat_strerror(errno));
+                warn("export: failed to read %s, skipping '%s': %s", display_path(split_path),
+                     names[i], plat_strerror(errno));
             }
             shim_entry_free(entry);
             free(entry);
@@ -355,7 +355,7 @@ int cmd_export(int argc, char **argv) {
 
     bool ok = write_file_atomic(final_path, zw.buf.data, zw.buf.len, 0600);
     if (!ok) {
-        die("export: failed to write %s: %s", final_path, plat_strerror(errno));
+        die("export: failed to write %s: %s", display_path(final_path), plat_strerror(errno));
     }
 
     bool colorize = stdout_is_color();
