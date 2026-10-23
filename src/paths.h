@@ -110,6 +110,11 @@ const char *path_basename(const char *path);
 /* '/' everywhere; also '\' on Windows. */
 bool is_path_sep(char c);
 
+/* On Windows, rewrites every '/' in `path` to '\' in place -- path_join()
+ * always joins with '/', which Windows accepts but which reads oddly in a
+ * path shown to the user or handed to another program. No-op elsewhere. */
+void path_to_native(char *path);
+
 /* True if `path` exists and is a directory (following symlinks). */
 bool path_is_dir(const char *path);
 

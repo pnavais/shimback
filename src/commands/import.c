@@ -375,8 +375,9 @@ int cmd_import(int argc, char **argv) {
             archive_path, manifest.format_version);
     }
     if (manifest.shimback_version && strcmp(manifest.shimback_version, SHIMBACK_VERSION) != 0) {
-        info("note: %s was exported by shimback %s (this build is %s)", archive_path,
-             manifest.shimback_version, SHIMBACK_VERSION);
+        bool colorize = stdout_is_color();
+        info("note: " COLOR_PATH_FMT " was exported by shimback %s (this build is %s)",
+             COLOR_PATH_ARGS(archive_path, colorize), manifest.shimback_version, SHIMBACK_VERSION);
     }
 
     char *self_exe = self_exe_path();

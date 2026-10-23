@@ -51,19 +51,11 @@ static int run_editor(const char *exe, StrVec *editor_argv, const char *target_p
     for (size_t i = 0; i < editor_argv->count; i++) {
         argv[i] = editor_argv->items[i];
     }
-#ifdef _WIN32
-    /* config_file_path() can mix separators (C:\\Users\\x\\.config/...);
-     * hand the editor a plain Windows path. */
+    /* config_file_path() can mix separators on Windows
+     * (C:\\Users\\x\\.config/...); hand the editor a plain native path. */
     char *native = xstrdup(target_path);
-    for (char *c = native; *c; c++) {
-        if (*c == '/') {
-            *c = '\\';
-        }
-    }
+    path_to_native(native);
     argv[editor_argv->count] = native;
-#else
-    argv[editor_argv->count] = (char *)target_path;
-#endif
     argv[editor_argv->count + 1] = NULL;
 #ifdef _WIN32
     /* Windows runs a .bat/.cmd through cmd.exe, which acts on & | < > ^ in

@@ -726,6 +726,18 @@ bool path_is_dir(const char *path) {
  * (unlike this function) never creates more than one missing level at a
  * time and fails with ENOENT -- found exactly this way, via a Pester test
  * whose sandbox path was built with Join-Path. */
+void path_to_native(char *path) {
+#ifdef _WIN32
+    for (char *c = path; *c; c++) {
+        if (*c == '/') {
+            *c = '\\';
+        }
+    }
+#else
+    (void)path;
+#endif
+}
+
 bool is_path_sep(char c) {
 #ifdef _WIN32
     return c == '/' || c == '\\';

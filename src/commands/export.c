@@ -66,8 +66,8 @@ static bool confirm_create_dir(const char *dir, bool auto_yes) {
     /* Not info(): an interactive prompt waits for input on the same line,
      * so it can't end with info()'s own unconditional trailing newline. */
     bool colorize = stdout_is_color();
-    printf("%sshimback:%s export: directory %s does not exist. Create it? [y/N] ",
-           colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "", dir);
+    printf("%sshimback:%s export: directory " COLOR_PATH_FMT " does not exist. Create it? [y/N] ",
+           colorize ? ANSI_PREFIX : "", colorize ? ANSI_RESET : "", COLOR_PATH_ARGS(dir, colorize));
     return read_yes_no(NULL);
 }
 
@@ -106,6 +106,7 @@ static void resolve_target(const char *output_arg, const char *effective_dir,
         split_dir_name(output_arg, &dir, &name);
         needs_prompt = !path_is_dir(dir);
     }
+    path_to_native(dir);
 
     if (needs_prompt) {
         if (!confirm_create_dir(dir, auto_yes)) {
@@ -350,6 +351,7 @@ int cmd_export(int argc, char **argv) {
                                      : resolve_collision(target_dir, target_name);
     free(target_dir);
     free(target_name);
+    path_to_native(final_path);
 
     bool ok = write_file_atomic(final_path, zw.buf.data, zw.buf.len, 0600);
     if (!ok) {
@@ -357,8 +359,8 @@ int cmd_export(int argc, char **argv) {
     }
 
     bool colorize = stdout_is_color();
-    info("%sexported to %s%s (%zu shim%s, %s)", colorize ? ANSI_GREEN : "", final_path,
-         colorize ? ANSI_RESET : "", exported_shim_count, exported_shim_count == 1 ? "" : "s",
+    info("exported to " COLOR_PATH_FMT " (%zu shim%s, %s)", COLOR_PATH_ARGS(final_path, colorize),
+         exported_shim_count, exported_shim_count == 1 ? "" : "s",
          config_exists ? "config.toml included" : "no config.toml");
 
 cleanup:
