@@ -57,6 +57,25 @@ Describe "info" {
         $r.StdOut | Should -Match ([regex]::Escape("altbin"))
     }
 
+    It "shows Windows paths with backslashes only, in add and info" {
+        $a = @("add", "slashtool", "-s", $PS, "-f", $PS, "--split-config")
+        foreach ($x in $PrimaryArgs) { $a += @("--source-arg", $x) }
+        foreach ($x in $FallbackArgs) { $a += @("--fallback-arg", $x) }
+        $r = Invoke-Shimback $a
+        $r.ExitCode | Should -Be 0
+        $shim = Get-ShimPath "slashtool" $Sandbox
+        $split = Join-Path (Split-Path (Get-ConfigFile $Sandbox)) "slashtool-config.toml"
+        $r.StdOut | Should -Match ([regex]::Escape("`"$shim`""))
+        $r.StdOut | Should -Match ([regex]::Escape("`"$split`""))
+
+        $info = (Invoke-Shimback @("info", "slashtool")).StdOut
+        $info | Should -Match ([regex]::Escape("`"$shim`""))
+        $info | Should -Match ([regex]::Escape("`"$split`""))
+        # No quoted path in either output mixes in a forward slash.
+        ([regex]::Matches($r.StdOut + $info, '"[A-Za-z]:\\[^"]*"') | Where-Object { $_.Value.Contains('/') }).Count |
+            Should -Be 0
+    }
+
     It "exports to the root of a drive (mkdir_p on a drive root)" {
         # A throwaway drive letter mapped onto the sandbox, so the test
         # writes to a drive root without touching a real one.

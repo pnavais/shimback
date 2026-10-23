@@ -19,6 +19,26 @@ static bool color_forced(void) {
     return force && force[0] != '\0' && strcmp(force, "0") != 0;
 }
 
+const char *display_path(const char *path) {
+#ifdef _WIN32
+    static char slots[8][4096];
+    static size_t next = 0;
+    if (!path || !strchr(path, '/') || strlen(path) >= sizeof(slots[0])) {
+        return path;
+    }
+    char *out = slots[next];
+    next = (next + 1) % (sizeof(slots) / sizeof(slots[0]));
+    size_t i = 0;
+    for (; path[i]; i++) {
+        out[i] = path[i] == '/' ? '\\' : path[i];
+    }
+    out[i] = '\0';
+    return out;
+#else
+    return path;
+#endif
+}
+
 bool stdout_is_color(void) {
     return !plat_getenv("NO_COLOR") && (color_forced() || plat_isatty_stdout());
 }

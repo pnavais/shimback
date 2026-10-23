@@ -25,10 +25,20 @@
  * bare `%s`; COLOR_PATH_ARGS(path, colorize) expands to the three
  * matching arguments. Not an allocating helper, by design -- matches this
  * codebase's existing inline-ternary-coloring style (see add.c/export.c)
- * rather than introducing a string callers would need to free. */
+ * rather than introducing a string callers would need to free. The path
+ * goes through display_path(), so Windows shows native separators. */
 #define COLOR_PATH_FMT "%s\"%s\"%s"
 #define COLOR_PATH_ARGS(path, colorize) \
-    ((colorize) ? ANSI_GREEN : ""), (path), ((colorize) ? ANSI_RESET : "")
+    ((colorize) ? ANSI_GREEN : ""), display_path(path), ((colorize) ? ANSI_RESET : "")
+
+/* `path` as it should be shown to the user. On Windows, a copy with every
+ * '/' turned into '\' -- internal paths are joined with '/' and must stay
+ * that way (PATH entries are compared byte for byte), but read oddly as
+ * "C:\Users\x\.config/shimback/config.toml". Copies live in a few rotating
+ * static buffers, so one message can show several paths and nothing needs
+ * freeing; an over-long path is returned unchanged. Elsewhere, `path`
+ * itself. */
+const char *display_path(const char *path);
 
 /* The color for a shell-kind prefix (e.g. "zsh:", "powershell:") in
  * shell.c's own status lines -- distinct from ANSI_PREFIX, the

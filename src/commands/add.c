@@ -590,12 +590,13 @@ static int finish_add(AddRequest *req) {
      * quoted only when there's an actual path to quote. */
     const char *fb_quote = resolved_fallback ? "\"" : "";
     info("'%s%s%s' -> %s\"%s\"%s (fallback: %s%s%s%s%s, policy: %s%s%s)", name_color, req->name,
-         reset, path_color, symlink_path, reset, fallback_color, fb_quote,
-         resolved_fallback ? resolved_fallback : "none", fb_quote, reset, policy_color_str,
+         reset, path_color, display_path(symlink_path), reset, fallback_color, fb_quote,
+         resolved_fallback ? display_path(resolved_fallback) : "none", fb_quote, reset,
+         policy_color_str,
          policy_to_string(req->policy), reset);
     if (req->split_config) {
         info("config for '%s%s%s' saved to %s\"%s\"%s", name_color, req->name, reset, path_color,
-             split_target_path, reset);
+             display_path(split_target_path), reset);
     }
 
     ShellKind shell = detect_current_shell();
