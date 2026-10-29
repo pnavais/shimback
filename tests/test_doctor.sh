@@ -401,6 +401,14 @@ mkdir -p "$DOCTOR_BUNDLE"
 cp "$SHIMBACK" "$DOCTOR_BUNDLE/shimback"
 chmod +x "$DOCTOR_BUNDLE/shimback"
 cp "$TEST_DIR/../man/shimback.1" "$DOCTOR_BUNDLE/shimback.1"
+# The binary's own self_exe is realpath-resolved (see plat_self_exe_path),
+# which on macOS means /private/var/... rather than $SANDBOX's own raw
+# /var/... form ($TMPDIR there is itself a symlink into /private) -- any
+# assertion checking the *exact* path shimback records/reports (not just
+# that some path appears as a substring) needs to expect this
+# canonicalized form, not $DOCTOR_BUNDLE verbatim. A no-op on Linux, where
+# this is already the same string either way.
+DOCTOR_BUNDLE_REAL="$(cd "$DOCTOR_BUNDLE" && pwd -P)"
 INST_PREFIX="$SANDBOX/doctor_inst"
 ZSHRC_LOCAL="$HOME/.zshrc.local"
 
@@ -443,19 +451,19 @@ out_live="$(PATH="$LIVE_BUNDLE_PATH" "$DOCTOR_BUNDLE/shimback" doctor)"
 assert_contains "doctor: notices the running binary is live but unrecorded" "$out_live" \
     "not recorded as installed in the PATH block"
 assert_contains "doctor: names where it's actually running from" "$out_live" \
-    "$DOCTOR_BUNDLE/shimback"
+    "$DOCTOR_BUNDLE_REAL/shimback"
 
 out_live_fix="$(PATH="$LIVE_BUNDLE_PATH" "$DOCTOR_BUNDLE/shimback" doctor fix -y)"
 assert_contains "doctor fix: records the installation for the already-live binary" \
-    "$out_live_fix" "[fixed] recorded the installation at \"$DOCTOR_BUNDLE/shimback\""
+    "$out_live_fix" "[fixed] recorded the installation at \"$DOCTOR_BUNDLE_REAL/shimback\""
 assert_not_contains "doctor fix: no restart reminder needed -- it was already live" \
     "$out_live_fix" "Restart your shell"
 assert_contains "doctor fix: the block now actually lists that directory" \
-    "$(cat "$ZSHRC_LOCAL")" "$DOCTOR_BUNDLE"
+    "$(cat "$ZSHRC_LOCAL")" "$DOCTOR_BUNDLE_REAL"
 
 out_live_after="$(PATH="$LIVE_BUNDLE_PATH" "$DOCTOR_BUNDLE/shimback" doctor)"
 assert_contains "doctor: now reports it as a real installation" "$out_live_after" \
-    "installed at \"$DOCTOR_BUNDLE/shimback\""
+    "installed at \"$DOCTOR_BUNDLE_REAL/shimback\""
 assert_eq "doctor: recording it introduces no new issues" "$baseline" \
     "$(issue_count "$out_live_after")"
 

@@ -242,18 +242,25 @@ assert_contains "import: config is still written even though the symlink wasn't"
     "$(cat "$(config_file)")" "[shims.occtool]"
 
 # --- same, but the occupying entry is a symlink that resolves fine, just
-# not to anything shimback -- not only a plain file ---
+# not to anything shimback -- not only a plain file. Points at one of
+# this suite's own fixtures, not a hardcoded system path like /bin/true
+# -- confirmed the hard way, on a real GitHub Actions macOS runner, that
+# assuming a specific system binary exists at a specific path is exactly
+# the kind of environment assumption this project otherwise avoids: if
+# it's missing, the symlink is genuinely dangling rather than "resolves
+# fine to something foreign", and the test exercises the wrong code path
+# entirely (the dangling-repair path, not the occupied-by-other one). ---
 wipe_local_state
 "$SHIMBACK" add occtool2 -s "$FAKE_PRIMARY" -f "$FAKE_FALLBACK" >/dev/null
 OCC2_BACKUP="$SANDBOX/occ2.sz"
 "$SHIMBACK" export -o "$OCC2_BACKUP" -y >/dev/null
 wipe_local_state
 mkdir -p "$(dirname "$(shim_path occtool2)")"
-ln -s /bin/true "$(shim_path occtool2)"
+ln -s "$FAKE_ECHO" "$(shim_path occtool2)"
 out="$("$SHIMBACK" import "$OCC2_BACKUP" 2>&1)"
 assert_contains "import: a foreign (but resolving) symlink is also reported as occupied" "$out" \
     "occupied by a non-shimback file"
-if [ "$(readlink "$(shim_path occtool2)")" != "/bin/true" ]; then
+if [ "$(readlink "$(shim_path occtool2)")" != "$FAKE_ECHO" ]; then
     fail "import: the foreign symlink itself should have been left alone"
 fi
 

@@ -242,6 +242,15 @@ static bool shim_dir_in_shell_block(const char *shim_dir) {
     return found;
 }
 
+/* same_dir_path, not a plain strcmp: on macOS, /tmp and /var (so anything
+ * under a sandboxed test's own $TMPDIR-based mktemp path) are themselves
+ * symlinks to /private/tmp and /private/var -- a raw string comparison
+ * between dir (already canonicalized by the caller, via self_exe_path's
+ * own realpath) and a live $PATH entry (whatever un-canonicalized form
+ * the shell/test harness happened to export) would wrongly report "not
+ * on $PATH" for two entries that are actually the same directory. Caught
+ * for real on a GitHub Actions macOS runner, not just reasoned about --
+ * see git history. */
 static bool dir_on_path(const char *dir) {
     const char *path_env = plat_getenv("PATH");
     if (!path_env) {
@@ -252,7 +261,7 @@ static bool dir_on_path(const char *dir) {
     char *saveptr = NULL;
     char *tok = strtok_r(copy, PLAT_PATH_LIST_SEP, &saveptr);
     while (tok) {
-        if (strcmp(tok, dir) == 0) {
+        if (same_dir_path(tok, dir)) {
             found = true;
             break;
         }

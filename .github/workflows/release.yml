@@ -106,7 +106,7 @@ jobs:
         run: |
           set -eu
           sudo apt-get update -qq
-          sudo apt-get install -y -qq debhelper devscripts lintian
+          sudo apt-get install -y -qq build-essential cmake debhelper devscripts lintian
 
           version="$(cat VERSION)"
           git archive --format=tar.gz --prefix="shimback-${version}/" -o "/tmp/shimback_${version}.orig.tar.gz" HEAD -- . ':!debian'
