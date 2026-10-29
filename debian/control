@@ -1,0 +1,23 @@
+Source: shimback
+Section: utils
+Priority: optional
+Maintainer: Pablo Navais <pnavais@gmail.com>
+Build-Depends: debhelper-compat (= 13), cmake
+Standards-Version: 4.6.2
+Homepage: https://github.com/pnavais/shimback
+Rules-Requires-Root: no
+
+Package: shimback
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: dependency-free command-line shim with automatic fallback
+ shimback wraps a command name (e.g. sed) with a source binary to run
+ and a fallback binary to transparently retry with if the source
+ doesn't work out, generalizing the "try one, fall back to the other"
+ idea to any pair of commands.
+ .
+ Beyond plain exit-code fallback, it supports several routing policies:
+ matching the source's stderr against configured patterns, routing on
+ the presence of specific arguments (with glob support), rewriting
+ arguments before running the source, and splitting traffic between
+ source and fallback based on which side's own arguments are present.

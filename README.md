@@ -71,6 +71,8 @@ Or download a prebuilt binary directly from the
 | Linux (arm64) | [shimback-linux-arm64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-linux-arm64.tar.gz) |
 | Windows (x86_64) | [shimback-windows-x86_64.zip](https://github.com/pnavais/shimback/releases/latest/download/shimback-windows-x86_64.zip) |
 | Windows (arm64) | [shimback-windows-arm64.zip](https://github.com/pnavais/shimback/releases/latest/download/shimback-windows-arm64.zip) |
+| Linux (x86_64, static musl) | [shimback-linux-musl-x86_64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-linux-musl-x86_64.tar.gz) |
+| Linux (arm64, static musl) | [shimback-linux-musl-arm64.tar.gz](https://github.com/pnavais/shimback/releases/latest/download/shimback-linux-musl-arm64.tar.gz) |
 
 Each archive contains the `shimback` binary, the license files, and this
 README (macOS/Linux also get the man page; Windows doesn't ship one, see
@@ -80,6 +82,18 @@ one-liners above) or place the binary wherever you like on `PATH`
 yourself — see [Building](#building) for the caveat on doing that
 manually. Building from source works the same way on any other platform;
 see [Building](#building) below.
+
+The musl builds are fully static (zero runtime dependencies — no glibc,
+no musl shared library either), so they run unmodified on any Linux,
+including minimal/Alpine/`scratch`-based containers, independent of the
+target's own libc version; the regular Linux downloads above are
+dynamically linked against the runner's glibc, same as a typical native
+binary.
+
+A `.deb` for manual `dpkg -i` install (`amd64`/`arm64`) is also attached
+to each [release](https://github.com/pnavais/shimback/releases/latest) —
+its filename embeds the version, so it's not a stable link the way the
+archives above are; check the release page directly.
 
 Once installed, grab shell completions with
 [`shimback completions <shell>`](#completions) (bash/zsh/fish/PowerShell).

@@ -86,6 +86,72 @@ jobs:
           name: shimback-${{ matrix.os_name }}-${{ matrix.arch }}
           path: shimback-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz
 
+      # A real .deb, for manual `dpkg -i` install -- both Linux legs (not
+      # macOS), each producing the native dpkg architecture for that
+      # runner. Builds from a from-scratch extracted copy of the source
+      # (the "3.0 (quilt)" format's own convention: an upstream tarball +
+      # the debian/ overlay, not whatever's sitting in this job's own
+      # build/ dir above) -- debhelper owns that build directory's naming
+      # and lifecycle itself, so sharing it with the plain cmake build
+      # above would fight the tool rather than save meaningful time; the
+      # whole dpkg-buildpackage cycle, including its own full `ctest` run,
+      # takes under two minutes.
+      #
+      # debian/changelog's version comes from VERSION at build time via
+      # `dch`, not a second, independently-driftable copy of the version
+      # hand-maintained in git -- same reasoning as the VERSION-vs-git-tag
+      # gap already tracked for this project's packaging work generally.
+      - name: Build .deb
+        if: matrix.os_name == 'linux'
+        run: |
+          set -eu
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq debhelper devscripts lintian
+
+          version="$(cat VERSION)"
+          git archive --format=tar.gz --prefix="shimback-${version}/" -o "/tmp/shimback_${version}.orig.tar.gz" HEAD -- . ':!debian'
+
+          build_dir="$(mktemp -d)"
+          tar -xzf "/tmp/shimback_${version}.orig.tar.gz" -C "$build_dir"
+          cp -r debian "$build_dir/shimback-${version}/debian"
+          cd "$build_dir/shimback-${version}"
+
+          export DEBFULLNAME="Pablo Navais"
+          export DEBEMAIL="pnavais@gmail.com"
+          dch --create --package shimback --newversion "${version}-1" --distribution unstable --urgency medium "Automated packaging build."
+
+          dpkg-buildpackage -us -uc -b
+
+          deb_path="$(ls "$build_dir"/shimback_*.deb)"
+          echo "DEB_PATH=$deb_path" >> "$GITHUB_ENV"
+
+      # lintian clean (the one expected note on a first, non-archive
+      # upload, "initial-upload-closes-no-bugs", is not a real defect --
+      # confirmed by actually running lintian against a real build, not
+      # assumed), then a real install/uninstall cycle, same spirit as the
+      # tarball's own smoke test above.
+      - name: Smoke-test the .deb
+        if: matrix.os_name == 'linux'
+        run: |
+          set -eu
+          lintian "$DEB_PATH" || true
+          sudo dpkg -i "$DEB_PATH"
+          [ -x /usr/bin/shimback ] || { echo "::error::.deb did not install a binary at /usr/bin/shimback"; exit 1; }
+          [ -f /usr/share/man/man1/shimback.1.gz ] || { echo "::error::.deb did not install the man page"; exit 1; }
+          version_out="$(shimback --version)"
+          case "$version_out" in
+            shimback\ *) ;;
+            *) echo "::error::.deb-installed binary's --version output looks wrong: $version_out"; exit 1 ;;
+          esac
+          echo "installed binary reports: $version_out"
+          sudo dpkg -r shimback
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.os_name == 'linux'
+        with:
+          name: shimback-deb-${{ matrix.arch }}
+          path: ${{ env.DEB_PATH }}
+
   # Windows x86_64 and arm64. ARM64 was deferred for a long time (see git
   # history's now-folded-in windows-port.md "Resolved decisions") purely
   # because there was no way to run this job's Pester suite on real Windows
@@ -250,8 +316,123 @@ jobs:
           name: shimback-windows-${{ matrix.arch }}
           path: shimback-windows-${{ matrix.arch }}.zip
 
+  # Statically-linked musl variant: a single binary with zero runtime
+  # dependencies, portable to any Linux (including minimal/Alpine/scratch
+  # containers) regardless of its own glibc/musl version. Zig (zig cc
+  # -target <arch>-linux-musl) over Ubuntu's musl-tools apt package --
+  # Zig bundles its own versioned musl sysroot, the same "fetch our own
+  # pinned toolchain rather than rely on whatever the OS package manager
+  # happens to carry" choice already made for Windows (xwin's splatted
+  # sysroot, below). Each leg runs on its own native per-arch runner, same
+  # as the plain Linux legs above and the Windows job's own per-arch
+  # structure -- deliberately *not* cross-compiling both targets from one
+  # host, even though Zig can: a cross-compiled aarch64 binary couldn't
+  # then run `ctest` natively on an x86_64 host (no QEMU in this
+  # workflow), which would be a real step down from this project's
+  # standing discipline of testing every built artifact natively (the
+  # same reason the Windows arm64 leg runs on real windows-11-arm hardware
+  # rather than being cross-compiled).
+  build-musl:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+            zig_target: x86_64-linux-musl
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            zig_target: aarch64-linux-musl
+
+    runs-on: ${{ matrix.runner }}
+    name: build (linux-musl-${{ matrix.arch }})
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Zig ships as a plain tarball, not a marketplace action -- same
+      # "install from the canonical source directly" preference as xwin's
+      # own `cargo install` below. Pinned to a specific release (not
+      # "latest"), confirmed against ziglang.org/download/index.json at
+      # the time this was written (0.16.0, the secondhand version this
+      # workflow's own design doc first guessed, turned out to already be
+      # one release behind by the time this was actually implemented --
+      # confirming the index.json rather than trusting that guess is
+      # exactly why this step checks it directly instead of hardcoding
+      # from memory).
+      - name: Install Zig
+        run: |
+          set -eu
+          zig_version="0.17.0"
+          host_arch="$(uname -m)"
+          curl -fsSL "https://ziglang.org/download/${zig_version}/zig-${host_arch}-linux-${zig_version}.tar.xz" -o /tmp/zig.tar.xz
+          mkdir -p /tmp/zig
+          tar -xJf /tmp/zig.tar.xz -C /tmp/zig --strip-components=1
+          echo "/tmp/zig" >> "$GITHUB_PATH"
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/linux-zig-musl.cmake -DSHIMBACK_ZIG_BIN=/tmp/zig -DSHIMBACK_ZIG_TARGET=${{ matrix.zig_target }} -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      # Nothing else in this workflow checks linkage either way -- worth
+      # doing here specifically, since "actually static" is the one
+      # property this whole leg exists to guarantee and the build
+      # succeeding alone doesn't prove it (a silently-dynamic musl binary
+      # would still build and run fine on this same runner).
+      - name: Verify the binary is actually static
+        run: |
+          set -eu
+          file build/shimback
+          if ldd build/shimback; then
+            echo "::error::build/shimback is dynamically linked -- the musl variant must be fully static"
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          pkg_dir="shimback-linux-musl-${{ matrix.arch }}"
+          mkdir -p "$pkg_dir"
+          cp build/shimback "$pkg_dir/"
+          cp man/shimback.1 "$pkg_dir/"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$pkg_dir/"
+          tar -czf "$pkg_dir.tar.gz" "$pkg_dir"
+
+      - name: Smoke-test the packaged archive
+        run: |
+          set -eu
+          pkg_dir="shimback-linux-musl-${{ matrix.arch }}"
+          smoke_dir="$(mktemp -d)"
+          tar -xzf "$pkg_dir.tar.gz" -C "$smoke_dir"
+          extracted="$smoke_dir/$pkg_dir"
+
+          [ -x "$extracted/shimback" ] || { echo "::error::missing or non-executable shimback binary in the packaged archive"; exit 1; }
+          [ -f "$extracted/shimback.1" ] || { echo "::error::missing man page in the packaged archive"; exit 1; }
+          [ -f "$extracted/README.md" ] || { echo "::error::missing README.md in the packaged archive"; exit 1; }
+
+          version_out="$("$extracted/shimback" --version)"
+          case "$version_out" in
+            shimback\ *) ;;
+            *) echo "::error::packaged binary's --version output looks wrong: $version_out"; exit 1 ;;
+          esac
+          echo "packaged binary reports: $version_out"
+
+          install_prefix="$(mktemp -d)"
+          "$extracted/shimback" install --prefix "$install_prefix" --shell zsh
+          [ -x "$install_prefix/bin/shimback" ] || { echo "::error::install did not place a binary at <prefix>/bin/shimback"; exit 1; }
+          [ -f "$install_prefix/share/man/man1/shimback.1" ] || { echo "::error::install did not place the man page"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shimback-linux-musl-${{ matrix.arch }}
+          path: shimback-linux-musl-${{ matrix.arch }}.tar.gz
+
   release:
-    needs: [build, build-windows]
+    needs: [build, build-windows, build-musl]
     runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -264,12 +445,12 @@ jobs:
 
       - name: Generate checksums
         working-directory: artifacts
-        run: shasum -a 256 *.tar.gz *.zip > SHA256SUMS
+        run: shasum -a 256 *.tar.gz *.zip *.deb > SHA256SUMS
 
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            artifacts/*.tar.gz artifacts/*.zip artifacts/SHA256SUMS man/shimback.1 \
+            artifacts/*.tar.gz artifacts/*.zip artifacts/*.deb artifacts/SHA256SUMS man/shimback.1 \
             --generate-notes

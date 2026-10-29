@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+# debhelper's own CMake buildsystem auto-detection (dh_auto_configure/
+# dh_auto_build/dh_auto_install already know how to drive a plain
+# CMakeLists.txt, including CMAKE_INSTALL_PREFIX=/usr and the existing
+# install() rules in CMakeLists.txt) -- no override target needed.
+%:
+	dh $@
+
+# debhelper (compat 13+) auto-parallelizes ctest via its own injected
+# ARGS+=-j<nproc>, unlike every other invocation of this suite throughout
+# the project's history (CI, local dev: always a plain, serial `ctest
+# --output-on-failure`) -- confirmed the hard way, running this for real,
+# that test_list.sh isn't safe under true concurrent ctest execution
+# (intermittently observes another concurrently-running test's shim still
+# present). Force serial, matching the one invocation style this project
+# actually verifies against everywhere else, rather than chasing a
+# parallel-test-isolation bug that's out of this change's scope.
+override_dh_auto_test:
+	dh_auto_test -- ARGS+=-j1
