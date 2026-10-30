@@ -33,16 +33,10 @@ type the command. [Why this exists](#how-it-works) has the longer story.
 Install it (see [Installation](#installation) for every platform/method),
 then open a new terminal (or re-source your shell's startup file) — the
 installer updates it, but your *current* shell already has the old `PATH`
-loaded:
+loaded.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/main/install.sh | sh
-```
-
-Shim `sed` so that whatever `sed` currently means on your `PATH` is tried
-first, with real BSD `/usr/bin/sed` as the fallback — the setup this project
-was built for is a Homebrew- or Nix-managed Mac, where GNU `sed` typically
-ends up ahead of `/usr/bin/sed` on `PATH`:
+Then point a shim at whatever two commands you want to try-then-fall-back
+between:
 
 ```sh
 shimback add sed -f /usr/bin/sed
@@ -52,36 +46,19 @@ shimback add sed -f /usr/bin/sed
 shimback: 'sed' -> "/Users/you/.local/share/shimback/bin/sed" (fallback: "/usr/bin/sed", policy: exit-code)
 ```
 
-(If `sed` on your machine *already* means `/usr/bin/sed` — stock macOS with
-no Homebrew/Nix `sed`, or any Linux box, where `/usr/bin/sed` already is GNU
-— `add` refuses instead, with "source and fallback both resolve to
-'/usr/bin/sed' ... refusing to add a no-op shim." That's correct: there's
-nothing to fall back from, so nothing is created. Swap in two commands that
-actually differ on your machine to see it for real.)
+From now on, typing `sed` tries whatever `sed` already meant on your `PATH`
+first, and transparently retries with `/usr/bin/sed` if that fails — no
+change to how you type the command. (GNU-vs-BSD `sed` is one example, not
+*the* point: the same `add` shim-fallback pattern is just as useful for,
+say, a shim named `docker` that tries fast, daemonless `podman` first for
+everyday use, and falls back to real `docker` specifically for `build`/
+`push` where exact Docker compatibility matters — see
+[`route-args`/`split-args`](#fallback-policies) for routing by subcommand
+instead of by failure.)
 
-From now on, typing `sed` runs the shim instead of whatever `sed` used to
-mean — and a BSD-style call that GNU `sed` can't parse just works:
-
-```sh
-$ echo "foo bar" > greeting.txt
-$ sed -i '' 's/foo/bar/' greeting.txt
-$ cat greeting.txt
-bar bar
-```
-
-Nothing printed, no error — but under the hood, GNU `sed` *did* fail on that
-invocation, exactly as it would without shimback: GNU `sed` takes `-i`
-without a separate backup-suffix argument the way BSD `sed` requires, so it
-treats `''` as the edit script instead (a silent no-op) and then chokes
-trying to open `s/foo/bar/` as a filename — `can't read s/foo/bar/: No such
-file or directory`, exit `2`. shimback caught that failure, discarded it,
-and silently reran the exact same arguments against `/usr/bin/sed`, which
-does understand them. A GNU-style call, which the source handles fine on
-its own, runs only the source — the fallback is never touched.
-
-Want to see it happen instead of trusting that it happened? Add
-`--diagnostic` (`shimback add sed -f /usr/bin/sed --diagnostic`) and
-shimback prints one line to stderr every time a shim falls back:
+Add `--diagnostic` and shimback prints one line to stderr every time a shim
+actually falls back, so you can see it happen instead of just trusting that
+it did:
 
 ```
 shimback: 'sed' failed; falling back to /usr/bin/sed
@@ -99,6 +76,17 @@ ships no man page — see [Platform support](#platform-support)) covers the
 same ground in one page.
 
 ## Installation
+
+**macOS (Homebrew):**
+
+```sh
+brew tap pnavais/shimback
+brew install pnavais/shimback/shimback
+```
+
+This installs from a personal tap, not Homebrew's own `homebrew-core` --
+the formula lives in
+[pnavais/homebrew-shimback](https://github.com/pnavais/homebrew-shimback).
 
 **Linux / macOS / WSL:**
 
@@ -131,17 +119,6 @@ way `sh -s --` can — the `scriptblock`/`&` form above is the equivalent.)
 
 If shimback is already installed, that command changes nothing (`install`
 allows a single installation) — upgrade with [`shimback update`](#update).
-
-**macOS (Homebrew):**
-
-```sh
-brew install pnavais/shimback/shimback
-```
-
-(or `brew tap pnavais/shimback` once, then plain `brew install shimback`
-from then on.) This installs from a personal tap, not Homebrew's own
-`homebrew-core` -- the formula lives in
-[pnavais/homebrew-shimback](https://github.com/pnavais/homebrew-shimback).
 
 Or download a prebuilt binary directly from the
 [latest release](https://github.com/pnavais/shimback/releases/latest):
