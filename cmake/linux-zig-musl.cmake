@@ -79,4 +79,16 @@ set(CMAKE_C_COMPILER "${SHIMBACK_ZIGCC_WRAPPER}" CACHE FILEPATH "")
 # reason documented there: it must be visible to CMake's own internal
 # compiler-check try_compile during project(), not just to targets added
 # afterward.
-set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
+#
+# `-s` (strip symbols at link time) isn't just a size optimization here --
+# without it, Zig's statically-linked runtime/compiler_rt pulls in its own
+# debug symbol table, which happened to contain the literal byte sequence
+# "sentinel" (as part of an allocator-internal symbol name). That collided
+# with test_install.sh's own "sentinel" marker byte-for-byte, making the
+# install --force test's "did the overwrite actually happen" check pass
+# vacuously regardless of whether a real overwrite occurred -- confirmed
+# empirically by diffing a stripped vs. unstripped local build. A release
+# artifact shouldn't ship debug symbols anyway (2.3MB unstripped vs.
+# 285KB stripped, confirmed locally), so this is the right default
+# independent of the test collision it also happens to fix.
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-static -s")

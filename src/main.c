@@ -40,9 +40,21 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Referenced, not printed -- keeps the marker linked into the binary
-     * without changing --version's actual output. */
-    (void)shimback_binary_marker;
+    /* A volatile read, not just `(void)shimback_binary_marker` -- the
+     * latter only silences the compiler's unused-variable warning, it
+     * emits no load instruction and so leaves nothing for a linker doing
+     * section-based garbage collection (`--gc-sections`, the default for
+     * `zig cc -static`'s lld backend) to treat as a real reference. That
+     * dropped the marker's whole .rodata entry from an aarch64-musl
+     * static build (confirmed empirically: present in the x86_64-musl
+     * build by chance, absent from aarch64-musl), silently breaking every
+     * "is this a shimback binary" check (uninstall, add's shim-ownership
+     * check, doctor's orphan detection, ...) on that target alone. A
+     * volatile read forces an actual load relocation into the marker's
+     * bytes, which is what section GC actually checks for -- referenced,
+     * not printed, keeps --version's own output unchanged. */
+    volatile const char *marker_guard = shimback_binary_marker;
+    (void)*marker_guard;
 
     plat_enable_vt_output();
 

@@ -61,7 +61,15 @@ assert_not_contains "install: no legacy shimback-bin block" "$(cat "$ZSHRC")" "s
 # --- installing again to the same prefix is refused with a warning (upgrading
 # from a release is `update`'s job) and touches nothing: not the binary, not
 # the PATH block ---
-echo "sentinel" >>"$DEST" # any change to the installed copy would overwrite this
+# A long, deliberately weird marker, not a short common word: confirmed
+# the hard way that "sentinel" alone isn't distinctive enough -- a fully
+# static musl build (unstripped, bundling its own toolchain's debug
+# strings) happens to already contain that exact substring coincidentally
+# somewhere in its own unrelated symbol/string table, same class of
+# false-positive as a plain substring check elsewhere in this project's
+# test suite tripping over a path prefix it didn't mean to match.
+INSTALL_TEST_MARKER="ZZZ_SHIMBACK_TEST_INSTALL_OVERWRITE_MARKER_ZZZ"
+echo "$INSTALL_TEST_MARKER" >>"$DEST" # any change to the installed copy would overwrite this
 out2="$("$BUNDLED_SHIMBACK" install --prefix "$PREFIX" 2>&1)"
 code2=$?
 assert_eq "install: same-prefix re-run exits 0 (nothing to do)" "0" "$code2"
@@ -71,7 +79,7 @@ assert_contains "install: the warning points at update" "$out2" "shimback update
 assert_contains "install: the warning mentions --force" "$out2" "--force"
 assert_not_contains "install: same-prefix re-run doesn't reinstall" "$out2" "installed to $DEST"
 assert_contains "install: same-prefix re-run left the installed binary alone" "$(cat "$DEST")" \
-    "sentinel"
+    "$INSTALL_TEST_MARKER"
 
 marker_count2="$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
 assert_eq "install: still exactly one marker block after the refused re-install" "1" \
@@ -83,7 +91,8 @@ out2b="$("$BUNDLED_SHIMBACK" install --prefix "$PREFIX" --force 2>&1)"
 code2b=$?
 assert_eq "install --force: same-prefix overwrite exits 0" "0" "$code2b"
 assert_contains "install --force: reports installed" "$out2b" "installed to \"$DEST\""
-assert_not_contains "install --force: overwrote the installed copy" "$(cat "$DEST")" "sentinel"
+assert_not_contains "install --force: overwrote the installed copy" "$(cat "$DEST")" \
+    "$INSTALL_TEST_MARKER"
 assert_eq "install --force: still exactly one marker block" "1" \
     "$(count_occurrences '# >>> shimback >>>' "$ZSHRC")"
 
