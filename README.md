@@ -60,6 +60,17 @@ way `sh -s --` can — the `scriptblock`/`&` form above is the equivalent.)
 If shimback is already installed, that command changes nothing (`install`
 allows a single installation) — upgrade with [`shimback update`](#update).
 
+**macOS (Homebrew):**
+
+```sh
+brew install pnavais/shimback/shimback
+```
+
+(or `brew tap pnavais/shimback` once, then plain `brew install shimback`
+from then on.) This installs from a personal tap, not Homebrew's own
+`homebrew-core` -- the formula lives in
+[pnavais/homebrew-shimback](https://github.com/pnavais/homebrew-shimback).
+
 Or download a prebuilt binary directly from the
 [latest release](https://github.com/pnavais/shimback/releases/latest):
 
