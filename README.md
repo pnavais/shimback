@@ -4,17 +4,20 @@
 
 ![shimback banner](assets/banner.png)
 
-`shimback` is a small, dependency-free command-line shim: it wraps a command
-name (e.g. `sed`) with a **source** binary to run and a **fallback** binary
-to transparently retry with if the source doesn't work out. It was born out
-of a very concrete annoyance: on a Nix-managed macOS system, GNU `sed` often
-ends up ahead of BSD `/usr/bin/sed` on `PATH`, and scripts written for one
-dialect's argument style (`sed -i ''` vs `sed -i`) break under the other.
-`shimback` generalizes that "try one, fall back to the other" idea to any
-pair of commands.
+Ever had a script break because `sed -i ''` works on one machine and `sed -i`
+works on another? That's a GNU/BSD argument-style mismatch, and it keeps
+happening anywhere more than one implementation of a command can end up on
+your `PATH`.
+
+`shimback` is a small, dependency-free command-line shim for exactly that:
+point it at a command name (e.g. `sed`), a **source** binary to try first,
+and a **fallback** binary to transparently retry with if the source doesn't
+work out, and it handles the rest — invisibly, with no change to how you
+type the command. [Why this exists](#how-it-works) has the longer story.
 
 ## Contents
 
+- [Quick start](#quick-start)
 - [Installation](#installation)
 - [How it works](#how-it-works)
 - [Usage](#usage)
@@ -24,6 +27,76 @@ pair of commands.
 - [Building](#building)
 - [Platform support](#platform-support)
 - [License](#license)
+
+## Quick start
+
+Install it (see [Installation](#installation) for every platform/method),
+then open a new terminal (or re-source your shell's startup file) — the
+installer updates it, but your *current* shell already has the old `PATH`
+loaded:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/main/install.sh | sh
+```
+
+Shim `sed` so that whatever `sed` currently means on your `PATH` is tried
+first, with real BSD `/usr/bin/sed` as the fallback — the setup this project
+was built for is a Homebrew- or Nix-managed Mac, where GNU `sed` typically
+ends up ahead of `/usr/bin/sed` on `PATH`:
+
+```sh
+shimback add sed -f /usr/bin/sed
+```
+
+```
+shimback: 'sed' -> "/Users/you/.local/share/shimback/bin/sed" (fallback: "/usr/bin/sed", policy: exit-code)
+```
+
+(If `sed` on your machine *already* means `/usr/bin/sed` — stock macOS with
+no Homebrew/Nix `sed`, or any Linux box, where `/usr/bin/sed` already is GNU
+— `add` refuses instead, with "source and fallback both resolve to
+'/usr/bin/sed' ... refusing to add a no-op shim." That's correct: there's
+nothing to fall back from, so nothing is created. Swap in two commands that
+actually differ on your machine to see it for real.)
+
+From now on, typing `sed` runs the shim instead of whatever `sed` used to
+mean — and a BSD-style call that GNU `sed` can't parse just works:
+
+```sh
+$ echo "foo bar" > greeting.txt
+$ sed -i '' 's/foo/bar/' greeting.txt
+$ cat greeting.txt
+bar bar
+```
+
+Nothing printed, no error — but under the hood, GNU `sed` *did* fail on that
+invocation, exactly as it would without shimback: GNU `sed` takes `-i`
+without a separate backup-suffix argument the way BSD `sed` requires, so it
+treats `''` as the edit script instead (a silent no-op) and then chokes
+trying to open `s/foo/bar/` as a filename — `can't read s/foo/bar/: No such
+file or directory`, exit `2`. shimback caught that failure, discarded it,
+and silently reran the exact same arguments against `/usr/bin/sed`, which
+does understand them. A GNU-style call, which the source handles fine on
+its own, runs only the source — the fallback is never touched.
+
+Want to see it happen instead of trusting that it happened? Add
+`--diagnostic` (`shimback add sed -f /usr/bin/sed --diagnostic`) and
+shimback prints one line to stderr every time a shim falls back:
+
+```
+shimback: 'sed' failed; falling back to /usr/bin/sed
+```
+
+Check on things any time with `shimback list` (every shim you've configured)
+and `shimback doctor` (a health check of your whole setup).
+
+Everything from here on is reference material: how the trial-run/fallback
+mechanism actually works ([How it works](#how-it-works)), every subcommand
+([Usage](#usage)), the other seven fallback policies beyond this default one
+([Fallback policies](#fallback-policies)), config keys, exit codes, building
+from source, and platform support. `man shimback` (macOS/Linux; Windows
+ships no man page — see [Platform support](#platform-support)) covers the
+same ground in one page.
 
 ## Installation
 
@@ -41,10 +114,9 @@ irm https://raw.githubusercontent.com/pnavais/shimback/main/install.ps1 | iex
 
 Downloads the right prebuilt binary for your machine from the
 [latest release](https://github.com/pnavais/shimback/releases/latest) and
-hands it to `shimback install` (see [`install`](#install), below), which
-copies itself to a stable location, sets up `PATH`, and installs the man
-page (Windows: no man page, see [Platform support](#platform-support)).
-Extra arguments are forwarded as-is, e.g. to pick a prefix:
+hands it to [`shimback install`](#install) — see that section for exactly
+what it does (where it puts the binary, how it sets up `PATH`, the man
+page). Extra arguments are forwarded as-is, e.g. to pick a prefix:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/pnavais/shimback/main/install.sh | sh -s -- --prefix ~/.local
@@ -111,6 +183,17 @@ Once installed, grab shell completions with
 
 ## How it works
 
+`shimback` was born out of a very concrete annoyance: on a Nix-managed macOS
+system, GNU `sed` often ends up ahead of BSD `/usr/bin/sed` on `PATH`, and
+scripts written for one dialect's argument style (`sed -i ''` vs `sed -i`)
+break under the other, depending on which machine runs them. The
+[Quick start](#quick-start) above shows exactly that case end to end;
+`shimback` generalizes the underlying "try one, fall back to the other"
+idea to any pair of commands, under any of the [policies](#fallback-policies)
+below for deciding when to fall back.
+
+Mechanically:
+
 1. `shimback add <name> ...` creates a symlink named `<name>` pointing at the
    `shimback` binary itself, inside a dedicated shim directory that's
    prepended to your `PATH`.
@@ -166,7 +249,7 @@ shimback init
 shimback list [--full] [<pattern>]
 shimback doctor [fix [-y|--yes]]
 shimback install [--prefix <dir>] [--force] [--shell <shell>[,<shell>]... | --all]
-shimback update [--check]
+shimback update [--check] [-y|--yes]
 shimback uninstall [--prefix <dir>] [--full]
 shimback edit [<name>]
 shimback info <name>
@@ -285,8 +368,8 @@ shimback add sed -f /usr/bin/sed
   the deferred command actually runs rather than when it's queued —
   otherwise it would overwrite whatever those tools' own deferred
   activation added in between. Without `zsh-defer`, it's a plain `export`.
-- The confirmation line printed on success (`shimback: 'name' -> path
-  (fallback: ..., policy: ...)`) is colored when stdout is a terminal and
+- The confirmation line printed on success (`shimback: 'name' -> "path"
+  (fallback: "...", policy: ...)`) is colored when stdout is a terminal and
   `NO_COLOR` isn't set, matching `list`'s conventions. The shell-startup-file
   notices right after it (`zsh: PATH updated in ...`, `Restart your shell
   ...`) are **silent by default** — pass `-v`/`--verbose` to print them for
@@ -1049,6 +1132,44 @@ baked in when the script was generated.
 
 ## Fallback policies
 
+A shim needs a way to decide *when* to use the fallback instead of the
+source. That's the policy. Most shims never need anything but the default:
+
+| Policy | Decides from | Reach for it when |
+|---|---|---|
+| `exit-code` (default) | any non-zero exit | the plain "try X, fall back to Y on any failure" case |
+| `heuristic` | source's stderr text | a non-zero exit can mean several things and you only want to retry on one of them |
+| `exit-code-match` | source's exact exit code | same idea as `heuristic`, but the failure you care about has its own reliable exit code |
+| `passthrough` | any non-zero exit | like `exit-code`, but you'd rather watch a slow/chatty source run live than hide its trial run |
+| `route-args` | the invocation's arguments, decided up front | one flag should always mean "use the other command," regardless of success/failure |
+| `split-args` | arguments, on *both* sides | source and fallback each have their own distinct trigger flags |
+| `rewrite` | arguments | you want an argument alias/macro, not a retry (`-f`/`--fallback` unused) |
+| `route-map` | arguments | `route-args` generalized to more than one alternate destination (`-f`/`--fallback` unused) |
+
+(Full detail on each is below, in the same order.)
+
+### Pattern syntax
+
+`heuristic`'s `--error-pattern`, `route-args`'s `--route-arg`,
+`split-args`'s `--split-source-arg`/`--split-fallback-arg`, `rewrite`'s
+`<from>`, and `route-map`'s `<match>` all accept either a literal string or a
+glob pattern, using the same subset throughout: `*` (any sequence, including
+none), `?` (any single character), and `[...]`/`[!...]`/`[^...]` character
+classes (with `-` ranges and negation). A literal `*`, `?`, or `[` is
+written as a one-member class to escape it: `[*]`, `[?]`, `[[]` (no
+backslash escaping).
+
+Two of these — `rewrite` and `route-map` — pick a single *winning* rule
+when more than one of their patterns matches the same argument. The others
+(`heuristic`, `route-args`, `split-args`) only ever test whether patterns
+match; they never choose between multiple matching rules, so there's no
+"winner" to pick. For `rewrite`/`route-map`: **an exact, literal match always wins
+over a wildcard match, regardless of declaration order**; among two or more
+wildcard matches, the first one declared wins. `add` prints a non-fatal
+warning (the config is still saved) when two rules/routes look like they
+could plausibly both match the same argument, as a nudge to double-check
+that's intentional.
+
 - **`exit-code`** (the default): fall back whenever the source command
   exits non-zero.
 - **`heuristic`**: only fall back when the source's stderr contains one of
@@ -1065,10 +1186,8 @@ baked in when the script was generated.
       --error-pattern "illegal option"
   ```
 
-  Each `--error-pattern` value is a literal substring or a glob pattern —
-  the same `*`/`?`/`[...]`/`[!...]`/`[^...]` subset `route-map`/`route-args`/
-  `rewrite`/`split-args` already use (and the same `[*]`/`[?]`/`[[]`
-  literal-escaping idiom, no backslash escaping) — so e.g.
+  Each `--error-pattern` value is a literal substring or a
+  [glob pattern](#pattern-syntax) — so e.g.
   `--error-pattern "unrecognized option '*'"` matches that phrase anywhere
   in stderr regardless of which flag name fills in the `*`. If the source
   fails and its stderr doesn't match any pattern, that's treated as a
@@ -1107,18 +1226,14 @@ baked in when the script was generated.
   of the configured `--route-arg` values before forwarding the rest — with
   it set, `cools x` above would run `eza` with no arguments at all.
 
-  Each `--route-arg` value is a literal argument or a glob pattern — `*`
-  (any sequence, including none), `?` (any single character), and
-  `[...]`/`[!...]`/`[^...]` character classes (with `-` ranges and
-  negation), the same shell-glob subset `route-map`'s own `--route <match>`
-  uses (see below for the full rule, including how ties between multiple
-  matching values resolve — with only one alternate destination here, that
-  rule only ever affects *whether* fallback runs, never *which* value "won").
-  A literal `*`, `?`, or `[` is written as a one-member class: `[*]`, `[?]`,
-  `[[]`. `--strip-matched-args` removes every argument matching *any*
-  configured `--route-arg` pattern, not just the one that triggered the
-  route — so a broad pattern like `--v*` would also strip an unrelated
-  `--verbose` argument if one was present.
+  Each `--route-arg` value uses the same [pattern syntax](#pattern-syntax)
+  as the other arg-matching policies above — with only one alternate
+  destination here, matching just decides *whether* fallback runs, never
+  *which* value "won," so the precedence rule in that section doesn't apply.
+  `--strip-matched-args` removes every argument matching *any* configured
+  `--route-arg` pattern, not just the one that triggered the route — so a
+  broad pattern like `--v*` would also strip an unrelated `--verbose`
+  argument if one was present.
 - **`split-args`**: also decides up front from the arguments alone rather
   than reacting to failure, but two-sided: source and fallback each get
   their *own* set of discriminating args (`--split-source-arg` /
@@ -1147,15 +1262,12 @@ baked in when the script was generated.
   one that goes through the normal captured trial run. `--strip-matched-args`
   works the same way it does for `route-args`, removing whichever side's
   own args actually matched before forwarding the rest.
-  Each `--split-source-arg` / `--split-fallback-arg` value is a literal
-  argument or a glob pattern — `*` (any sequence, including none), `?` (any
-  single character), and `[...]`/`[!...]`/`[^...]` character classes (with
-  `-` ranges and negation), the same shell-glob subset `route-args` uses. A
+  Each `--split-source-arg` / `--split-fallback-arg` value uses the same
+  [pattern syntax](#pattern-syntax) as the other arg-matching policies. A
   side's pattern counts as present when *some* invocation argument matches
   it, so `--split-source-arg --v*` is satisfied by `--verbose` or `--v8`
-  alike. Unlike `route-map`, there is no single winner to pick here, so
-  overlapping patterns never trigger a specificity rule. A literal `*`, `?`,
-  or `[` is written as a one-member class: `[*]`, `[?]`, `[[]`.
+  alike. Unlike `route-map`, there's no single winner to pick here, so
+  overlapping patterns never trigger the precedence rule.
 - **`rewrite`**: not a fallback-on-failure policy either, and unlike every
   other policy, **`-f`/`--fallback` is optional and never used** — this is
   an alias/argument-macro mechanism, not a retry mechanism. Each
@@ -1174,17 +1286,9 @@ baked in when the script was generated.
   an empty `<to>` (e.g. `--rewrite "-v="`) just drops the matched argument.
   Arguments that don't match any rule pass through unchanged.
 
-  Each `<from>` is a literal argument or a glob pattern — `*` (any sequence,
-  including none), `?` (any single character), and `[...]`/`[!...]`/
-  `[^...]` character classes (with `-` ranges and negation), the same
-  shell-glob subset `route-map` uses. A literal `*`, `?`, or `[` is written
-  as a one-member class: `[*]`, `[?]`, `[[]`. When more than one rule's
-  `<from>` matches the same argument, **an exact, literal match always wins
-  over a wildcard one, regardless of declaration order**; among two or more
-  wildcard matches, the first one declared wins. `add` prints a non-fatal
-  warning (it still saves the config) when two rules' `<from>` patterns look
-  like they could plausibly both match the same argument, as a nudge to
-  double-check that's intentional.
+  Each `<from>` uses the same [pattern syntax](#pattern-syntax) as the
+  other arg-matching policies, including the exact-beats-wildcard
+  precedence rule when more than one rule matches the same argument.
 - **`route-map`**: `route-args` generalized from a single fallback to any
   number of them. Like `rewrite`, **`-f`/`--fallback` is optional and
   never used**. Each `--route <match>=<command>` rule (repeatable) is
@@ -1205,20 +1309,13 @@ baked in when the script was generated.
   Running `java` normally runs `java17`; `java --v8 Foo.java` runs `java8`
   instead; `java --v25 Foo.java` runs `java25` instead.
 
-  `<match>` is a literal argument or a glob pattern — `*` (any sequence,
-  including none), `?` (any single character), and `[...]`/`[!...]`/
-  `[^...]` character classes (with `-` ranges and negation). A literal `*`,
-  `?`, or `[` is written as a one-member class: `[*]`, `[?]`, `[[]`. When
-  more than one route's `<match>` matches the same argument, **an exact,
-  literal match always wins over a wildcard one, regardless of declaration
-  order**; among two or more wildcard matches, the first one declared
-  wins. So `--route "--v8=..." --route "--v*=..."` always routes a literal
-  `--v8` to the first rule even if `--v*` were declared first — the whole
-  point of combining a literal with a broader pattern is to carve out an
-  exception, not to create an ambiguity. `add` prints a non-fatal warning
-  (it still saves the config) when two routes' patterns look like they
-  could plausibly both match the same argument, as a nudge to double-check
-  that's intentional.
+  `<match>` uses the same [pattern syntax](#pattern-syntax) as the other
+  arg-matching policies, including the exact-beats-wildcard precedence rule
+  when more than one route matches the same argument: so
+  `--route "--v8=..." --route "--v*=..."` always routes a literal `--v8` to
+  the first rule even if `--v*` were declared first — the whole point of
+  combining a literal with a broader pattern is to carve out an exception,
+  not to create an ambiguity.
 
   `--strip-matched-args` removes every argument matching the winning
   route's own `<match>` pattern, not just the one argument that triggered
