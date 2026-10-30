@@ -10,7 +10,33 @@ permissions:
   contents: write
 
 jobs:
+  # Catches a forgotten/typo'd VERSION bump before it ever reaches a build
+  # runner: --version (CMakeLists.txt reads VERSION at configure time),
+  # debian/changelog's version (see build-musl's own comment on this), and
+  # the GitHub Release's name (below, from the pushed tag) would otherwise
+  # drift apart silently. Runs unconditionally (not gated on the tag push)
+  # so build/build-windows/build-musl can depend on it without a skipped
+  # dependency skipping them too on a workflow_dispatch run, where there's
+  # no tag to check against in the first place.
+  check-version:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Confirm VERSION matches the pushed tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -eu
+          tag="$GITHUB_REF_NAME"
+          version="v$(cat VERSION)"
+          if [ "$version" != "$tag" ]; then
+            echo "::error::VERSION file says $(cat VERSION), but the pushed tag is $tag -- these must match (the GitHub Release is named after the tag, while --version and the .deb's version both come from VERSION)."
+            exit 1
+          fi
+          echo "VERSION ($(cat VERSION)) matches tag $tag"
+
   build:
+    needs: check-version
     strategy:
       fail-fast: false
       matrix:
@@ -163,6 +189,7 @@ jobs:
   # these two legs share every single step, just a different runner,
   # target triple, xwin --arch, and asset name.
   build-windows:
+    needs: check-version
     strategy:
       fail-fast: false
       matrix:
@@ -333,6 +360,7 @@ jobs:
   # same reason the Windows arm64 leg runs on real windows-11-arm hardware
   # rather than being cross-compiled).
   build-musl:
+    needs: check-version
     strategy:
       fail-fast: false
       matrix:
